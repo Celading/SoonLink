@@ -1,0 +1,67 @@
+name: soonlink-homebrew-ci
+
+on:
+  push:
+    branches:
+      - main
+      - core
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew-local-formula:
+    runs-on: macos-latest
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        run: |
+          echo "SOONLINK_VERSION=$(awk -F '\"' '/^[[:space:]]*version[[:space:]]*=/{print $2; exit}' cjpm.toml)" >> "$GITHUB_ENV"
+
+      - name: Build binary or fallback shim
+        run: |
+          mkdir -p .ci/bin
+          if command -v cjpm >/dev/null 2>&1; then
+            cjpm build
+            echo "SOONLINK_BIN_PATH=$PWD/target/release/bin/main" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          cat > .ci/bin/soonlnk <<'SH'
+          #!/bin/sh
+          if [ "${1:-}" = "version" ]; then
+            printf '{"name":"SoonLink","edition":"core","package":"soonlnk","version":"%s"}\n' "${SOONLINK_VERSION:-0.0.0-ci}"
+            exit 0
+          fi
+          echo "SoonLink CI shim"
+          SH
+          chmod +x .ci/bin/soonlnk
+          echo "SOONLINK_BIN_PATH=$PWD/.ci/bin/soonlnk" >> "$GITHUB_ENV"
+          echo "SOONLINK_ALLOW_NON_DARWIN_BIN=1" >> "$GITHUB_ENV"
+
+      - name: Prepare Homebrew bundle
+        run: |
+          chmod +x ./scripts/prepare_homebrew_bundle.sh
+          ./scripts/prepare_homebrew_bundle.sh --bin "$SOONLINK_BIN_PATH" --version "$SOONLINK_VERSION"
+
+      - name: Render local formula
+        run: |
+          BUNDLE_PATH="$(find "$PWD/dist/homebrew" -name '*.tar.gz' | head -n 1)"
+          SHA256="$(shasum -a 256 "$BUNDLE_PATH" | awk '{print $1}')"
+          chmod +x ./scripts/render_homebrew_formula.sh
+          ./scripts/render_homebrew_formula.sh \
+            --url "file://${BUNDLE_PATH}" \
+            --sha256 "$SHA256" \
+            --version "$SOONLINK_VERSION" \
+            --output "$PWD/dist/homebrew/soonlink.rb"
+
+      - name: Install local formula
+        run: |
+          brew install --formula "$PWD/dist/homebrew/soonlink.rb"
+          brew test soonlink

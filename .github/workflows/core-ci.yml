@@ -1,0 +1,67 @@
+name: soonlink-ci
+
+on:
+  push:
+    branches:
+      - main
+      - core
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run public boundary audit
+        run: |
+          chmod +x ./scripts/check_public_boundary.sh
+          ./scripts/check_public_boundary.sh
+
+  compose:
+    runs-on: ubuntu-latest
+    needs: boundary
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate compose file
+        run: docker compose -f compose.yaml config >/dev/null
+
+  cangjie-build:
+    runs-on: ubuntu-latest
+    needs: boundary
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and test when cjpm is available
+        run: |
+          if ! command -v cjpm >/dev/null 2>&1; then
+            echo "cjpm is not installed on this runner; skipping Cangjie build/test job."
+            exit 0
+          fi
+          cjpm build
+          cjpm test
+
+      - name: Prepare Linux container bundle
+        run: |
+          if ! command -v cjpm >/dev/null 2>&1; then
+            echo "cjpm is not installed on this runner; skipping container bundle."
+            exit 0
+          fi
+          chmod +x ./scripts/prepare_container_bundle.sh
+          ./scripts/prepare_container_bundle.sh --bin ./target/release/bin/main
+
+      - name: Build runtime image
+        run: |
+          if [ ! -x ./dist/soonlnk ]; then
+            echo "dist/soonlnk is missing; skipping docker build."
+            exit 0
+          fi
+          docker build -t soonlink-ci:local .

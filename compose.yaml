@@ -1,0 +1,32 @@
+services:
+  soonlink-core:
+    image: ${SOONLINK_IMAGE_NAME:-soonlink-core-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${SOONLINK_PUBLIC_PORT:-8081}:${SOONLINK_WEB_PORT:-8081}"
+    environment:
+      SOONLINK_LISTEN_ADDR: ${SOONLINK_LISTEN_ADDR:-:8080}
+      SOONLINK_WEB_PORT: ${SOONLINK_WEB_PORT:-8081}
+      SOONLINK_CONFIG_FILE: ${SOONLINK_CONFIG_FILE:-/app/runtime/config/soonlink.toml}
+      SOONLINK_DEVICE_REGISTRY_FILE: ${SOONLINK_DEVICE_REGISTRY_FILE:-/app/runtime/config/devices.json}
+      SOONLINK_TEMP_DIR: ${SOONLINK_TEMP_DIR:-/app/runtime/tmp}
+      SOONLINK_LOG_DIR: ${SOONLINK_LOG_DIR:-/app/runtime/logs}
+      SOONLINK_LOCAL_ROOT_DIR: ${SOONLINK_LOCAL_ROOT_DIR:-/app/data}
+      SOONLINK_SECURITY_MODE: ${SOONLINK_SECURITY_MODE:-plain}
+      SOONLINK_ENABLE_MDNS: ${SOONLINK_ENABLE_MDNS:-false}
+      SOONLINK_RELAY_ENABLED: ${SOONLINK_RELAY_ENABLED:-false}
+      SOONLINK_RELAY_CACHE_DIR: ${SOONLINK_RELAY_CACHE_DIR:-/app/runtime/cache/relay}
+      SOONLINK_FAVORITES_TOML_FILE: ${SOONLINK_FAVORITES_TOML_FILE:-/app/runtime/config/favorites.toml}
+      SOONLINK_WHITELIST_TOML_FILE: ${SOONLINK_WHITELIST_TOML_FILE:-/app/runtime/config/whitelist.toml}
+    volumes:
+      - ./volumes/data:/app/data
+      - ./volumes/runtime:/app/runtime
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${SOONLINK_WEB_PORT:-8081}/api/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
