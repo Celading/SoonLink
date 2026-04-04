@@ -1,0 +1,1618 @@
+package soonlnk.master
+
+import soonlnk.api2.*
+import soonlnk.commons.*
+import soonlnk.features.*
+import lisi.getNetworkInfo
+import std.collection.{ArrayList, HashMap}
+import std.sync.Mutex
+import std.fs.Directory
+import std.env.{getHomeDirectory, getVariable}
+import std.random.Random
+import std.unicode.*
+
+public func getLocalIP(): String {
+    if (let Some(explicitIP) <- getVariable("SOONLINK_LOCAL_IP")) {
+        if (explicitIP.size > 0) {
+            return explicitIP
+        }
+    }
+    try {
+        let network = getNetworkInfo()
+        if (network.ips.size > 0) {
+            return network.ips[0]
+        }
+    } catch (_: Exception) {}
+    ""
+}
+
+public class CoreServer {
+    public let profile: ProductProfile
+    public let config: AppConfig
+    public let cryptoManager: CryptoManager
+    public let fileManager: FileSystemManager
+    public let connectorRegistry: ConnectorRegistry
+    public let transferEngine: TransferEngine
+    public let logger: LogManager
+    public let authProvider: AuthProvider
+    public let cryptoProvider: CryptoProvider
+
+    public let securityChannel: SecurityChannel
+    public let discoveryFeature: DiscoveryFeature
+    public let peerTransferFeature: PeerTransferFeature
+    public let monitorFeature: MonitorFeature
+    public let logPersistFeature: LogPersistFeature
+    public let relayFeature: RelayFeature
+    public let favoritesFeature: FavoritesFeature
+    public let chunkTransferFeature: ChunkTransferFeature
+    public var localRootDir: String = ""
+
+    var devices: HashMap<String, Device> = HashMap<String, Device>()
+    let devicesMutex: Mutex = Mutex()
+
+    var tasks: HashMap<String, TransferTask> = HashMap<String, TransferTask>()
+    let tasksMutex: Mutex = Mutex()
+
+    var pinPairingSessions: HashMap<String, DevicePinPairingSession> = HashMap<String, DevicePinPairingSession>()
+    let pinPairingMutex: Mutex = Mutex()
+
+    let startTime: Int64
+    var runtimePrepared: Bool = false
+    var consoleOutputEnabled: Bool = true
+
+    public init(config: AppConfig, profile!: ProductProfile = defaultProductProfile()) {
+        this.profile = profile
+        this.config = normalizeAppConfigForProfile(config, profile)
+        this.startTime = currentTimestamp()
+
+        this.logger = LogManager(1000)
+        this.cryptoManager = CryptoManager(this.config.encryptionKey)
+        this.fileManager = FileSystemManager()
+        this.connectorRegistry = ConnectorRegistry()
+        this.transferEngine = TransferEngine(this.config.tempDir, this.config.maxConnections)
+        this.authProvider = CorePlaceholderAuthProvider(profile)
+        this.cryptoProvider = CorePlaceholderCryptoProvider(profile)
+
+        this.securityChannel = SecurityChannel(securityModeFromString(this.config.securityMode))
+
+        let registryStore = JsonDeviceRegistryStore(this.config.deviceRegistryFile)
+        let udpTransport = UdpDiscoveryTransport(this.config.discoveryUdpPort)
+        let mdnsTransport: DiscoveryTransport = if (this.config.enableMdns) {
+            MdnsDiscoveryTransport()
+        } else {
+            NoopDiscoveryTransport("mdns-disabled")
+        }
+
+        this.discoveryFeature = DiscoveryFeature(registryStore, udpTransport, mdnsTransport)
+        this.peerTransferFeature = PeerTransferFeature(LocalFileMgr(), securityChannel)
+        let monitorRoot = if (this.config.localRootDir.size > 0) { this.config.localRootDir } else { getVariable("HOME") ?? "/" }
+        this.monitorFeature = MonitorFeature(defaultPath: monitorRoot, diskProbe: MonitorDiskProbe())
+        this.logPersistFeature = LogPersistFeature(RollingFileLogSink(this.config.logDir))
+        this.relayFeature = RelayFeature(
+            this.config.relayCacheDir,
+            this.config.relayRetentionHours,
+            this.config.relayLimitMode,
+            this.config.relayLimitBytes,
+            this.config.relayLimitPercent,
+            DefaultDiskProbe(),
+            this.config.whitelistTomlFile
+        )
+
+        let favoriteStore: FavoriteStore = if (this.config.favoritesStoreMode == "toml") {
+            TomlFavoriteStore(this.config.favoritesTomlFile)
+        } else {
+            MemoryFavoriteStore()
+        }
+        this.favoritesFeature = FavoritesFeature(favoriteStore)
+        this.chunkTransferFeature = ChunkTransferFeature(this.config.tempDir)
+        monitorFeature.setPrimaryIpProvider({ =>
+            this.currentPrimaryIp()
+        })
+
+        relayFeature.setDeviceOnlineChecker({ deviceId: String =>
+            this.isDeviceOnline(deviceId)
+        })
+        relayFeature.setWriteHandler({ deviceId: String, path: String, payload: Array<UInt8> =>
+            this.writeRelayTarget(deviceId, path, payload)
+        })
+        chunkTransferFeature.setWriteHandler({ deviceId: String, path: String, payload: Array<UInt8>, offset: Int64 =>
+            this.writeChunkTarget(deviceId, path, payload, offset)
+        })
+
+        connectorRegistry.registerDriver(LocalFsConnectorDriver())
+        connectorRegistry.registerDriver(SoonLinkNodeConnectorDriver())
+    }
+
+    public func setConsoleOutputEnabled(value: Bool): Unit {
+        consoleOutputEnabled = value
+        logger.setConsoleEnabled(value)
+        transferEngine.setConsoleEnabled(value)
+        fileManager.setConsoleEnabled(value)
+    }
+
+    public func start(): Unit {
+        prepareRuntime(true, true, true, true)
+    }
+
+    public func startAutomationRuntime(): Unit {
+        prepareRuntime(false, false, false, false)
+    }
+
+    public func stop(): Unit {
+        if (!runtimePrepared) {
+            return
+        }
+        logger.logInfo("system", "SoonLink服务正在关闭", "开始停止所有服务", "core/server")
+        discoveryFeature.stop()
+        logPersistFeature.flush()
+        logger.logWarn("system", "核心服务已停止", "", "")
+        runtimePrepared = false
+    }
+
+    public func uptimeSeconds(): Int64 {
+        currentTimestamp() - startTime
+    }
+
+    func initRuntimeDirs(): Unit {
+        try {
+            Directory.create(config.tempDir, recursive: true)
+        } catch (_: Exception) {}
+
+        try {
+            Directory.create(config.logDir, recursive: true)
+        } catch (_: Exception) {}
+        if (profile.supportsRelay) {
+            try {
+                Directory.create(config.relayCacheDir, recursive: true)
+            } catch (_: Exception) {}
+        }
+        if (config.localRootDir.size > 0) {
+            try {
+                Directory.create(config.localRootDir, recursive: true)
+            } catch (_: Exception) {}
+        }
+
+        ensureParentDir(config.deviceRegistryFile)
+        ensureParentDir(config.configFile)
+        if (profile.supportsFavorites) {
+            ensureParentDir(config.favoritesTomlFile)
+        }
+        if (profile.supportsWhitelist) {
+            ensureParentDir(config.whitelistTomlFile)
+        }
+    }
+
+    func initLocalDevice(): Unit {
+        var hostname = getVariable("HOSTNAME") ?? getVariable("HOST") ?? ""
+        if (hostname.size == 0 || hostname == "unknown") {
+            hostname = "本机"
+        } else {
+            hostname = "${hostname}(本机)"
+        }
+
+        let localIP = getLocalIP()
+        let displayIP = if (localIP.size > 0) { localIP } else { "127.0.0.1" }
+
+        let localDevice = Device(
+            id: "local",
+            name: hostname,
+            deviceType: "local",
+            ip: displayIP,
+            port: Int64(config.webPort),
+            online: true
+        )
+        applyDefaultDeviceCapabilities(localDevice, profile)
+        applyDefaultDeviceConnector(localDevice)
+        applyDeviceTrustState(localDevice, Trusted, "runtime")
+        registerDevice(localDevice)
+
+        localRootDir = resolveLocalRootDir()
+        fileManager.registerProvider("local", LocalFileSystem(localRootDir, consoleEnabled: consoleOutputEnabled))
+        logger.logInfo("system", "本地设备已初始化", localDevice.name, "core/server")
+    }
+
+    func resolveLocalRootDir(): String {
+        if (config.localRootDir.size > 0) {
+            return config.localRootDir
+        }
+        try {
+            return getHomeDirectory().toString()
+        } catch (_: Exception) {
+            getVariable("HOME") ?? "/tmp"
+        }
+    }
+
+    func prepareRuntime(
+        bindLogSink: Bool,
+        enableDiscoveryTransport: Bool,
+        enableBackgroundLoops: Bool,
+        logLifecycle: Bool
+    ): Unit {
+        if (runtimePrepared) {
+            return
+        }
+
+        if (logLifecycle) {
+            logger.logInfo("system", "SoonLink服务启动", "开始初始化核心服务", "core/server")
+        }
+
+        initRuntimeDirs()
+        if (bindLogSink) {
+            logPersistFeature.bind(logger)
+        }
+
+        cryptoManager.start()
+        if (logLifecycle) {
+            logger.logInfo("crypto", "加密服务已启动", "", "core/server")
+        }
+
+        transferEngine.start()
+        registerTransferProtocols()
+        transferEngine.setTaskUpdateCallback({ taskId: String, status: TaskStatus, progress: Float64 =>
+            updateTaskStatus(taskId, status, progress)
+        })
+
+        initLocalDevice()
+        if (enableDiscoveryTransport) {
+            startDiscovery()
+        } else {
+            loadPersistedDiscoveryRegistry()
+        }
+
+        if (enableBackgroundLoops) {
+            if (profile.supportsActiveDiscovery) {
+                spawn { startHeartbeatLoop() }
+            }
+            if (profile.supportsRelay) {
+                spawn { startCleanupTask() }
+                spawn { startRelayDispatchLoop() }
+            }
+        }
+
+        runtimePrepared = true
+        if (logLifecycle) {
+            logger.logInfo("system", "SoonLink服务启动完成", "所有核心服务已成功启动", "core/server")
+        }
+    }
+
+    func registerTransferProtocols(): Unit {
+        transferEngine.registerProtocol(CoreServerTransferProtocol(this, "http"))
+        transferEngine.registerProtocol(CoreServerTransferProtocol(this, "multi-thread-http"))
+        transferEngine.registerProtocol(QUICProtocol())
+        transferEngine.registerProtocol(RSyncProtocol())
+        transferEngine.registerProtocol(P2PProtocol())
+        logger.logInfo("system", "传输协议注册完成", "SoonLink HTTP coordinator, MultiThread-HTTP, QUIC, RSync, P2P", "core/server")
+    }
+
+    func startDiscovery(): Unit {
+        discoveryFeature.setDeviceFoundCallback({ record: DeviceRegistryRecord =>
+            upsertDiscoveredDevice(record, loadPersistedTrust: false)
+        })
+        if (profile.supportsActiveDiscovery) {
+            discoveryFeature.start()
+        }
+
+        loadPersistedDiscoveryRegistry()
+    }
+
+    func loadPersistedDiscoveryRegistry(): Unit {
+        let persisted = discoveryFeature.listRegistry()
+        for (record in persisted) {
+            upsertDiscoveredDevice(record, loadPersistedTrust: true)
+        }
+    }
+
+    func startHeartbeatLoop(): Unit {
+        while (true) {
+            sleep(Duration.second * config.discoveryHeartbeatSeconds)
+            match (getDevice("local")) {
+                case Some(device) =>
+                    let record = deviceToRegistryRecord(device)
+                    discoveryFeature.publishHeartbeat(record)
+                case None => ()
+            }
+        }
+    }
+
+    func startCleanupTask(): Unit {
+        while (true) {
+            sleep(Duration.minute * 30)
+            logger.logDebug("tasker", "cleanup", "执行临时文件清理", "core/server")
+            relayFeature.cleanupExpired()
+        }
+    }
+
+    func startRelayDispatchLoop(): Unit {
+        while (true) {
+            sleep(Duration.second * 15)
+            if (!config.relayEnabled) {
+                continue
+            }
+            relayFeature.tick()
+        }
+    }
+
+    func upsertDiscoveredDevice(record: DeviceRegistryRecord, loadPersistedTrust!: Bool = false): Unit {
+        if (record.id.size == 0 || record.id == "local") {
+            return
+        }
+
+        let device = registryRecordToDevice(record)
+        if (device.name.size == 0) {
+            device.name = record.id
+        }
+        if (device.deviceType.size == 0) {
+            device.deviceType = "remote"
+        }
+        if (device.port == 0) {
+            device.port = Int64(config.webPort)
+        }
+        device.online = true
+        device.lastSeen = currentTimestamp()
+        if (device.capability.size == 0) {
+            applyDefaultDeviceCapabilities(device, profile)
+        }
+        applyDefaultDeviceConnector(device)
+        preserveDiscoveredTrust(device, loadPersistedTrust)
+
+        registerDevice(device)
+    }
+
+    // CFM/P Master boundary: device domain
+    public func registerDevice(device: Device): Unit {
+        if (device.id == "local") {
+            applyDeviceTrustState(device, Trusted, "runtime")
+        }
+        synchronized(devicesMutex) {
+            devices.add(device.id, device)
+        }
+    }
+
+    public func registerDeviceRecord(record: DeviceRegistryRecord): Device {
+        upsertManagedDeviceRecord(record)
+    }
+
+    public func validateManagedDeviceRecord(record: DeviceRegistryRecord): String {
+        let id = record.id.trimAscii()
+        if (id.size == 0) {
+            return "设备ID不能为空"
+        }
+        if (id.toLower() == "local") {
+            return "local 设备由运行时保留，不能手动维护"
+        }
+
+        let connectorType = normalizeConnectorType(record.connectorType)
+        if (connectorType == "local-fs") {
+            return "local-fs 仅保留给本机设备"
+        }
+
+        let ip = record.ip.trimAscii()
+        if (ip.size == 0) {
+            return "设备地址不能为空"
+        }
+
+        let port = if (record.port > 0) { record.port } else { Int64(config.webPort) }
+        if (port <= 0) {
+            return "设备端口不能为空"
+        }
+        ""
+    }
+
+    public func upsertManagedDeviceRecord(record: DeviceRegistryRecord): Device {
+        let normalizedId = record.id.trimAscii()
+        var existing: ?Device = None
+        if (normalizedId.size > 0) {
+            existing = getDevice(normalizedId)
+        }
+
+        let validationError = normalizeManagedDeviceRecord(record, existing)
+        if (validationError.size > 0) {
+            throw Exception(validationError)
+        }
+
+        let device = registryRecordToDevice(record)
+        if (device.capability.size == 0) {
+            applyDefaultDeviceCapabilities(device, profile)
+        }
+        applyDefaultDeviceConnector(device)
+        registerDevice(device)
+        persistDeviceRecord(device)
+        device
+    }
+
+    public func removeManagedDeviceRecord(deviceId: String): Bool {
+        let normalized = deviceId.trimAscii()
+        if (normalized.size == 0 || normalized.toLower() == "local") {
+            return false
+        }
+
+        var removed = discoveryFeature.removeRecord(normalized)
+        synchronized(devicesMutex) {
+            match (devices.get(normalized)) {
+                case Some(_) =>
+                    devices.remove(normalized)
+                    removed = true
+                case None => ()
+            }
+        }
+        synchronized(pinPairingMutex) {
+            pinPairingSessions.remove(normalized)
+        }
+        removed
+    }
+
+    public func heartbeatDevice(deviceId: String): ?Device {
+        synchronized(devicesMutex) {
+            if (let Some(device) <- devices.get(deviceId)) {
+                device.online = true
+                device.lastSeen = currentTimestamp()
+
+                persistDeviceRecord(device)
+                return Some(device)
+            }
+        }
+        None
+    }
+
+    public func getDevice(deviceId: String): ?Device {
+        synchronized(devicesMutex) {
+            devices.get(deviceId)
+        }
+    }
+
+    public func listDevices(): ArrayList<Device> {
+        let result = ArrayList<Device>()
+        synchronized(devicesMutex) {
+            for ((_, device) in devices) {
+                result.add(device)
+            }
+        }
+        result
+    }
+
+    public func setDeviceTrustState(deviceId: String, rawState: String, source!: String = "admin"): Device {
+        cleanupExpiredPinPairingSessions()
+        let normalized = deviceId.trimAscii()
+        if (normalized.size == 0) {
+            throw Exception("设备ID不能为空")
+        }
+        let state = deviceTrustStateFromString(rawState)
+        synchronized(devicesMutex) {
+            match (devices.get(normalized)) {
+                case Some(device) =>
+                    if (device.id == "local") {
+                        match (state) {
+                            case Trusted => ()
+                            case _ => throw Exception("local 设备始终保持 trusted")
+                        }
+                    }
+                    applyDeviceTrustState(device, if (device.id == "local") { Trusted } else { state }, source)
+                    persistDeviceRecord(device)
+                    return device
+                case None =>
+                    throw Exception("设备不存在: ${normalized}")
+            }
+        }
+    }
+
+    public func startPinPairing(deviceId: String): DevicePinPairingSession {
+        cleanupExpiredPinPairingSessions()
+        let normalized = deviceId.trimAscii()
+        if (normalized.size == 0 || normalized == "local") {
+            throw Exception("仅支持远端设备 PIN 配对")
+        }
+
+        match (getDevice(normalized)) {
+            case Some(_device) => ()
+            case None => throw Exception("设备不存在: ${normalized}")
+        }
+
+        let session = DevicePinPairingSession()
+        session.deviceId = normalized
+        session.pin = randomNumericPin(6)
+        session.requestedAt = currentTimestamp()
+        session.expiresAt = session.requestedAt + 300
+        session.source = "pin"
+        synchronized(pinPairingMutex) {
+            pinPairingSessions.add(normalized, session)
+        }
+        session
+    }
+
+    public func confirmPinPairing(deviceId: String, pin: String): Device {
+        cleanupExpiredPinPairingSessions()
+        let normalized = deviceId.trimAscii()
+        let normalizedPin = pin.trimAscii()
+        if (normalized.size == 0 || normalizedPin.size == 0) {
+            throw Exception("设备ID 与 PIN 不能为空")
+        }
+
+        var matched = false
+        synchronized(pinPairingMutex) {
+            match (pinPairingSessions.get(normalized)) {
+                case Some(session) =>
+                    if (session.pin == normalizedPin && session.expiresAt >= currentTimestamp()) {
+                        matched = true
+                    }
+                    if (matched || session.expiresAt < currentTimestamp()) {
+                        pinPairingSessions.remove(normalized)
+                    }
+                case None => ()
+            }
+        }
+
+        if (!matched) {
+            throw Exception("PIN 无效或已过期")
+        }
+
+        setDeviceTrustState(normalized, "trusted", source: "pin")
+    }
+
+    public func listConnectors(): ArrayList<ConnectorDescriptor> {
+        connectorRegistry.listDescriptors()
+    }
+
+    public func describeConnector(connectorType: String): ?ConnectorDescriptor {
+        connectorRegistry.descriptor(connectorType)
+    }
+
+    func persistDeviceRecord(device: Device): Unit {
+        discoveryFeature.manualRegister(deviceToRegistryRecord(device))
+    }
+
+    func applyDeviceTrustState(device: Device, state: DeviceTrustState, source: String): Unit {
+        device.trustState = state
+        device.trustSource = source.trimAscii()
+        device.trustUpdatedAt = currentTimestamp()
+    }
+
+    func preserveDiscoveredTrust(device: Device, loadPersistedTrust: Bool): Unit {
+        var existing: ?Device = None
+        synchronized(devicesMutex) {
+            existing = devices.get(device.id)
+        }
+
+        match (existing) {
+            case Some(current) =>
+                device.trustState = current.trustState
+                device.trustSource = current.trustSource
+                device.trustUpdatedAt = current.trustUpdatedAt
+            case None =>
+                if (!loadPersistedTrust) {
+                    device.trustState = Unknown
+                    device.trustSource = "discovery"
+                    device.trustUpdatedAt = currentTimestamp()
+                } else if (device.trustUpdatedAt <= 0) {
+                    device.trustUpdatedAt = currentTimestamp()
+                }
+        }
+    }
+
+    func cleanupExpiredPinPairingSessions(): Unit {
+        let now = currentTimestamp()
+        synchronized(pinPairingMutex) {
+            let expired = ArrayList<String>()
+            for ((deviceId, session) in pinPairingSessions) {
+                if (session.expiresAt < now) {
+                    expired.add(deviceId)
+                }
+            }
+            for (deviceId in expired) {
+                pinPairingSessions.remove(deviceId)
+            }
+        }
+    }
+
+    func ensureRemoteDeviceTrusted(deviceId: String, action: String): Unit {
+        if (deviceId.size == 0 || deviceId == "local") {
+            return
+        }
+        match (getDevice(deviceId)) {
+            case Some(device) =>
+                match (device.trustState) {
+                    case Trusted => ()
+                    case Blocked => throw Exception("设备已拉黑，拒绝 ${action}: ${deviceId}")
+                    case _ => throw Exception("设备尚未授信，拒绝 ${action}: ${deviceId}")
+                }
+            case None => throw Exception("设备不存在: ${deviceId}")
+        }
+    }
+
+    func ensureDeviceUsableForTransfer(deviceId: String, action: String): Unit {
+        if (deviceId.size == 0 || deviceId == "local") {
+            return
+        }
+        ensureRemoteDeviceTrusted(deviceId, action)
+    }
+
+    public func refreshLocalDeviceAddress(): String {
+        let current = getLocalIP()
+        let displayIP = if (current.size > 0) { current } else { "127.0.0.1" }
+        var changed = false
+        var deviceSnapshot: ?Device = None
+
+        synchronized(devicesMutex) {
+            if (let Some(device) <- devices.get("local")) {
+                changed = device.ip != displayIP
+                device.ip = displayIP
+                device.online = true
+                device.lastSeen = currentTimestamp()
+                deviceSnapshot = Some(device)
+            }
+        }
+
+        match (deviceSnapshot) {
+            case Some(device) =>
+                persistDeviceRecord(device)
+                if (changed) {
+                    logger.logWarn("system", "本机IP已更新", displayIP, "core/server")
+                }
+            case None => ()
+        }
+
+        displayIP
+    }
+
+    // CFM/P Master boundary: task domain
+    public func createTransferTask(
+        sourceDevice: String,
+        targetDevice: String,
+        filePath: String,
+        targetPath: String
+    ): TransferTask {
+        ensureDeviceUsableForTransfer(sourceDevice, "transfer source")
+        ensureDeviceUsableForTransfer(targetDevice, "transfer target")
+
+        let task = TransferTask()
+        task.id = generateId()
+        task.sourceDevice = sourceDevice
+        task.targetDevice = targetDevice
+        task.filePath = filePath
+        task.targetPath = targetPath
+        task.status = Pending
+        task.createdAt = currentTimestamp()
+
+        match (getFileInfo(sourceDevice, filePath)) {
+            case Some(meta) =>
+                task.metadata = meta
+                task.sourceIsDir = meta.isDir
+                if (!meta.isDir) {
+                    task.totalEntries = 1
+                    task.totalBytes = meta.size
+                }
+            case None => ()
+        }
+
+        synchronized(tasksMutex) {
+            tasks.add(task.id, task)
+        }
+
+        spawn { transferEngine.startTransfer(task) }
+        task
+    }
+
+    public func getTask(taskId: String): ?TransferTask {
+        synchronized(tasksMutex) {
+            tasks.get(taskId)
+        }
+    }
+
+    public func listTasks(): ArrayList<TransferTask> {
+        let result = ArrayList<TransferTask>()
+        synchronized(tasksMutex) {
+            for ((_, task) in tasks) {
+                result.add(task)
+            }
+        }
+        result
+    }
+
+    public func cancelTask(taskId: String): Bool {
+        transferEngine.cancelTask(taskId)
+    }
+
+    func updateTaskStatus(taskId: String, status: TaskStatus, progress: Float64): Unit {
+        synchronized(tasksMutex) {
+            if (let Some(task) <- tasks.get(taskId)) {
+                task.status = status
+                task.progress = progress
+                task.updatedAt = currentTimestamp()
+            }
+        }
+    }
+
+    // CFM/P Master boundary: filesystem domain
+    public func listDir(deviceId: String, path: String): ArrayList<FileEntry> {
+        match (fileManager.getProvider(deviceId)) {
+            case Some(provider) => provider.listDir(path)
+            case None =>
+                match (openRemoteFileClient(deviceId)) {
+                    case Some(client) =>
+                        try {
+                            let entries = client.listDir(path)
+                            client.close()
+                            return entries
+                        } catch (e: Exception) {
+                            client.close()
+                            logger.logWarn("fs", "远端目录读取失败", "${deviceId}:${path} ${e.message}", "core/server")
+                        }
+                    case None => ()
+                }
+                ArrayList<FileEntry>()
+        }
+    }
+
+    public func getFileInfo(deviceId: String, path: String): ?FileMetadata {
+        match (fileManager.getProvider(deviceId)) {
+            case Some(provider) =>
+                try {
+                    return Some(provider.getFileInfo(path))
+                } catch (e: Exception) {
+                    logger.logWarn("fs", "文件信息读取失败", "${deviceId}:${path} ${e.message}", "core/server")
+                    return None
+                }
+            case None =>
+                match (openRemoteFileClient(deviceId)) {
+                    case Some(client) =>
+                        try {
+                            let info = client.getFileInfo(path)
+                            client.close()
+                            return info
+                        } catch (e: Exception) {
+                            client.close()
+                            logger.logWarn("fs", "远端文件信息读取失败", "${deviceId}:${path} ${e.message}", "core/server")
+                        }
+                    case None => ()
+                }
+                None
+        }
+    }
+
+    public func readFile(deviceId: String, path: String, offset: Int64, length: Int64): Array<UInt8> {
+        match (fileManager.getProvider(deviceId)) {
+            case Some(provider) => provider.readFile(path, offset, length)
+            case None =>
+                match (openRemoteFileClient(deviceId)) {
+                    case Some(client) =>
+                        try {
+                            let bytes = client.readRange(path, offset, length)
+                            client.close()
+                            return bytes
+                        } catch (e: Exception) {
+                            client.close()
+                            logger.logWarn("fs", "远端文件读取失败", "${deviceId}:${path} ${e.message}", "core/server")
+                        }
+                    case None => ()
+                }
+                Array<UInt8>(0, repeat: 0)
+        }
+    }
+
+    public func writeFile(deviceId: String, path: String, data: Array<UInt8>, offset: Int64): Unit {
+        fileManager.writeFile(deviceId, path, data, offset)
+    }
+
+    public func createDir(deviceId: String, path: String): Bool {
+        match (fileManager.getProvider(deviceId)) {
+            case Some(provider) =>
+                try {
+                    provider.createDir(path)
+                    return true
+                } catch (e: Exception) {
+                    logger.logWarn("fs", "目录创建失败", "${deviceId}:${path} ${e.message}", "core/server")
+                    return false
+                }
+            case None =>
+                match (openRemoteFileClient(deviceId)) {
+                    case Some(client) =>
+                        try {
+                            let ok = client.createDir(path)
+                            client.close()
+                            return ok
+                        } catch (e: Exception) {
+                            client.close()
+                            logger.logWarn("fs", "远端目录创建失败", "${deviceId}:${path} ${e.message}", "core/server")
+                        }
+                    case None => ()
+                }
+                false
+        }
+    }
+
+    // CFM/P Master boundary: security + peer domain
+    public func getSecurityMode(): String {
+        if (!profile.supportsPeerTransfer) {
+            return "plain"
+        }
+        peerTransferFeature.getSecurityMode()
+    }
+
+    public func setSecurityMode(rawMode: String): String {
+        if (!profile.supportsPeerTransfer) {
+            return "plain"
+        }
+        let mode = peerTransferFeature.setSecurityMode(rawMode)
+        logger.logInfo("peer", "安全模式已更新", mode, "core/server")
+        mode
+    }
+
+    public func beginPeerHandshake(peerId: String): String {
+        if (!profile.supportsPeerTransfer) {
+            return ""
+        }
+        peerTransferFeature.beginHandshake(peerId)
+    }
+
+    public func acceptPeerUpload(targetPath: String, peerId: String, token: String, payload: Array<UInt8>): PeerTransferResult {
+        if (!profile.supportsPeerTransfer) {
+            let result = PeerTransferResult()
+            result.success = false
+            result.message = "peer transfer disabled in current edition"
+            return result
+        }
+        peerTransferFeature.acceptUpload(targetPath, peerId, token, payload)
+    }
+
+    public func providePeerDownload(sourcePath: String, peerId: String, token: String): PeerDownloadPayload {
+        if (!profile.supportsPeerTransfer) {
+            let result = PeerDownloadPayload()
+            result.result.success = false
+            result.result.message = "peer transfer disabled in current edition"
+            return result
+        }
+        peerTransferFeature.provideDownload(sourcePath, peerId, token)
+    }
+
+    public func pullPeerLocal(sourcePath: String, targetPath: String): PeerTransferResult {
+        if (!profile.supportsPeerTransfer) {
+            let result = PeerTransferResult()
+            result.success = false
+            result.message = "peer transfer disabled in current edition"
+            return result
+        }
+        peerTransferFeature.pullLocalToPath(sourcePath, targetPath)
+    }
+
+    // CFM/P Master boundary: monitor domain
+    public func monitorSystem(): JsonObject {
+        monitorFeature.systemSnapshot(uptimeSeconds())
+    }
+
+    public func monitorCPU(): JsonObject {
+        monitorFeature.cpuSnapshot()
+    }
+
+    public func monitorMemory(): JsonObject {
+        monitorFeature.memorySnapshot()
+    }
+
+    public func monitorDisk(path: String): JsonObject {
+        monitorFeature.diskSnapshot(path)
+    }
+
+    public func monitorNetwork(): JsonObject {
+        monitorFeature.networkSnapshot()
+    }
+
+    public func monitorTemperature(): JsonObject {
+        monitorFeature.temperatureSnapshot()
+    }
+
+    public func monitorUptime(): JsonObject {
+        monitorFeature.uptimeSnapshot(uptimeSeconds())
+    }
+
+    func currentPrimaryIp(): String {
+        match (getDevice("local")) {
+            case Some(device) => device.ip
+            case None => ""
+        }
+    }
+
+    func ensureParentDir(path: String): Unit {
+        let runes = path.toRuneArray()
+        var slash: Int64 = -1
+        for (i in 0..runes.size) {
+            if (runes[i] == r'/') {
+                slash = i
+            }
+        }
+        if (slash <= 0) {
+            return
+        }
+        let parent = strSubstring(path, 0, slash)
+        try {
+            Directory.create(parent, recursive: true)
+        } catch (_: Exception) {}
+    }
+
+    func isDeviceOnline(deviceId: String): Bool {
+        match (getDevice(deviceId)) {
+            case Some(device) => device.online
+            case None => false
+        }
+    }
+
+    func writeRelayTarget(deviceId: String, path: String, payload: Array<UInt8>): Bool {
+        match (fileManager.getProvider(deviceId)) {
+            case Some(_provider) =>
+                try {
+                    writeFile(deviceId, path, payload, 0)
+                    return true
+                } catch (_: Exception) {
+                    return false
+                }
+            case None =>
+                match (openRemoteFileClient(deviceId)) {
+                    case Some(client) =>
+                        try {
+                            let ok = client.uploadFile(
+                                "relay-cache",
+                                path,
+                                payload.size,
+                                2 * 1024 * 1024,
+                                { offset: Int64, length: Int64 =>
+                                    sliceTransferBytes(payload, offset, length)
+                                }
+                            )
+                            client.close()
+                            return ok
+                        } catch (_: Exception) {
+                            client.close()
+                            return false
+                        }
+                    case None => false
+                }
+        }
+    }
+
+    func writeChunkTarget(deviceId: String, path: String, payload: Array<UInt8>, offset: Int64): Bool {
+        try {
+            writeFile(deviceId, path, payload, offset)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    // CFM/P Master boundary: relay + whitelist domain
+    public func createRelayJob(
+        sourceDevice: String,
+        targetDevice: String,
+        targetPath: String,
+        fileName: String,
+        payload: Array<UInt8>
+    ): RelayJob {
+        if (!profile.supportsRelay) {
+            let job = RelayJob()
+            job.status = "disabled"
+            job.message = "relay disabled in current edition"
+            job.targetDevice = targetDevice
+            job.targetPath = targetPath
+            job.fileName = fileName
+            return job
+        }
+        ensureDeviceUsableForTransfer(targetDevice, "relay target")
+        relayFeature.createJobFromPayload(sourceDevice, targetDevice, targetPath, fileName, payload)
+    }
+
+    public func listRelayJobs(): ArrayList<RelayJob> {
+        if (!profile.supportsRelay) {
+            return ArrayList<RelayJob>()
+        }
+        relayFeature.listJobs()
+    }
+
+    public func getRelayJob(jobId: String): ?RelayJob {
+        if (!profile.supportsRelay) {
+            return None
+        }
+        relayFeature.getJob(jobId)
+    }
+
+    public func relayCacheDescriptor(jobId: String): ?(String, String) {
+        if (!profile.supportsRelay) {
+            return None
+        }
+        relayFeature.cacheDescriptor(jobId)
+    }
+
+    public func retryRelayJob(jobId: String): ?RelayJob {
+        if (!profile.supportsRelay) {
+            return None
+        }
+        relayFeature.retryJob(jobId)
+    }
+
+    public func cancelRelayJob(jobId: String): Bool {
+        if (!profile.supportsRelay) {
+            return false
+        }
+        relayFeature.cancelJob(jobId)
+    }
+
+    public func upsertWhitelistRule(sourceDevice: String, targetDevice: String, enabled: Bool): WhitelistRule {
+        if (!profile.supportsWhitelist) {
+            let rule = WhitelistRule()
+            rule.sourceDevice = sourceDevice
+            rule.targetDevice = targetDevice
+            rule.enabled = false
+            return rule
+        }
+        ensureDeviceUsableForTransfer(targetDevice, "whitelist target")
+        relayFeature.upsertRule(sourceDevice, targetDevice, enabled)
+    }
+
+    public func listWhitelistRules(targetDevice: String): ArrayList<WhitelistRule> {
+        if (!profile.supportsWhitelist) {
+            return ArrayList<WhitelistRule>()
+        }
+        relayFeature.listRules(targetDevice)
+    }
+
+    public func setWhitelistRuleEnabled(sourceDevice: String, targetDevice: String, enabled: Bool): ?WhitelistRule {
+        if (!profile.supportsWhitelist) {
+            return None
+        }
+        relayFeature.setRuleEnabled(sourceDevice, targetDevice, enabled)
+    }
+
+    public func removeWhitelistRule(sourceDevice: String, targetDevice: String): Bool {
+        if (!profile.supportsWhitelist) {
+            return false
+        }
+        relayFeature.removeRule(sourceDevice, targetDevice)
+    }
+
+    public func cleanupRelayJobs(statusFilter: String, olderThan: Int64): Int64 {
+        if (!profile.supportsRelay) {
+            return 0
+        }
+        relayFeature.cleanupJobs(statusFilter, olderThan)
+    }
+
+    public func restoreRelayJob(jobId: String, targetDevice: String, targetPath: String): Bool {
+        if (!profile.supportsRelay) {
+            return false
+        }
+        ensureDeviceUsableForTransfer(targetDevice, "relay restore target")
+        relayFeature.restoreJob(jobId, targetDevice, targetPath)
+    }
+
+    public func relayStats(): JsonObject {
+        if (!profile.supportsRelay) {
+            return JsonObject()
+                .putBool("enabled", false)
+                .putInt("total", 0)
+        }
+        relayFeature.stats()
+    }
+
+    // CFM/P Master boundary: favorites domain
+    public func favoriteStoreMode(): String {
+        if (!profile.supportsFavorites) {
+            return "disabled"
+        }
+        favoritesFeature.mode()
+    }
+
+    public func listFavorites(): ArrayList<FavoriteEntry> {
+        if (!profile.supportsFavorites) {
+            return ArrayList<FavoriteEntry>()
+        }
+        favoritesFeature.list()
+    }
+
+    public func replaceFavorites(entries: ArrayList<FavoriteEntry>): ArrayList<FavoriteEntry> {
+        if (!profile.supportsFavorites) {
+            return ArrayList<FavoriteEntry>()
+        }
+        favoritesFeature.replace(entries)
+    }
+
+    // CFM/P Master boundary: chunk transfer domain
+    public func createChunkSession(
+        sourceDevice: String,
+        targetDevice: String,
+        targetPath: String,
+        fileName: String,
+        fileSize: Int64,
+        chunkSize: Int64
+    ): ChunkSession {
+        chunkTransferFeature.createSession(sourceDevice, targetDevice, targetPath, fileName, fileSize, chunkSize)
+    }
+
+    public func writeChunkSession(sessionId: String, index: Int64, payload: Array<UInt8>): ChunkWriteResult {
+        chunkTransferFeature.writeChunk(sessionId, index, payload)
+    }
+
+    public func chunkSessionManifest(sessionId: String): JsonObject {
+        chunkTransferFeature.sessionManifest(sessionId)
+    }
+
+    public func completeChunkSession(sessionId: String): ChunkCompleteResult {
+        chunkTransferFeature.completeSession(sessionId)
+    }
+
+    public func summarizeTransferSource(deviceId: String, path: String): JsonObject {
+        let plan = buildTransferPlan(deviceId, path)
+        JsonObject()
+            .putBool("success", true)
+            .putBool("sourceIsDir", plan.sourceIsDir)
+            .put("rootName", plan.rootName)
+            .putInt("totalDirs", plan.dirRelPaths.size)
+            .putInt("totalFiles", plan.files.size)
+            .putInt("totalEntries", plan.totalEntries)
+            .putInt("totalBytes", plan.totalBytes)
+    }
+
+    func openRemoteFileClient(deviceId: String): ?ConnectorFileClient {
+        if (deviceId == "local") {
+            return None
+        }
+        ensureRemoteDeviceTrusted(deviceId, "remote filesystem access")
+        match (getDevice(deviceId)) {
+            case Some(device) =>
+                if (defaultConnectorTypeForDevice(device) == "local-fs" || defaultConnectorTypeForDevice(device) == "manual") {
+                    return None
+                }
+                connectorRegistry.openFileClient(device)
+            case None => None
+        }
+    }
+
+    func normalizeManagedDeviceRecord(record: DeviceRegistryRecord, existing: ?Device): String {
+        record.id = record.id.trimAscii()
+        record.name = record.name.trimAscii()
+        record.deviceType = record.deviceType.trimAscii().toLower()
+        record.connectorType = normalizeConnectorType(record.connectorType)
+        record.ip = record.ip.trimAscii()
+
+        let validationError = validateManagedDeviceRecord(record)
+        if (validationError.size > 0) {
+            return validationError
+        }
+
+        if (record.name.size == 0) {
+            record.name = record.id
+        }
+        if (record.deviceType.size == 0) {
+            record.deviceType = "remote"
+        }
+        if (record.port <= 0) {
+            record.port = Int64(config.webPort)
+        }
+
+        match (existing) {
+            case Some(device) =>
+                record.online = device.online
+                record.lastSeen = if (device.lastSeen > 0) { device.lastSeen } else { currentTimestamp() }
+                record.trustState = device.trustState
+                record.trustSource = device.trustSource
+                record.trustUpdatedAt = device.trustUpdatedAt
+                if (record.connectorType.size == 0) {
+                    record.connectorType = defaultConnectorTypeForDevice(device)
+                }
+            case None =>
+                record.online = false
+                record.lastSeen = if (record.lastSeen > 0) { record.lastSeen } else { currentTimestamp() }
+                record.trustState = Unknown
+                record.trustSource = "manual"
+                record.trustUpdatedAt = currentTimestamp()
+        }
+
+        if (record.connectorType.size == 0) {
+            record.connectorType = "soonlink-http"
+        }
+        ""
+    }
+
+    func executeTransferTask(task: TransferTask, onProgress: (Float64) -> Unit): Bool {
+        try {
+            let plan = buildTransferPlan(task.sourceDevice, task.filePath)
+            synchronized(tasksMutex) {
+                task.metadata.name = if (task.metadata.name.size > 0) { task.metadata.name } else { plan.rootName }
+                task.sourceIsDir = plan.sourceIsDir
+                task.totalEntries = plan.totalEntries
+                task.completedEntries = 0
+                task.totalBytes = plan.totalBytes
+                task.transferredBytes = 0
+                task.currentItem = plan.rootName
+                task.error = ""
+                task.updatedAt = currentTimestamp()
+            }
+            onProgress(0.0)
+
+            if (plan.sourceIsDir) {
+                return executeDirectoryTransfer(task, plan, onProgress)
+            }
+            if (plan.files.size == 0) {
+                throw Exception("empty transfer plan")
+            }
+            let single = plan.files[0]
+            let targetFilePath = composeTaskTargetFilePath(task.targetPath, plan.rootName)
+            return transferPlannedFile(task, single, targetFilePath, 0, 0, onProgress)
+        } catch (e: Exception) {
+            synchronized(tasksMutex) {
+                task.error = "传输失败: ${e.message}"
+                task.updatedAt = currentTimestamp()
+            }
+            false
+        }
+    }
+
+    func executeDirectoryTransfer(task: TransferTask, plan: TransferPlan, onProgress: (Float64) -> Unit): Bool {
+        if (plan.rootName.size == 0) {
+            throw Exception("invalid source directory")
+        }
+
+        let targetRoot = composeTaskTargetDir(task.targetPath, plan.rootName)
+        var completedEntries: Int64 = 0
+        var transferredBytes: Int64 = 0
+
+        for (relDir in plan.dirRelPaths) {
+            if (isTaskCancelled(task)) {
+                return false
+            }
+            let dirPath = if (relDir.size == 0) { targetRoot } else { joinVirtualPath(targetRoot, relDir) }
+            if (!createDir(task.targetDevice, dirPath)) {
+                throw Exception("目标目录创建失败: ${dirPath}")
+            }
+            completedEntries += 1
+            updateTaskTransferState(task, transferredBytes, completedEntries, dirPath, onProgress)
+        }
+
+        for (item in plan.files) {
+            if (isTaskCancelled(task)) {
+                return false
+            }
+            let targetFilePath = joinVirtualPath(targetRoot, item.relativePath)
+            let ok = transferPlannedFile(task, item, targetFilePath, transferredBytes, completedEntries, onProgress)
+            if (!ok) {
+                return false
+            }
+            transferredBytes += item.size
+            completedEntries += 1
+        }
+
+        updateTaskTransferState(task, transferredBytes, completedEntries, targetRoot, onProgress)
+        true
+    }
+
+    func transferPlannedFile(
+        task: TransferTask,
+        item: TransferFilePlanItem,
+        targetFilePath: String,
+        transferredBefore: Int64,
+        completedBefore: Int64,
+        onProgress: (Float64) -> Unit
+    ): Bool {
+        match (fileManager.getProvider(task.targetDevice)) {
+            case Some(provider) =>
+                let chunkSize = resolveTaskChunkSize(task)
+                if (item.size == 0) {
+                    provider.writeFile(targetFilePath, Array<UInt8>(0, repeat: 0), 0)
+                    updateTaskTransferState(task, transferredBefore, completedBefore + 1, targetFilePath, onProgress)
+                    return true
+                }
+
+                var offset: Int64 = 0
+                while (offset < item.size) {
+                    if (isTaskCancelled(task)) {
+                        return false
+                    }
+                    let nextSize = if (item.size - offset > chunkSize) { chunkSize } else { item.size - offset }
+                    let payload = readFile(task.sourceDevice, item.sourcePath, offset, nextSize)
+                    if (payload.size <= 0 && nextSize > 0) {
+                        throw Exception("源文件读取中断: ${item.sourcePath}")
+                    }
+                    provider.writeFile(targetFilePath, payload, offset)
+                    offset += payload.size
+                    updateTaskTransferState(task, transferredBefore + offset, completedBefore, targetFilePath, onProgress)
+                }
+                updateTaskTransferState(task, transferredBefore + item.size, completedBefore + 1, targetFilePath, onProgress)
+                true
+            case None =>
+                match (openRemoteFileClient(task.targetDevice)) {
+                    case Some(client) =>
+                        try {
+                            let ok = client.uploadFile(
+                                task.sourceDevice,
+                                targetFilePath,
+                                item.size,
+                                resolveTaskChunkSize(task),
+                                { offset: Int64, length: Int64 =>
+                                    readFile(task.sourceDevice, item.sourcePath, offset, length)
+                                }
+                            )
+                            client.close()
+                            if (ok) {
+                                updateTaskTransferState(task, transferredBefore + item.size, completedBefore + 1, targetFilePath, onProgress)
+                                return true
+                            }
+                            synchronized(tasksMutex) {
+                                task.error = "远端写入失败: ${task.targetDevice}:${targetFilePath}"
+                                task.updatedAt = currentTimestamp()
+                            }
+                            return false
+                        } catch (e: Exception) {
+                            client.close()
+                            synchronized(tasksMutex) {
+                                task.error = "远端写入失败: ${e.message}"
+                                task.updatedAt = currentTimestamp()
+                            }
+                            return false
+                        }
+                    case None =>
+                        synchronized(tasksMutex) {
+                            task.error = "目标设备不是可用 SoonLink 节点: ${task.targetDevice}"
+                            task.updatedAt = currentTimestamp()
+                        }
+                        false
+                }
+        }
+    }
+
+    func buildTransferPlan(sourceDevice: String, sourcePath: String): TransferPlan {
+        match (getFileInfo(sourceDevice, sourcePath)) {
+            case Some(info) =>
+                let plan = TransferPlan()
+                plan.sourcePath = sourcePath
+                plan.sourceIsDir = info.isDir
+                plan.rootName = deriveTransferRootName(info, sourcePath)
+
+                if (!info.isDir) {
+                    let item = TransferFilePlanItem()
+                    item.sourcePath = sourcePath
+                    item.relativePath = plan.rootName
+                    item.size = info.size
+                    plan.files.add(item)
+                    plan.totalEntries = 1
+                    plan.totalBytes = info.size
+                    return plan
+                }
+
+                if (normalizeVirtualPath(sourcePath) == "/") {
+                    throw Exception("暂不支持直接传输根目录")
+                }
+                plan.dirRelPaths.add("")
+                plan.totalEntries = 1
+                appendDirectoryPlan(plan, sourceDevice, sourcePath, "")
+                plan
+            case None =>
+                throw Exception("源项不存在: ${sourceDevice}:${sourcePath}")
+        }
+    }
+
+    func appendDirectoryPlan(plan: TransferPlan, deviceId: String, currentPath: String, relativeBase: String): Unit {
+        let entries = listDir(deviceId, currentPath)
+        for (entry in entries) {
+            let name = if (entry.name.size > 0) { entry.name } else { extractVirtualBaseName(entry.path) }
+            let relativePath = if (relativeBase.size > 0) { "${relativeBase}/${name}" } else { name }
+            if (entry.isDir) {
+                plan.dirRelPaths.add(relativePath)
+                plan.totalEntries += 1
+                appendDirectoryPlan(plan, deviceId, entry.path, relativePath)
+                continue
+            }
+
+            let item = TransferFilePlanItem()
+            item.sourcePath = entry.path
+            item.relativePath = relativePath
+            match (getFileInfo(deviceId, entry.path)) {
+                case Some(info) => item.size = info.size
+                case None => item.size = entry.size
+            }
+            plan.files.add(item)
+            plan.totalEntries += 1
+            plan.totalBytes += item.size
+        }
+    }
+
+    func deriveTransferRootName(info: FileMetadata, sourcePath: String): String {
+        if (info.name.size > 0) {
+            return sanitizeTransferSegment(info.name)
+        }
+        sanitizeTransferSegment(extractVirtualBaseName(sourcePath))
+    }
+
+    func resolveTaskChunkSize(task: TransferTask): Int64 {
+        if (task.chunkSize > 0) {
+            return task.chunkSize
+        }
+        2 * 1024 * 1024
+    }
+
+    func updateTaskTransferState(
+        task: TransferTask,
+        transferredBytes: Int64,
+        completedEntries: Int64,
+        currentItem: String,
+        onProgress: (Float64) -> Unit
+    ): Unit {
+        var progress = 0.0
+        let totalBytes = if (task.totalBytes > 0) { task.totalBytes } else { 0 }
+        let totalEntries = if (task.totalEntries > 0) { task.totalEntries } else { 0 }
+        if (totalBytes > 0) {
+            progress = Float64(transferredBytes) / Float64(totalBytes) * 100.0
+        } else if (totalEntries > 0) {
+            progress = Float64(completedEntries) / Float64(totalEntries) * 100.0
+        }
+        if (progress > 100.0) {
+            progress = 100.0
+        }
+
+        synchronized(tasksMutex) {
+            task.transferredBytes = transferredBytes
+            task.completedEntries = completedEntries
+            task.currentItem = currentItem
+            task.progress = progress
+            task.updatedAt = currentTimestamp()
+        }
+        onProgress(progress)
+    }
+
+    func isTaskCancelled(task: TransferTask): Bool {
+        synchronized(tasksMutex) {
+            match (task.status) {
+                case Cancelled => true
+                case _ => false
+            }
+        }
+    }
+}
+
+class TransferPlan {
+    var sourcePath: String = ""
+    var rootName: String = ""
+    var sourceIsDir: Bool = false
+    var dirRelPaths: ArrayList<String> = ArrayList<String>()
+    var files: ArrayList<TransferFilePlanItem> = ArrayList<TransferFilePlanItem>()
+    var totalEntries: Int64 = 0
+    var totalBytes: Int64 = 0
+
+    init() {}
+}
+
+class TransferFilePlanItem {
+    var sourcePath: String = ""
+    var relativePath: String = ""
+    var size: Int64 = 0
+
+    init() {}
+}
+
+class CoreServerTransferProtocol <: TransferProtocol {
+    let server: CoreServer
+    let protocolName: String
+
+    public init(server: CoreServer, protocolName: String) {
+        this.server = server
+        this.protocolName = protocolName
+    }
+
+    public func name(): String {
+        protocolName
+    }
+
+    public func transfer(task: TransferTask, onProgress: (Float64) -> Unit): Bool {
+        server.executeTransferTask(task, onProgress)
+    }
+}
+
+func normalizeVirtualPath(path: String): String {
+    var out = path.trimAscii()
+    if (out.size == 0) {
+        out = "/"
+    }
+    if (!strStartsWith(out, "/")) {
+        out = "/" + out
+    }
+    while (strContains(out, "//")) {
+        out = strReplace(out, "//", "/")
+    }
+    if (out.size > 1 && strEndsWith(out, "/")) {
+        out = strSubstring(out, 0, out.size - 1)
+    }
+    out
+}
+
+func composeTaskTargetDir(targetPath: String, rootName: String): String {
+    let normalizedTarget = normalizeVirtualPath(targetPath)
+    let safeRootName = sanitizeTransferSegment(rootName)
+    if (normalizedTarget == "/") {
+        return "/" + safeRootName
+    }
+    if (strEndsWith(normalizedTarget, "/" + safeRootName)) {
+        return normalizedTarget
+    }
+    normalizedTarget + "/" + safeRootName
+}
+
+func composeTaskTargetFilePath(targetPath: String, fileName: String): String {
+    let normalizedTarget = normalizeVirtualPath(targetPath)
+    let safeFileName = sanitizeTransferSegment(fileName)
+    if (normalizedTarget == "/") {
+        return "/" + safeFileName
+    }
+    if (strEndsWith(normalizedTarget, "/" + safeFileName)) {
+        return normalizedTarget
+    }
+    normalizedTarget + "/" + safeFileName
+}
+
+func joinVirtualPath(base: String, relative: String): String {
+    if (relative.size == 0) {
+        return normalizeVirtualPath(base)
+    }
+    let normalizedBase = normalizeVirtualPath(base)
+    let normalizedRel = strTrimPrefix(relative.trimAscii(), "/")
+    if (normalizedBase == "/") {
+        return "/" + normalizedRel
+    }
+    normalizedBase + "/" + normalizedRel
+}
+
+func extractVirtualBaseName(path: String): String {
+    let normalized = normalizeVirtualPath(path)
+    if (normalized == "/") {
+        return "root"
+    }
+    let runes = normalized.toRuneArray()
+    var slashAt: Int64 = -1
+    for (i in 0..runes.size) {
+        if (runes[i] == r'/') {
+            slashAt = i
+        }
+    }
+    if (slashAt < 0 || slashAt >= normalized.size - 1) {
+        return normalized
+    }
+    strSubstring(normalized, slashAt + 1, normalized.size)
+}
+
+func sanitizeTransferSegment(name: String): String {
+    var out = name.trimAscii()
+    if (out.size == 0) {
+        out = "item"
+    }
+    out = strReplace(out, "/", "_")
+    out = strReplace(out, "\\", "_")
+    out
+}
+
+func sliceTransferBytes(data: Array<UInt8>, offset: Int64, length: Int64): Array<UInt8> {
+    if (offset < 0 || length <= 0 || offset >= data.size) {
+        return Array<UInt8>(0, repeat: 0)
+    }
+    var end = offset + length
+    if (end > data.size) {
+        end = data.size
+    }
+    let size = end - offset
+    let out = Array<UInt8>(size, repeat: 0)
+    var index: Int64 = 0
+    var cursor = offset
+    while (cursor < end) {
+        out[index] = data[cursor]
+        index += 1
+        cursor += 1
+    }
+    out
+}
+
+func randomNumericPin(length: Int64): String {
+    let digits = "0123456789".toRuneArray()
+    let random = Random()
+    var out = ""
+    var index: Int64 = 0
+    while (index < length) {
+        var raw = random.nextInt64()
+        if (raw < 0) {
+            raw = -raw
+        }
+        out += digits[raw % digits.size].toString()
+        index += 1
+    }
+    out
+}
