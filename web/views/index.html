@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
+</head>
+<body class="soonlink-app" data-role-variant="remote" data-time-mode="light">
+    <div class="app-shell">
+        <header class="app-header" id="main-app-header">
+            <div class="app-header-brand">
+                <span class="brand-dot"></span>
+                <div>
+                    <h1 class="app-title">SoonLink</h1>
+                    <p class="app-subtitle">跨设备传输工作台</p>
+                </div>
+            </div>
+            <div class="app-header-actions">
+                <div class="app-header-context" id="app-header-context">
+                    <span class="pill" id="mode-pill">普通访问</span>
+                    <span class="pill" id="edition-pill">FULL</span>
+                </div>
+                <div class="app-header-controls">
+                    <button type="button" class="btn btn-sm btn-outline-secondary theme-switch-btn pd-fl-cc pd-asr1" id="theme-toggle-btn" title="切换主题模式">
+                        <i class="bi bi-circle-half"></i>
+                        <!-- <span class="app-header-control-label" id="theme-toggle-label">自动 · 浅色</span> -->
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary desktop-only-inline pd-fl-cc pd-asr1" id="nav-dock-toggle-btn" title="导航当前贴左，点击切到右侧">
+                        <i class="bi bi-layout-sidebar-inset"></i>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary pd-asr1" id="refresh-btn" title="刷新当前页面">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                    <a class="btn btn-sm btn-outline-secondary pd-fl-cc" href="/login">
+                        <i class="bi bi-person-circle me-1"></i><span class="app-header-control-label">Login</span>
+                    </a>
+                </div>
+            </div>
+        </header>
+
+        <main class="app-main">
+            <section class="page-content is-active" id="devices-page" data-title="设备">
+                <div class="app-card">
+                    <div class="card-head">
+                        <h2>设备列表</h2>
+                        <button class="btn btn-sm btn-primary pd-fl-cc" type="button" id="discover-btn">
+                            <i class="bi bi-broadcast"></i> 刷新发现
+                        </button>
+                    </div>
+                    <div class="toolbar-row mt-3">
+                        <div class="stat-chips">
+                            <span class="stat-chip" id="devices-total-chip">总设备 0</span>
+                            <span class="stat-chip" id="devices-online-chip">在线 0</span>
+                            <span class="stat-chip" id="devices-offline-chip">离线 0</span>
+                        </div>
+                        <div class="filter-group">
+                            <input class="form-control form-control-sm" id="device-search-input" placeholder="搜索设备名 / ID / IP">
+                            <select class="form-select form-select-sm" id="device-status-filter">
+                                <option value="all">全部状态</option>
+                                <option value="online">仅在线</option>
+                                <option value="offline">仅离线</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="quick-favorites-panel mt-3" data-capability="favorites">
+                        <div class="quick-favorites-head">
+                            <span><i class="bi bi-star me-1"></i>收藏路径快捷入口</span>
+                            <button class="btn btn-sm btn-outline-secondary" type="button" id="favorites-manage-btn">管理</button>
+                        </div>
+                        <div id="home-favorites-list" class="favorites-list mt-2"></div>
+                    </div>
+                    <div class="device-grid" id="devices-list"></div>
+                </div>
+                <div class="app-card mt-3 admin-only" id="manual-device-panel" style="display: none;">
+                    <div class="card-head">
+                        <div>
+                            <h2>手动节点端点</h2>
+                            <p class="section-note mb-0">维护同构 SoonLink 节点或未来连接器端点，本机设备不在这里编辑</p>
+                        </div>
+                    </div>
+                    <form id="manual-device-form" class="mt-3">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label for="manual-device-id" class="form-label">设备ID</label>
+                                <input class="form-control" id="manual-device-id" placeholder="office-node">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="manual-device-name" class="form-label">显示名称</label>
+                                <input class="form-control" id="manual-device-name" placeholder="Office Node">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="manual-device-type" class="form-label">设备类型</label>
+                                <input class="form-control" id="manual-device-type" value="remote" placeholder="remote / desktop / mobile">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="manual-device-connector-type" class="form-label">连接器</label>
+                                <input class="form-control" id="manual-device-connector-type" list="manual-device-connector-options" value="soonlink-http" placeholder="soonlink-http">
+                                <datalist id="manual-device-connector-options"></datalist>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="manual-device-ip" class="form-label">主机 / IP</label>
+                                <input class="form-control" id="manual-device-ip" placeholder="10.0.0.24 / node.example.com">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="manual-device-port" class="form-label">端口</label>
+                                <input class="form-control" id="manual-device-port" type="number" min="1" step="1" placeholder="19090">
+                            </div>
+                        </div>
+                        <div class="manual-device-status mt-3" id="manual-device-status">
+                            <span class="stat-chip" id="manual-device-mode-chip">新建端点</span>
+                            <span class="stat-chip" id="manual-device-driver-chip">驱动状态 -</span>
+                            <span class="stat-chip" id="manual-device-target-chip">保存后写入设备注册表</span>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 mt-3">
+                            <button class="btn btn-primary" type="submit" id="manual-device-save-btn">保存端点</button>
+                            <button class="btn btn-outline-danger" type="button" id="manual-device-delete-btn" disabled>删除端点</button>
+                            <button class="btn btn-outline-secondary" type="button" id="manual-device-reset-btn">清空表单</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <section class="page-content" id="files-page" data-title="文件">
+                <div class="app-card">
+                    <div class="card-head stacked-mobile">
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <select class="form-select" id="device-selector"></select>
+                            <button class="btn btn-success btn-sm pd-fl-cc" type="button" id="upload-trigger-btn">
+                                <i class="bi bi-cloud-upload me-1"></i>上传
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary pd-asr1" type="button" id="paste-btn" title="粘贴上传">
+                                <i class="bi bi-clipboard2"></i>
+                            </button>
+                        </div>
+                        <div class="input-group path-group">
+                            <button class="btn btn-outline-secondary" type="button" id="add-current-favorite-btn" data-capability="favorites" title="收藏当前路径">
+                                <i class="bi bi-star"></i>
+                            </button>
+                            <input type="text" class="form-control" id="current-path" value="/">
+                            <button class="btn btn-outline-secondary" type="button" id="path-go-btn">
+                                <i class="bi bi-arrow-return-left"></i>
+                            </button>
+                            <button class="btn btn-outline-secondary" type="button" id="go-parent-dir">
+                                <i class="bi bi-arrow-up"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="toolbar-row mt-3 file-toolbar-row">
+                        <div class="favorites-list" id="files-favorites-list" data-capability="favorites"></div>
+                        <div class="filter-group file-sort-controls">
+                            <select class="form-select form-select-sm" id="file-sort-by">
+                                <option value="name">名称</option>
+                                <option value="size">大小</option>
+                                <option value="modified">时间</option>
+                            </select>
+                            <button class="btn btn-sm btn-outline-secondary" type="button" id="file-sort-order-btn" data-order="asc">
+                                升
+                            </button>
+                        </div>
+                    </div>
+                    <div class="file-workspace-strip mt-3">
+                        <span class="stat-chip" id="files-device-chip">设备 -</span>
+                        <span class="stat-chip" id="files-connector-chip">连接器 -</span>
+                        <span class="stat-chip" id="files-path-chip">路径 /</span>
+                        <span class="stat-chip" id="files-count-chip">条目 0</span>
+                        <span class="stat-chip" id="files-favorites-mode-chip" data-capability="favorites">收藏 0 · cache</span>
+                    </div>
+                    <div class="table-responsive file-table-wrap" id="file-table-dropzone">
+                        <div class="drop-hint" id="file-drop-hint">
+                            <div class="drop-hint-title">当前目录 /</div>
+                            <div class="drop-hint-copy">拖拽上传到当前目录，点图标收藏，点名称打开目录或发起传输</div>
+                        </div>
+                        <div class="table-container">
+                            <table class="table table-hover align-middle mb-0 file-list-table">
+                                <thead>
+                                    <tr>
+                                        <th>名称</th>
+                                        <th style="width: 108px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="file-list"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="page-content" id="transfers-page" data-title="传输">
+                <div class="app-card">
+                    <div class="card-head">
+                        <h2>传输任务</h2>
+                        <button class="btn btn-sm btn-outline-primary pd-fl-cc" type="button" id="open-transfer-modal">
+                            <i class="bi bi-plus-circle"></i> 新建任务
+                        </button>
+                    </div>
+                    <div class="toolbar-row mt-3">
+                        <div class="stat-chips">
+                            <span class="stat-chip" id="tasks-total-chip">任务 0</span>
+                            <span class="stat-chip" id="tasks-running-chip">运行中 0</span>
+                            <span class="stat-chip" id="tasks-failed-chip">失败 0</span>
+                        </div>
+                        <div class="filter-group">
+                            <input class="form-control form-control-sm" id="task-search-input" placeholder="搜索任务 / 文件 / 设备">
+                            <select class="form-select form-select-sm" id="task-status-filter">
+                                <option value="all">全部状态</option>
+                                <option value="pending">等待中</option>
+                                <option value="running">传输中</option>
+                                <option value="completed">已完成</option>
+                                <option value="failed">失败</option>
+                                <option value="cancelled">已取消</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0 transfer-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>传输方向</th>
+                                    <th>文件路径</th>
+                                    <th>状态</th>
+                                    <th>进度</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="task-list"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="app-card mt-3" data-capability="relay">
+                    <div class="card-head">
+                        <h2>中继任务</h2>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-select-visible-btn">
+                                <i class="bi bi-check2-square"></i> 选择可见
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary pd-fl-cc" type="button" id="relay-refresh-btn">
+                                <i class="bi bi-arrow-repeat"></i> 刷新中继
+                            </button>
+                        </div>
+                    </div>
+                    <div class="row g-3 mt-1">
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label for="relay-source-device" class="form-label">源设备</label>
+                                <select class="form-select form-select-sm" id="relay-source-device"></select>
+                            </div>
+                            <div class="col-6">
+                                <label for="relay-target-device" class="form-label">目标设备</label>
+                                <select class="form-select form-select-sm" id="relay-target-device"></select>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="relay-target-path" class="form-label">目标目录</label>
+                            <input class="form-control form-control-sm" id="relay-target-path" value="/" placeholder="/downloads">
+                        </div>
+                        <div class="col-md-2">
+                            <label for="relay-file-input" class="form-label">文件</label>
+                            <input class="form-control form-control-sm" type="file" id="relay-file-input">
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2 mt-2">
+                        <button class="btn btn-sm btn-primary pd-fl-cc" type="button" id="relay-submit-btn">
+                            <i class="bi bi-cloud-arrow-up me-1"></i>提交到中继
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-retry-selected-btn">
+                            <i class="bi bi-arrow-repeat me-1"></i>重试选中
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger pd-fl-cc" type="button" id="relay-cancel-selected-btn">
+                            <i class="bi bi-x-octagon me-1"></i>取消选中
+                        </button>
+                    </div>
+                    <p class="section-note mt-2 mb-0" id="relay-restore-hint">回流默认复用当前文件页的设备与目录</p>
+                    <div class="row g-2 mt-1">
+
+                        <div class="col-6">
+                            <label for="relay-cleanup-status" class="form-label">清理状态</label>
+                            <select class="form-select form-select-sm" id="relay-cleanup-status">
+                                <option value="">默认(失败/过期/已投递)</option>
+                                <option value="failed">failed</option>
+                                <option value="expired">expired</option>
+                                <option value="delivered">delivered</option>
+                                <option value="cached">cached</option>
+                                <option value="pending_approval">pending_approval</option>
+                                <option value="dispatching">dispatching</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label for="relay-cleanup-hours" class="form-label">仅清理 N 小时前</label>
+                            <input class="form-control form-control-sm" id="relay-cleanup-hours" type="number" min="0" value="0" placeholder="0=不限制">
+                        </div>
+
+                        <div class="col-md-4 d-flex align-items-end">
+                            <button class="btn btn-sm btn-outline-warning w-100 pd-fl-cc" type="button" id="relay-cleanup-btn">
+                                <i class="bi bi-trash3 me-1"></i>执行中继清理
+                            </button>
+                        </div>
+                    </div>
+                    <div class="toolbar-row mt-3">
+                        <div class="stat-chips">
+                            <span class="stat-chip" id="relay-total-chip">总任务 0</span>
+                            <span class="stat-chip" id="relay-cached-chip">缓存中 0</span>
+                            <span class="stat-chip" id="relay-pending-chip">待审批 0</span>
+                            <span class="stat-chip" id="relay-failed-chip">失败 0</span>
+                        </div>
+                        <div class="filter-group">
+                            <input class="form-control form-control-sm" id="relay-search-input" placeholder="搜索任务ID / 源 / 目标 / 文件">
+                            <select class="form-select form-select-sm" id="relay-status-filter">
+                                <option value="all">全部状态</option>
+                                <option value="cached">cached</option>
+                                <option value="pending_approval">pending_approval</option>
+                                <option value="dispatching">dispatching</option>
+                                <option value="delivered">delivered</option>
+                                <option value="failed">failed</option>
+                                <option value="expired">expired</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-responsive mt-3">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>
+                                        <input type="checkbox" id="relay-select-all">
+                                    </th>
+                                    <th>任务ID</th>
+                                    <th>源</th>
+                                    <th>目标</th>
+                                    <th>文件</th>
+                                    <th>状态</th>
+                                    <th>大小</th>
+                                    <th>尝试</th>
+                                    <th>TTL</th>
+                                    <th>更新时间</th>
+                                    <th>说明</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="relay-job-list"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="app-card mt-3 admin-only" style="display: none;" data-capability="whitelist">
+                    <div class="card-head">
+                        <h2>白名单派发规则</h2>
+                    </div>
+                    <div class="row g-3 mt-1">
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label for="whitelist-source-device" class="form-label">源设备（支持 *）</label>
+                                <input class="form-control form-control-sm" id="whitelist-source-device" value="*">
+                            </div>
+                            <div class="col-6">
+                                <label for="whitelist-target-device" class="form-label">目标设备</label>
+                                <select class="form-select form-select-sm" id="whitelist-target-device"></select>
+                            </div>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">启用</label>
+                            <div class="form-check mt-1">
+                                <input class="form-check-input" type="checkbox" id="whitelist-enabled" checked>
+                                <label class="form-check-label" for="whitelist-enabled">enabled</label>
+                            </div>
+                        </div>
+                        <div class="col-md-2 d-flex align-items-end">
+                            <button class="btn btn-sm btn-outline-primary w-100" type="button" id="whitelist-save-btn">保存规则</button>
+                        </div>
+                    </div>
+                    <div id="whitelist-rules-list" class="mt-3"></div>
+                </div>
+            </section>
+
+            <section class="page-content" id="settings-page" data-title="设置">
+                <div class="app-card">
+                    <h2>基础设置</h2>
+                    <form id="settings-form" class="mt-3">
+                        <div class="mb-3">
+                            <label for="temp-dir" class="form-label">临时文件目录</label>
+                            <input type="text" class="form-control" id="temp-dir" value="/tmp/soonlink">
+                        </div>
+                        <div class="mb-3">
+                            <label for="max-connections" class="form-label">最大连接数</label>
+                            <input type="number" class="form-control" id="max-connections" value="100">
+                        </div>
+                        <div class="mb-3 form-check" data-capability="peerTransfer">
+                            <input type="checkbox" class="form-check-input" id="enable-encryption">
+                            <label class="form-check-label" for="enable-encryption">启用加密模式</label>
+                        </div>
+                        <button type="submit" class="btn btn-primary">保存</button>
+                    </form>
+                </div>
+            </section>
+
+            <section class="page-content admin-only" id="admin-page" data-title="管理" style="display: none;">
+                <div class="app-card">
+                    <div class="card-head">
+                        <h2>本机管理配置</h2>
+                        <a class="btn btn-sm btn-outline-secondary" href="/admin" target="_blank" rel="noreferrer">
+                            打开完整管理台
+                        </a>
+                    </div>
+                    <form id="admin-config-form" class="mt-3">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="admin-temp-dir" class="form-label">临时目录</label>
+                                <input type="text" class="form-control" id="admin-temp-dir">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="admin-log-dir" class="form-label">日志目录</label>
+                                <input type="text" class="form-control" id="admin-log-dir">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="admin-local-root-dir" class="form-label">本地文件根目录</label>
+                                <input type="text" class="form-control" id="admin-local-root-dir">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="admin-max-connections" class="form-label">最大连接数</label>
+                                <input type="number" class="form-control" id="admin-max-connections">
+                            </div>
+                            <div class="col-md-4" data-capability="peerTransfer">
+                                <label for="admin-security-mode" class="form-label">安全模式</label>
+                                <select class="form-select" id="admin-security-mode">
+                                    <option value="plain">plain</option>
+                                    <option value="encrypted">encrypted</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4" data-capability="activeDiscovery">
+                                <label for="admin-discovery-udp-port" class="form-label">UDP发现端口</label>
+                                <input type="number" class="form-control" id="admin-discovery-udp-port">
+                            </div>
+                            <div class="col-md-4" data-capability="relay">
+                                <label for="admin-relay-retention-hours" class="form-label">中继保留时长（小时）</label>
+                                <input type="number" class="form-control" id="admin-relay-retention-hours">
+                            </div>
+                            <div class="col-md-4" data-capability="relay">
+                                <label for="admin-relay-limit-mode" class="form-label">中继容量模式</label>
+                                <select class="form-select" id="admin-relay-limit-mode">
+                                    <option value="fixed">fixed</option>
+                                    <option value="percent">percent</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4" data-capability="favorites">
+                                <label for="admin-favorites-store-mode" class="form-label">收藏存储模式</label>
+                                <select class="form-select" id="admin-favorites-store-mode">
+                                    <option value="cache">cache</option>
+                                    <option value="toml">toml</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6" data-capability="relay">
+                                <label for="admin-relay-cache-dir" class="form-label">中继缓存目录</label>
+                                <input type="text" class="form-control" id="admin-relay-cache-dir">
+                            </div>
+                            <div class="col-md-6" data-capability="favorites">
+                                <label for="admin-favorites-toml-file" class="form-label">收藏持久化文件</label>
+                                <input type="text" class="form-control" id="admin-favorites-toml-file">
+                            </div>
+                            <div class="col-md-6" data-capability="whitelist">
+                                <label for="admin-whitelist-toml-file" class="form-label">白名单持久化文件</label>
+                                <input type="text" class="form-control" id="admin-whitelist-toml-file">
+                            </div>
+                            <div class="col-md-3" data-capability="relay">
+                                <label for="admin-relay-limit-bytes" class="form-label">fixed容量上限（bytes）</label>
+                                <input type="number" class="form-control" id="admin-relay-limit-bytes">
+                            </div>
+                            <div class="col-md-3" data-capability="relay">
+                                <label for="admin-relay-limit-percent" class="form-label">percent容量上限（%）</label>
+                                <input type="number" class="form-control" id="admin-relay-limit-percent">
+                            </div>
+                        </div>
+                        <div class="mt-3 d-flex flex-wrap gap-3">
+                            <div class="form-check" data-capability="activeDiscovery">
+                                <input class="form-check-input" type="checkbox" id="admin-enable-mdns">
+                                <label class="form-check-label" for="admin-enable-mdns">启用 mDNS</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="admin-local-auth-trust-proxy-headers">
+                                <label class="form-check-label" for="admin-local-auth-trust-proxy-headers">信任代理头本机识别</label>
+                            </div>
+                            <div class="form-check" data-capability="relay">
+                                <input class="form-check-input" type="checkbox" id="admin-relay-enabled">
+                                <label class="form-check-label" for="admin-relay-enabled">启用中继缓存</label>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <button type="submit" class="btn btn-primary">保存管理配置</button>
+                        </div>
+                    </form>
+                </div>
+                <div class="app-card mt-3">
+                    <div class="card-head">
+                        <h2>系统日志预览</h2>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" id="admin-refresh-logs">
+                            刷新日志
+                        </button>
+                    </div>
+                    <div id="admin-logs-list" class="log-list mt-3">暂无日志</div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <div class="float-nav-wrap">
+        <nav id="float-nav" class="float-nav expanded" aria-label="主导航">
+            <button class="float-nav-trigger" id="float-nav-trigger" type="button" aria-label="展开导航">
+                <i class="bi bi-grid"></i>
+            </button>
+            <button type="button" class="float-nav-item active" id="nav-devices" data-target="devices-page" data-full-label="设备" data-short-label="设">
+                <i class="bi bi-devices"></i><span class="float-nav-label">设备</span>
+            </button>
+            <button type="button" class="float-nav-item" id="nav-files" data-target="files-page" data-full-label="文件" data-short-label="文">
+                <i class="bi bi-folder2-open"></i><span class="float-nav-label">文件</span>
+            </button>
+            <button type="button" class="float-nav-item float-nav-sub-trigger" id="nav-files-menu" title="文件收藏菜单" data-capability="favorites" data-full-label="收藏" data-short-label="藏">
+                <i class="bi bi-chevron-down"></i><span class="float-nav-label">收藏</span>
+            </button>
+            <button type="button" class="float-nav-item" id="nav-transfers" data-target="transfers-page" data-full-label="传输" data-short-label="传">
+                <i class="bi bi-arrow-left-right"></i><span class="float-nav-label">传输</span>
+            </button>
+            <button type="button" class="float-nav-item" id="nav-settings" data-target="settings-page" data-full-label="设置" data-short-label="设">
+                <i class="bi bi-sliders"></i><span class="float-nav-label">设置</span>
+            </button>
+            <button type="button" class="float-nav-item admin-only" id="nav-admin" data-target="admin-page" style="display: none;" data-full-label="管理" data-short-label="管">
+                <i class="bi bi-shield-lock"></i><span class="float-nav-label">管理</span>
+            </button>
+            <div class="float-submenu" id="files-submenu">
+                <div class="submenu-title">文件收藏</div>
+                <div id="files-submenu-list" class="submenu-list"></div>
+            </div>
+        </nav>
+    </div>
+
+    <div class="modal fade" id="upload-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-cloud-upload me-2"></i>上传文件</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="upload-form">
+                        <div class="mb-4">
+                            <div class="upload-drop-zone border-2 border-dashed rounded p-4 text-center" id="upload-drop-zone">
+                                <div class="upload-drop-content">
+                                    <i class="bi bi-cloud-upload display-4 text-muted mb-3"></i>
+                                    <h5 class="text-muted">拖拽文件到此处或点击选择</h5>
+                                    <p class="text-muted mb-0">支持多文件上传</p>
+                                </div>
+                                <input class="form-control d-none" type="file" id="upload-file" multiple>
+                            </div>
+                        </div>
+
+                        <div id="selected-files-container" class="mb-3" style="display: none;">
+                            <label class="form-label">已选择的文件:</label>
+                            <div id="selected-files-list" class="border rounded p-2"></div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="target-device" class="form-label">目标设备</label>
+                                    <select class="form-select" id="target-device"></select>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="target-path" class="form-label">目标目录</label>
+                                    <input type="text" class="form-control" id="target-path" value="/" placeholder="/path/to/directory/">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">收藏位置</label>
+                            <div class="input-group">
+                                <select class="form-select" id="upload-favorite-selector">
+                                    <option value="">选择收藏路径...</option>
+                                </select>
+                                <button class="btn btn-outline-secondary" type="button" id="use-upload-favorite-btn">使用</button>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="overwrite-files" checked>
+                                <label class="form-check-label" for="overwrite-files">覆盖同名文件</label>
+                            </div>
+                        </div>
+                    </form>
+
+                    <div id="upload-progress" class="mt-3" style="display: none;">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>上传进度</span>
+                            <span id="upload-percentage">0%</span>
+                        </div>
+                        <div class="progress">
+                            <div class="progress-bar" role="progressbar" style="width: 0%" id="upload-progress-bar"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-success" id="upload-btn">
+                        <i class="bi bi-cloud-upload me-1"></i>开始上传
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="transfer-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-arrow-left-right me-2"></i>传输任务</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="transfer-modal-layout">
+                        <div class="transfer-file-info" id="transfer-file-info">
+                            <div class="transfer-file-header">
+                                <h6 class="mb-2"><i class="bi bi-file-earmark me-1"></i>源项信息</h6>
+                                <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="file-inspector-refresh-btn">
+                                    <i class="bi bi-arrow-repeat me-1"></i>刷新详情
+                                </button>
+                            </div>
+                            <div class="transfer-info-grid">
+                                <div class="transfer-info-item full-width">
+                                    <span class="transfer-info-label">名称</span>
+                                    <span class="transfer-info-value" id="transfer-info-name">-</span>
+                                </div>
+                                <div class="transfer-info-item full-width">
+                                    <span class="transfer-info-label">路径</span>
+                                    <span class="transfer-info-value" id="transfer-info-path">-</span>
+                                </div>
+                                <div class="transfer-info-item">
+                                    <span class="transfer-info-label">大小</span>
+                                    <span class="transfer-info-value" id="transfer-info-size">-</span>
+                                </div>
+                                <div class="transfer-info-item">
+                                    <span class="transfer-info-label">类型</span>
+                                    <span class="transfer-info-value" id="transfer-info-type">-</span>
+                                </div>
+                                <div class="transfer-info-item">
+                                    <span class="transfer-info-label">条目摘要</span>
+                                    <span class="transfer-info-value" id="transfer-info-entries">-</span>
+                                </div>
+                                <div class="transfer-info-item">
+                                    <span class="transfer-info-label">修改时间</span>
+                                    <span class="transfer-info-value" id="transfer-info-modified">-</span>
+                                </div>
+                                <div class="transfer-info-item">
+                                    <span class="transfer-info-label">源连接器</span>
+                                    <span class="transfer-info-value" id="transfer-info-source-connector">-</span>
+                                </div>
+                                <div class="transfer-info-item">
+                                    <span class="transfer-info-label">目标连接器</span>
+                                    <span class="transfer-info-value" id="transfer-info-target-connector">-</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="file-preview-wrap transfer-preview-wrap" id="transfer-preview-wrap">
+                            <div class="preview-head">
+                                <div>
+                                    <h6 class="mb-1"><i class="bi bi-eye me-1"></i>文件预览</h6>
+                                    <p class="section-note mb-0" id="transfer-preview-meta">选择文件后显示预览</p>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="transfer-preview-open-btn" hidden>
+                                        <i class="bi bi-eye me-1"></i>新标签打开
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="transfer-preview-empty" id="transfer-preview-empty">选择单个文件后可在这里查看预览内容。</div>
+                            <pre class="file-preview transfer-preview-text" id="transfer-preview-text" hidden></pre>
+                            <img id="transfer-preview-image" class="transfer-preview-image" alt="文件预览" hidden>
+                            <video id="transfer-preview-video" class="transfer-preview-media" controls hidden></video>
+                            <audio id="transfer-preview-audio" class="transfer-preview-audio" controls hidden></audio>
+                            <iframe id="transfer-preview-frame" class="transfer-preview-frame" title="文件预览" hidden></iframe>
+                        </div>
+                        <div class="transfer-quick-actions">
+                            <span class="section-note transfer-action-note" id="transfer-download-note">单文件可直接下载，也可以展开后创建跨设备传输任务。</span>
+                        </div>
+                        <div class="accordion transfer-options-accordion" id="transfer-options-accordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="transfer-options-heading">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#transfer-options-panel" aria-expanded="false" aria-controls="transfer-options-panel">
+                                        <span id="transfer-accordion-summary">从源设备到目标目录</span>
+                                    </button>
+                                </h2>
+                                <div id="transfer-options-panel" class="accordion-collapse collapse" aria-labelledby="transfer-options-heading" data-bs-parent="#transfer-options-accordion">
+                                    <div class="accordion-body">
+                                        <div class="transfer-form-section">
+                                            <form id="transfer-form">
+                                                <div class="row g-2">
+                                                    <div class="col-6">
+                                                        <label for="source-device" class="form-label form-label-sm">源设备</label>
+                                                        <select class="form-select form-select-sm" id="source-device"></select>
+                                                    </div>
+                                                    <div class="col-6">
+                                                        <label for="transfer-target-device" class="form-label form-label-sm">目标设备</label>
+                                                        <select class="form-select form-select-sm" id="transfer-target-device"></select>
+                                                    </div>
+                                                </div>
+                                                <div class="mt-2">
+                                                    <label for="source-path" class="form-label form-label-sm">源项路径</label>
+                                                    <input type="text" class="form-control-plaintext-sm" id="source-path" readonly>
+                                                </div>
+                                                <div class="mt-2">
+                                                    <label for="transfer-target-path" class="form-label form-label-sm">目标目录</label>
+                                                    <input type="text" class="form-control form-control-sm" id="transfer-target-path" value="/">
+                                                </div>
+                                                <div class="section-note mt-2" id="transfer-target-summary">目录任务会保留源目录树结构。</div>
+                                                <div class="transfer-submit-row mt-3">
+                                                    <button type="button" class="btn btn-outline-primary btn-sm" id="transfer-btn"><i class="bi bi-check-lg me-1"></i>创建任务</button>
+                                                </div>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary btn-sm pd-fl-cc" id="transfer-download-btn">
+                                <i class="bi bi-download me-1"></i>下载原文件
+                    </button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 粘贴预览模态框 -->
+    <div class="modal fade" id="paste-preview-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-clipboard2-image me-2"></i>粘贴图片预览</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="paste-preview-container">
+                        <img id="paste-preview-image" src="" alt="预览图片" class="paste-preview-img">
+                    </div>
+                    <div class="paste-info mt-3">
+                        <div class="row g-2">
+                            <div class="col-md-6">
+                                <label for="paste-filename" class="form-label form-label-sm">文件名</label>
+                                <input type="text" class="form-control form-control-sm" id="paste-filename" placeholder="截图">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="paste-format" class="form-label form-label-sm">格式</label>
+                                <select class="form-select form-select-sm" id="paste-format">
+                                    <option value="png">PNG (推荐)</option>
+                                    <option value="jpeg">JPEG</option>
+                                    <option value="webp">WebP</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <div class="d-flex align-items-center gap-2 text-muted small">
+                                <i class="bi bi-folder2-open"></i>
+                                <span>保存到: <strong id="paste-target-path">/</strong></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="paste-download-btn">
+                        <i class="bi bi-download me-1"></i>下载到本地
+                    </button>
+                    <button type="button" class="btn btn-primary btn-sm" id="paste-upload-btn">
+                        <i class="bi bi-cloud-upload me-1"></i>上传到当前目录
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/icons.js"></script>
+    <script src="/static/js/main.js"></script>
+</body>
+</html>
