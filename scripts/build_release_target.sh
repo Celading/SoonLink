@@ -14,7 +14,7 @@ escape_github_annotation() {
 annotate_github_error() {
   [ -n "${GITHUB_ACTIONS:-}" ] || return 0
   message="$(escape_github_annotation "$1")"
-  printf '::error::%s\n' "$message"
+  printf '::error::%s\n' "$message" >&2
 }
 
 require_command_success() {
