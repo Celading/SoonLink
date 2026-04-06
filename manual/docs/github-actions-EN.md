@@ -23,7 +23,9 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
 ## Required Repository Variables
 
 - `CANGJIE_SDK_LINUX_AMD64_URL`
-  Cangjie SDK download URL used by Linux x86_64 runners. It also serves as the host SDK for the `linux-aarch64` cross-target build.
+  Cangjie SDK download URL used by Linux x86_64 runners.
+- `CANGJIE_SDK_LINUX_ARM64_URL`
+  Cangjie SDK download URL used by Linux ARM64 runners. The `linux-aarch64` release bundle now runs on a native `ubuntu-24.04-arm` runner.
 - `CANGJIE_SDK_MACOS_AMD64_URL`
   SDK URL for macOS Intel runners.
 - `CANGJIE_SDK_MACOS_ARM64_URL`
@@ -80,5 +82,5 @@ That command runs `cjpm build --target ...` and then produces `dist/releases/soo
 
 - Pushing tags such as `0.8.27` or `0.0.5.17` automatically triggers `release-artifacts` and `docker-publish`; once the GitHub Release is published, `homebrew-tap` follows.
 - The pushed tag must either match the `cjpm.toml` version exactly or append one extra dotted revision, for example release tag `0.5.27.1` on package version `0.5.27`.
-- `linux-aarch64` is currently built as a target-triple build from an x86_64 Linux runner. If a future nightly regresses that cross-target path, move that matrix entry to a native ARM64 runner.
+- `linux-aarch64` now uses a native `ubuntu-24.04-arm` runner with an ARM64 SDK so release bundles do not depend on x86_64 Linux SDK layouts that omit `linux_aarch64_cjnative` modules.
 - Windows is currently limited to `windows-x86_64`. Do not promise Windows ARM64 publicly until the SDK and stdx layout become reproducible.
