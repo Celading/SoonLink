@@ -317,8 +317,16 @@ jobs:
           ${{ steps.bundle.outputs.bundle_paths }}
           EOF
 
+      - name: Publish platform bundle to GitHub release
+        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' && needs.metadata.outputs.publish_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.metadata.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          files: ${{ github.workspace }}/bundle-artifacts/${{ matrix.artifact_platform }}/*
+
       - name: Upload staged bundle artifact
-        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' }}
+        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' && needs.metadata.outputs.publish_release != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: soonlink-core-${{ matrix.artifact_platform }}
@@ -338,13 +346,6 @@ jobs:
       - name: Prepare release asset directory
         shell: bash
         run: mkdir -p dist/release-assets
-
-      - name: Download bundles
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          path: dist/release-assets
-          merge-multiple: true
 
       - name: Add compose deployment assets
         shell: bash
@@ -368,27 +369,21 @@ jobs:
           set -euo pipefail
 
           body_path="dist/release-body.md"
-          shopt -s nullglob
-          bundle_paths=(
-            dist/release-assets/soonlink-core-*.tar.gz
-            dist/release-assets/soonlink-core-*.zip
-          )
-
           {
             echo "SoonLink Core release assets for \`${{ needs.metadata.outputs.release_tag }}\`."
             echo
             echo "Package version: \`${{ needs.metadata.outputs.package_version }}\`."
             echo
-            if ((${#bundle_paths[@]} > 0)); then
-              echo "Included bundles:"
-              for bundle_path in "${bundle_paths[@]}"; do
-                echo "- $(basename "${bundle_path}")"
-              done
-            else
-              echo "> No platform bundle was attached in this run."
-              echo ">"
-              echo "> Configure the matching \`CANGJIE_SDK_*_URL\` repository variables to enable binary packaging on GitHub Actions."
-            fi
+            echo "Platform bundle publishing is handled inside each bundle job for the current release tag."
+            echo
+            echo "Expected release bundle groups:"
+            echo "- linux-x86_64"
+            echo "- linux-aarch64"
+            echo "- darwin-x86_64"
+            echo "- darwin-aarch64"
+            echo "- windows-x86_64"
+            echo
+            echo "> OpenHarmony bundle publication remains conditional on the resolved toolchain URL."
             echo
             echo "Each bundle already includes the runtime binary together with:"
             echo "- web/"
