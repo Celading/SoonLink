@@ -58,7 +58,7 @@ jobs:
           fi
 
           if [[ -z "${release_tag}" ]]; then
-            release_tag="${version}"
+            release_tag="${package_version}"
           fi
 
           release_version="$(normalize_release_version "${release_tag}")"

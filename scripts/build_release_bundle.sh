@@ -47,6 +47,38 @@ resolve_bin_name() {
   esac
 }
 
+native_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -aw "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+create_zip_archive() {
+  archive_path="$1"
+  stage_name="$2"
+  dist_dir="$3"
+
+  if command -v zip >/dev/null 2>&1; then
+    (
+      cd "$dist_dir"
+      zip -qr "$archive_path" "$stage_name"
+    )
+    return 0
+  fi
+
+  if command -v powershell.exe >/dev/null 2>&1; then
+    archive_native="$(native_path "$archive_path")"
+    stage_native="$(native_path "$dist_dir/$stage_name")"
+    powershell.exe -NoProfile -Command "Compress-Archive -Force -Path '$stage_native' -DestinationPath '$archive_native'"
+    return 0
+  fi
+
+  echo "zip packaging requires zip or powershell.exe" >&2
+  exit 1
+}
+
 copy_path() {
   relative_path="$1"
   source_path="$ROOT_DIR/$relative_path"
@@ -141,9 +173,10 @@ mkdir -p "$DIST_DIR"
 STAGE_NAME="${PACKAGE_PREFIX}-${VERSION_OVERRIDE}-${ARCHIVE_PLATFORM}"
 STAGE_DIR="$DIST_DIR/$STAGE_NAME"
 TARBALL_PATH="$DIST_DIR/${STAGE_NAME}.tar.gz"
+ZIP_PATH="$DIST_DIR/${STAGE_NAME}.zip"
 PACKAGE_BIN_FILENAME="$(resolve_bin_name "$TARGET_TRIPLE")"
 
-rm -rf "$STAGE_DIR" "$TARBALL_PATH"
+rm -rf "$STAGE_DIR" "$TARBALL_PATH" "$ZIP_PATH"
 mkdir -p "$STAGE_DIR"
 
 cp "$BIN_PATH" "$STAGE_DIR/$PACKAGE_BIN_FILENAME"
@@ -167,7 +200,10 @@ do
 done
 
 tar -czf "$TARBALL_PATH" -C "$DIST_DIR" "$STAGE_NAME"
+create_zip_archive "$ZIP_PATH" "$STAGE_NAME" "$DIST_DIR"
 rm -rf "$STAGE_DIR"
 
 echo "prepared release bundle: $TARBALL_PATH" >&2
+echo "prepared release bundle: $ZIP_PATH" >&2
 printf '%s\n' "$TARBALL_PATH"
+printf '%s\n' "$ZIP_PATH"

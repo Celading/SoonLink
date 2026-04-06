@@ -14,6 +14,14 @@ on:
 permissions:
   contents: read
 
+env:
+  CANGJIE_STDX_GIT_REF: ${{ vars.CANGJIE_STDX_GIT_REF != '' && vars.CANGJIE_STDX_GIT_REF || 'v1.1.0-beta.25' }}
+  CANGJIE_STDX_REPO: ${{ vars.CANGJIE_STDX_REPO != '' && vars.CANGJIE_STDX_REPO || 'https://gitcode.com/Cangjie/cangjie_stdx' }}
+  CANGJIE_SDK_LINUX_AMD64_URL: ${{ vars.CANGJIE_SDK_LINUX_AMD64_URL }}
+  IGNITE_GIT_URL: https://gitcode.com/cinyu/ignite-cangjie.git
+  LISI_GIT_URL: https://gitcode.com/cinyu/lisi
+  JINGUISSL_GIT_URL: https://atomgit.com/cinyu/jinguiSSL
+
 jobs:
   boundary:
     runs-on: ubuntu-latest
@@ -46,26 +54,108 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build and test when cjpm is available
+      - name: Install build prerequisites
         run: |
-          if ! command -v cjpm >/dev/null 2>&1; then
-            echo "cjpm is not installed on this runner; skipping Cangjie build/test job."
+          sudo apt-get update -o Acquire::Retries=5
+          sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl file git tar unzip zip
+
+      - name: Install Cangjie SDK when repository variables are configured
+        id: sdk
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${CANGJIE_SDK_LINUX_AMD64_URL}" ]]; then
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::Skipping Cangjie build/test because CANGJIE_SDK_LINUX_AMD64_URL is not configured."
             exit 0
           fi
+
+          chmod +x ./scripts/install_cangjie_ci.sh
+          ./scripts/install_cangjie_ci.sh \
+            --sdk-url "${CANGJIE_SDK_LINUX_AMD64_URL}" \
+            --sdk-dir "${RUNNER_TEMP}/cangjie" \
+            --stdx-dir "${RUNNER_TEMP}/cangjie_stdx" \
+            --stdx-repo "${{ env.CANGJIE_STDX_REPO }}" \
+            --stdx-ref "${{ env.CANGJIE_STDX_GIT_REF }}" \
+            --stdx-target x86_64-unknown-linux-gnu
+
+          echo "enabled=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Configure GitCode Credentials
+        if: ${{ steps.sdk.outputs.enabled == 'true' }}
+        shell: bash
+        run: |
+          if [[ -n "${{ secrets.GITCODE_USERNAME }}" && -n "${{ secrets.GITCODE_TOKEN }}" ]]; then
+            git config --global url."https://${{ secrets.GITCODE_USERNAME }}:${{ secrets.GITCODE_TOKEN }}@gitcode.com/".insteadOf "https://gitcode.com/"
+            exit 0
+          fi
+
+          echo "GitCode credentials are not configured; continuing with public clone access."
+
+      - name: Configure AtomGit Credentials
+        if: ${{ steps.sdk.outputs.enabled == 'true' }}
+        shell: bash
+        run: |
+          if [[ -n "${{ secrets.ATOMGIT_USERNAME }}" && -n "${{ secrets.ATOMGIT_TOKEN }}" ]]; then
+            git config --global url."https://${{ secrets.ATOMGIT_USERNAME }}:${{ secrets.ATOMGIT_TOKEN }}@atomgit.com/".insteadOf "https://atomgit.com/"
+            exit 0
+          fi
+
+          echo "AtomGit credentials are not configured; continuing with public clone access."
+
+      - name: Clone dependency repositories
+        id: deps
+        if: ${{ steps.sdk.outputs.enabled == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          deps_root="${RUNNER_TEMP}/soonlink-core-ci-deps"
+          mkdir -p "${deps_root}"
+          git clone --depth 1 "${IGNITE_GIT_URL}" "${deps_root}/Ignite0500"
+          git clone --depth 1 "${LISI_GIT_URL}" "${deps_root}/lisi"
+          git clone --depth 1 "${JINGUISSL_GIT_URL}" "${deps_root}/jinguiSSL"
+          echo "root=${deps_root}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare CI workspace
+        id: workspace
+        if: ${{ steps.sdk.outputs.enabled == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/prepare_release_workspace.sh
+          workspace_root="${RUNNER_TEMP}/soonlink-core-ci-workspace"
+          ./scripts/prepare_release_workspace.sh \
+            --output "${workspace_root}" \
+            --ignite "${{ steps.deps.outputs.root }}/Ignite0500" \
+            --lisi "${{ steps.deps.outputs.root }}/lisi" \
+            --jinguissl "${{ steps.deps.outputs.root }}/jinguiSSL"
+          {
+            echo "root=${workspace_root}"
+            echo "core_dir=${workspace_root}/SoonLink-Core"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build and test
+        if: ${{ steps.sdk.outputs.enabled == 'true' }}
+        working-directory: ${{ steps.workspace.outputs.core_dir }}
+        run: |
+          set -euo pipefail
           cjpm build
           cjpm test
 
       - name: Prepare Linux container bundle
+        if: ${{ steps.sdk.outputs.enabled == 'true' }}
+        working-directory: ${{ steps.workspace.outputs.core_dir }}
         run: |
-          if ! command -v cjpm >/dev/null 2>&1; then
-            echo "cjpm is not installed on this runner; skipping container bundle."
-            exit 0
-          fi
+          set -euo pipefail
           chmod +x ./scripts/prepare_container_bundle.sh
           ./scripts/prepare_container_bundle.sh --bin ./target/release/bin/main
 
       - name: Build runtime image
+        if: ${{ steps.sdk.outputs.enabled == 'true' }}
+        working-directory: ${{ steps.workspace.outputs.core_dir }}
         run: |
+          set -euo pipefail
           if [ ! -x ./dist/soonlnk ]; then
             echo "dist/soonlnk is missing; skipping docker build."
             exit 0

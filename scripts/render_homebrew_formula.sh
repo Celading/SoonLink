@@ -117,7 +117,7 @@ class Soonlink < Formula
     (bin/"soonlink").write <<~SH
       #!/bin/sh
       cd "#{libexec}"
-      exec "#{executable}" "$@"
+      exec "#{executable}" "\$@"
     SH
     chmod 0755, bin/"soonlink"
   end
@@ -159,7 +159,7 @@ class Soonlink < Formula
     (bin/"soonlink").write <<~SH
       #!/bin/sh
       cd "#{libexec}"
-      exec "#{executable}" "$@"
+      exec "#{executable}" "\$@"
     SH
     chmod 0755, bin/"soonlink"
   end

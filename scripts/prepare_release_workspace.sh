@@ -56,6 +56,9 @@ copy_tree() {
       --exclude '_helper' \
       --exclude 'gitTemp' \
       --exclude 'cjpm.lock' \
+      --exclude 'cangjie-repo.toml' \
+      --exclude 'module-resolve.json' \
+      --exclude 'module-lock.json' \
       --exclude '.DS_Store' \
       -cf - .
   ) | (

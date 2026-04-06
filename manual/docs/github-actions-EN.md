@@ -6,6 +6,9 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
 
 - `.github/workflows/core-ci.yml`
   Public-boundary checks, Compose validation, and a lightweight build smoke test.
+  - When `CANGJIE_SDK_LINUX_AMD64_URL` is configured, the workflow now installs the Linux SDK and `stdx`, then runs real `cjpm build`, `cjpm test`, and container-bundle preparation.
+  - It also clones `Ignite / lisi / jinguiSSL` and builds inside a temporary path-rewritten workspace instead of depending on the public repository's live git dependency shape.
+  - When the repository variable is still missing, the workflow emits a warning and keeps the boundary and Compose checks only.
 - `.github/workflows/release-artifacts.yml`
   Builds GitHub Release bundles for:
   - `linux-x86_64`
@@ -13,6 +16,7 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
   - `darwin-x86_64`
   - `darwin-aarch64`
   - `windows-x86_64`
+  - Each platform now emits both `.tar.gz` and `.zip` bundles so users can unpack a full runtime bundle more directly.
 - `.github/workflows/docker-publish.yml`
   Publishes Docker Hub images with the default platform set:
   - `linux/amd64`
@@ -65,7 +69,20 @@ Once `CANGJIE_HOME` and `CANGJIE_STDX_PATH` are available locally, the same rele
   --version 0.5.27
 ```
 
-That command runs `cjpm build --target ...` and then produces `dist/releases/soonlink-core-<version>-<platform>.tar.gz`.
+That command runs `cjpm build --target ...` and then produces:
+
+- `dist/releases/soonlink-core-<version>-<platform>.tar.gz`
+- `dist/releases/soonlink-core-<version>-<platform>.zip`
+
+Both bundle formats include:
+
+- the executable
+- `web/`
+- `config/`
+- README / changelog files
+- `compose.yaml`
+- `compose.release.yaml`
+- `.env.example`
 
 ## Scripts
 
@@ -77,10 +94,12 @@ That command runs `cjpm build --target ...` and then produces `dist/releases/soo
   Packages an already-built binary with public assets.
 - `scripts/prepare_release_workspace.sh`
   Prepares a clean SoonLink + Ignite + lisi + jinguiSSL workspace in CI and rewrites dependencies into local `path` references.
+  - It also drops files such as `cangjie-repo.toml`, `module-resolve.json`, and `module-lock.json` so machine-local path hints do not leak into CI contexts.
 
 ## Notes
 
 - Pushing tags such as `0.8.27` or `0.0.5.17` automatically triggers `release-artifacts` and `docker-publish`; once the GitHub Release is published, `homebrew-tap` follows.
 - The pushed tag must either match the `cjpm.toml` version exactly or append one extra dotted revision, for example release tag `0.5.27.1` on package version `0.5.27`.
 - `linux-aarch64` now uses a native `ubuntu-24.04-arm` runner with an ARM64 SDK so release bundles do not depend on x86_64 Linux SDK layouts that omit `linux_aarch64_cjnative` modules.
+- Manual `homebrew-tap` runs now fall back to the current `cjpm.toml` version when `release_tag` is left empty, avoiding the previous empty-value failure.
 - Windows is currently limited to `windows-x86_64`. Do not promise Windows ARM64 publicly until the SDK and stdx layout become reproducible.

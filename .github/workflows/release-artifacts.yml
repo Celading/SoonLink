@@ -199,7 +199,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update -o Acquire::Retries=5
-          sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl file git tar unzip
+          sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl file git tar unzip zip
 
       - name: Install Cangjie SDK and stdx
         id: sdk
@@ -225,19 +225,23 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x ./scripts/build_release_bundle.sh ./scripts/build_release_target.sh
-          bundle_path="$(./scripts/build_release_target.sh \
+          bundle_paths="$(./scripts/build_release_target.sh \
             --target "${{ matrix.target }}" \
             --target-dir "${RUNNER_TEMP}/build-${{ matrix.artifact_platform }}" \
             --archive-platform "${{ matrix.artifact_platform }}" \
             --version "${{ needs.metadata.outputs.release_version }}")"
-          echo "bundle_path=${bundle_path}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "bundle_paths<<EOF"
+            printf '%s\n' "${bundle_paths}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Upload bundle
         if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: soonlink-core-${{ matrix.artifact_platform }}
-          path: ${{ steps.bundle.outputs.bundle_path }}
+          path: ${{ steps.bundle.outputs.bundle_paths }}
           if-no-files-found: error
 
   publish:
@@ -284,7 +288,10 @@ jobs:
 
           body_path="dist/release-body.md"
           shopt -s nullglob
-          bundle_paths=(dist/release-assets/soonlink-core-*.tar.gz)
+          bundle_paths=(
+            dist/release-assets/soonlink-core-*.tar.gz
+            dist/release-assets/soonlink-core-*.zip
+          )
 
           {
             echo "SoonLink Core release assets for \`${{ needs.metadata.outputs.release_tag }}\`."
@@ -301,6 +308,12 @@ jobs:
               echo ">"
               echo "> Configure the matching \`CANGJIE_SDK_*_URL\` repository variables to enable binary packaging on GitHub Actions."
             fi
+            echo
+            echo "Each bundle already includes the runtime binary together with:"
+            echo "- web/"
+            echo "- config/"
+            echo "- README / CHANGELOG"
+            echo "- compose and env examples"
             echo
             echo "Included deployment assets:"
             echo "- soonlink-core-compose.yaml"

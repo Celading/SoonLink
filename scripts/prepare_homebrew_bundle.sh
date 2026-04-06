@@ -74,6 +74,10 @@ fi
 
 OS_NAME="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH_NAME="$(uname -m | tr '[:upper:]' '[:lower:]')"
+case "$ARCH_NAME" in
+  arm64) ARCH_NAME="aarch64" ;;
+  amd64) ARCH_NAME="x86_64" ;;
+esac
 PLATFORM="${OS_NAME}-${ARCH_NAME}"
 STAGE_NAME="soonlink-core-${VERSION}-${PLATFORM}"
 STAGE_DIR="$DIST_DIR/$STAGE_NAME"
