@@ -6,7 +6,8 @@ on:
       - main
       - core
     tags:
-      - "v*"
+      - "*.*.*"
+      - "*.*.*.*"
   pull_request:
   workflow_dispatch:
 
