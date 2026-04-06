@@ -130,13 +130,13 @@ cjpm_driver() {
 }
 
 runtime_library_dir() {
-  runtime_lib="$(find "$SDK_DIR" -type f \( -name 'libcangjie-runtime.so' -o -name 'libcangjie-runtime.dylib' \) 2>/dev/null | head -n 1 || true)"
+  runtime_lib="$(find "$SDK_DIR" -type f \( -name 'libcangjie-runtime.so' -o -name 'libcangjie-runtime.dylib' -o -name 'libcangjie-runtime.dll' \) 2>/dev/null | head -n 1 || true)"
   if [ -n "$runtime_lib" ]; then
     dirname "$runtime_lib"
     return 0
   fi
 
-  find_sdk_directory "$SDK_DIR" '*/runtime/lib/*'
+  find_sdk_directory "$SDK_DIR" '*/runtime/lib/*' '*/runtime/bin/*' '*/lib/*'
 }
 
 tools_library_dir() {
@@ -255,7 +255,7 @@ ensure_stdx_alias() {
   [ -n "$alias_source" ] || return 0
   [ -d "$alias_source/static/stdx" ] || return 0
 
-  ln -s "$(basename "$alias_source")" "$stdx_root/$alias_name"
+  link_or_copy_alias "$alias_source" "$stdx_root/$alias_name"
 }
 
 stdx_alias_name_for_target() {
@@ -293,6 +293,33 @@ requires_deveco_target() {
     aarch64-linux-ohos|aarch64-linux-ohos-cjnative) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+stdx_prefers_release_bundle_for_target() {
+  case "$1" in
+    x86_64-apple-darwin|aarch64-apple-darwin|x86_64-w64-mingw32|aarch64-linux-ohos|aarch64-linux-ohos-cjnative)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+resolve_effective_stdx_release_version() {
+  if [ -n "$STDX_RELEASE_VERSION" ]; then
+    printf '%s\n' "$STDX_RELEASE_VERSION"
+    return 0
+  fi
+
+  for target_triple in $STDX_TARGETS; do
+    if stdx_prefers_release_bundle_for_target "$target_triple"; then
+      printf '%s\n' "1.0.0.1"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 stdx_target_output_exists() {
@@ -395,6 +422,18 @@ extract_top_level_dir() {
   printf '%s\n' "$top_level_dir"
 }
 
+link_or_copy_alias() {
+  source_dir="$1"
+  alias_path="$2"
+
+  rm -rf "$alias_path"
+  if ln -s "$(basename "$source_dir")" "$alias_path" 2>/dev/null; then
+    return 0
+  fi
+
+  cp -R "$source_dir" "$alias_path"
+}
+
 install_stdx_release_for_target() {
   target_triple="$1"
   release_version="$2"
@@ -418,7 +457,7 @@ install_stdx_release_for_target() {
   mkdir -p "$release_root"
   rm -rf "$final_dir" "$release_root/$alias_name"
   mv "$top_level_dir" "$final_dir"
-  ln -s "$(basename "$final_dir")" "$release_root/$alias_name"
+  link_or_copy_alias "$final_dir" "$release_root/$alias_name"
   rm -rf "$release_stage"
 }
 
@@ -539,7 +578,7 @@ CJPM_BIN="$(cjpm_driver || true)"
 
 CANGJIE_BIN_DIR="$(dirname "$CANGJIE_BIN")"
 CANGJIE_TOOLS_DIR="$(dirname "$CJPM_BIN")"
-export PATH="$CANGJIE_BIN_DIR:$CANGJIE_TOOLS_DIR:$PATH"
+export PATH="$(join_path_entries "$CANGJIE_BIN_DIR" "$CANGJIE_TOOLS_DIR" "$PATH")"
 
 RUNTIME_LIB_DIR="$(runtime_library_dir || true)"
 TOOLS_LIB_DIR="$(tools_library_dir || true)"
@@ -553,6 +592,9 @@ case "$(uname -s)" in
     if [ -n "$RUNTIME_LIB_DIR" ] || [ -n "$TOOLS_LIB_DIR" ]; then
       export DYLD_LIBRARY_PATH="$(join_path_entries "$RUNTIME_LIB_DIR" "$TOOLS_LIB_DIR" "${DYLD_LIBRARY_PATH:-}")"
     fi
+    ;;
+  MINGW*|MSYS*|CYGWIN*)
+    export PATH="$(join_path_entries "$RUNTIME_LIB_DIR" "$TOOLS_LIB_DIR" "$PATH")"
     ;;
 esac
 
@@ -592,13 +634,14 @@ if [ "$deveco_required" = "1" ]; then
   }
 fi
 
+EFFECTIVE_STDX_RELEASE_VERSION="$(resolve_effective_stdx_release_version || true)"
 STDX_RELEASE_ROOT="${STDX_PARENT}/cangjie_stdx_release"
-if [ -n "$STDX_RELEASE_VERSION" ] && [ -n "$STDX_TARGETS" ]; then
+if [ -n "$EFFECTIVE_STDX_RELEASE_VERSION" ] && [ -n "$STDX_TARGETS" ]; then
   rm -rf "$STDX_RELEASE_ROOT"
   mkdir -p "$STDX_RELEASE_ROOT"
 
   for target_triple in $STDX_TARGETS; do
-    install_stdx_release_for_target "$target_triple" "$STDX_RELEASE_VERSION" "$STDX_RELEASE_ROOT"
+    install_stdx_release_for_target "$target_triple" "$EFFECTIVE_STDX_RELEASE_VERSION" "$STDX_RELEASE_ROOT"
   done
 
   export CANGJIE_STDX_PATH="$STDX_RELEASE_ROOT"
@@ -624,6 +667,12 @@ if [ -n "$STDX_RELEASE_VERSION" ] && [ -n "$STDX_TARGETS" ]; then
     {
       echo "$CANGJIE_BIN_DIR"
       echo "$CANGJIE_TOOLS_DIR"
+      if [ -n "$RUNTIME_LIB_DIR" ]; then
+        echo "$RUNTIME_LIB_DIR"
+      fi
+      if [ -n "$TOOLS_LIB_DIR" ]; then
+        echo "$TOOLS_LIB_DIR"
+      fi
     } >> "$GITHUB_PATH"
   fi
 
@@ -693,6 +742,12 @@ if [ -n "${GITHUB_PATH:-}" ]; then
   {
     echo "$CANGJIE_BIN_DIR"
     echo "$CANGJIE_TOOLS_DIR"
+    if [ -n "$RUNTIME_LIB_DIR" ]; then
+      echo "$RUNTIME_LIB_DIR"
+    fi
+    if [ -n "$TOOLS_LIB_DIR" ]; then
+      echo "$TOOLS_LIB_DIR"
+    fi
   } >> "$GITHUB_PATH"
 fi
 

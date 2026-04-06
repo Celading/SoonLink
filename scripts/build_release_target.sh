@@ -17,6 +17,36 @@ annotate_github_error() {
   printf '::error::%s\n' "$message" >&2
 }
 
+find_sdk_executable() {
+  sdk_root="$1"
+  shift
+
+  while [ "$#" -gt 0 ]; do
+    candidate="$(find "$sdk_root" -type f -name "$1" 2>/dev/null | head -n 1 || true)"
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    shift
+  done
+
+  return 1
+}
+
+cjpm_command() {
+  if command -v cjpm >/dev/null 2>&1; then
+    command -v cjpm
+    return 0
+  fi
+
+  if [ -n "${CANGJIE_HOME:-}" ] && [ -d "${CANGJIE_HOME}" ]; then
+    find_sdk_executable "$CANGJIE_HOME" cjpm cjpm.exe
+    return 0
+  fi
+
+  return 1
+}
+
 require_command_success() {
   label="$1"
   shift
@@ -77,8 +107,15 @@ done
 mkdir -p "$TARGET_DIR"
 cd "$ROOT_DIR"
 
+CJPM_BIN="$(cjpm_command || true)"
+[ -n "$CJPM_BIN" ] || {
+  annotate_github_error "cjpm is unavailable for ${TARGET_TRIPLE}; ensure install_cangjie_ci.sh completed successfully"
+  echo "cjpm is unavailable for ${TARGET_TRIPLE}; ensure install_cangjie_ci.sh completed successfully" >&2
+  exit 1
+}
+
 require_command_success "cjpm build for ${TARGET_TRIPLE}" \
-  cjpm build --target "$TARGET_TRIPLE" --target-dir "$TARGET_DIR"
+  "$CJPM_BIN" build --target "$TARGET_TRIPLE" --target-dir "$TARGET_DIR"
 
 set -- \
   "$ROOT_DIR/scripts/build_release_bundle.sh" \

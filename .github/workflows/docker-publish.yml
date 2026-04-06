@@ -29,6 +29,7 @@ jobs:
     permissions:
       contents: read
     env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       IMAGE_NAME: celading/soonlink
       IGNITE_GIT_URL: https://gitcode.com/cinyu/ignite-cangjie.git
       LISI_GIT_URL: https://gitcode.com/cinyu/lisi

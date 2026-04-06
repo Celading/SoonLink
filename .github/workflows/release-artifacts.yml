@@ -21,6 +21,7 @@ permissions:
   contents: write
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   CANGJIE_STDX_GIT_REF: ${{ vars.CANGJIE_STDX_GIT_REF != '' && vars.CANGJIE_STDX_GIT_REF || 'v1.1.0-beta.25' }}
   CANGJIE_STDX_REPO: ${{ vars.CANGJIE_STDX_REPO != '' && vars.CANGJIE_STDX_REPO || 'https://gitcode.com/Cangjie/cangjie_stdx' }}
   CANGJIE_STDX_RELEASE_VERSION: ${{ vars.CANGJIE_STDX_RELEASE_VERSION }}
@@ -325,24 +326,29 @@ jobs:
           ${{ steps.bundle.outputs.bundle_paths }}
           EOF
 
-      - name: Publish platform bundle to GitHub release
-        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' && needs.metadata.outputs.publish_release == 'true' }}
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release upload "${{ needs.metadata.outputs.release_tag }}" \
-            "${GITHUB_WORKSPACE}/bundle-artifacts/${{ matrix.artifact_platform }}"/* \
-            --clobber
-
       - name: Upload staged bundle artifact
-        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' && needs.metadata.outputs.publish_release != 'true' }}
+        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: soonlink-core-${{ matrix.artifact_platform }}
           path: ${{ github.workspace }}/bundle-artifacts/${{ matrix.artifact_platform }}/*
           if-no-files-found: error
+
+      - name: Verify bundle job result
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ steps.sdk.conclusion }}" != "success" ]]; then
+            echo "Cangjie SDK/stdx installation failed for ${{ matrix.artifact_platform }}." >&2
+            exit 1
+          fi
+
+          if [[ "${{ steps.bundle.conclusion }}" != "success" ]]; then
+            echo "Release bundle build failed for ${{ matrix.artifact_platform }}." >&2
+            exit 1
+          fi
 
   publish:
     needs:
@@ -357,6 +363,13 @@ jobs:
       - name: Prepare release asset directory
         shell: bash
         run: mkdir -p dist/release-assets
+
+      - name: Download platform bundle artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: soonlink-core-*
+          path: dist/release-assets
+          merge-multiple: true
 
       - name: Add compose deployment assets
         shell: bash
@@ -385,7 +398,7 @@ jobs:
             echo
             echo "Package version: \`${{ needs.metadata.outputs.package_version }}\`."
             echo
-            echo "Platform bundle publishing is handled inside each bundle job for the current release tag."
+            echo "Platform bundle publishing is collected from matrix artifacts and published by this job for the current release tag."
             echo
             echo "Expected release bundle groups:"
             echo "- linux-x86_64"
