@@ -84,11 +84,6 @@ jobs:
             tap_branch="main"
           fi
 
-          if [[ -z "${tap_repo}" ]]; then
-            echo "HOMEBREW_TAP_REPO is not configured" >&2
-            exit 1
-          fi
-
           release_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}"
           amd_asset="soonlink-core-${release_version}-darwin-x86_64.tar.gz"
           arm_asset="soonlink-core-${release_version}-darwin-aarch64.tar.gz"
@@ -104,7 +99,40 @@ jobs:
             echo "arm_url=${release_base}/${arm_asset}"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Resolve Homebrew publish availability
+        id: availability
+        shell: bash
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          enabled="true"
+
+          if [[ -z "${{ steps.meta.outputs.tap_repo }}" ]]; then
+            echo "::warning::Skipping Homebrew tap publish because HOMEBREW_TAP_REPO is not configured."
+            enabled="false"
+          fi
+
+          if [[ -z "${HOMEBREW_TAP_TOKEN}" ]]; then
+            echo "::warning::Skipping Homebrew tap publish because HOMEBREW_TAP_TOKEN is not configured."
+            enabled="false"
+          fi
+
+          if ! curl --retry 2 --retry-delay 2 -fsI "${{ steps.meta.outputs.amd_url }}" >/dev/null; then
+            echo "::warning::Skipping Homebrew tap publish because Darwin x86_64 release asset is missing."
+            enabled="false"
+          fi
+
+          if ! curl --retry 2 --retry-delay 2 -fsI "${{ steps.meta.outputs.arm_url }}" >/dev/null; then
+            echo "::warning::Skipping Homebrew tap publish because Darwin aarch64 release asset is missing."
+            enabled="false"
+          fi
+
+          echo "enabled=${enabled}" >> "${GITHUB_OUTPUT}"
+
       - name: Download darwin release bundles
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -113,6 +141,7 @@ jobs:
           curl --retry 5 --retry-delay 5 -fL "${{ steps.meta.outputs.arm_url }}" -o "dist/homebrew/${{ steps.meta.outputs.arm_asset }}"
 
       - name: Render Homebrew formula
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -128,6 +157,7 @@ jobs:
             --output "${RUNNER_TEMP}/soonlink.rb"
 
       - name: Publish formula to tap repository
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

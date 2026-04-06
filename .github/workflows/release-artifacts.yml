@@ -98,11 +98,11 @@ jobs:
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_platform: linux-x86_64
-            sdk_url: ${{ vars.CANGJIE_SDK_LINUX_AMD64_URL }}
+            sdk_url: ${{ vars.CANGJIE_SDK_LINUX_AMD64_URL != '' && vars.CANGJIE_SDK_LINUX_AMD64_URL || 'https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-linux-x64-1.1.0-beta.25.tar.gz&objectKey=69cb718e6e8ed61e6e07fd42' }}
           - runner: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             artifact_platform: linux-aarch64
-            sdk_url: ${{ vars.CANGJIE_SDK_LINUX_AMD64_URL }}
+            sdk_url: ${{ vars.CANGJIE_SDK_LINUX_AMD64_URL != '' && vars.CANGJIE_SDK_LINUX_AMD64_URL || 'https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-linux-x64-1.1.0-beta.25.tar.gz&objectKey=69cb718e6e8ed61e6e07fd42' }}
           - runner: macos-13
             target: x86_64-apple-darwin
             artifact_platform: darwin-x86_64
@@ -120,16 +120,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate SDK URL
+      - name: Resolve bundle availability
+        id: availability
         shell: bash
         run: |
           if [[ -z "${{ matrix.sdk_url }}" ]]; then
-            echo "missing SDK URL for ${{ matrix.artifact_platform }}" >&2
-            echo "set the matching repository variable before running this workflow" >&2
-            exit 1
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::Skipping ${{ matrix.artifact_platform }} bundle because the matching CANGJIE_SDK_*_URL repository variable is not configured."
+            exit 0
           fi
+          echo "enabled=true" >> "${GITHUB_OUTPUT}"
 
       - name: Configure GitCode Credentials
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         run: |
           if [[ -n "${{ secrets.GITCODE_USERNAME }}" && -n "${{ secrets.GITCODE_TOKEN }}" ]]; then
@@ -140,6 +143,7 @@ jobs:
           echo "GitCode credentials are not configured; continuing with public clone access."
 
       - name: Configure AtomGit Credentials
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         run: |
           if [[ -n "${{ secrets.ATOMGIT_USERNAME }}" && -n "${{ secrets.ATOMGIT_TOKEN }}" ]]; then
@@ -150,6 +154,7 @@ jobs:
           echo "AtomGit credentials are not configured; continuing with public clone access."
 
       - name: Clone dependency repositories
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -161,6 +166,7 @@ jobs:
 
       - name: Prepare release workspace
         id: workspace
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -178,13 +184,14 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
       - name: Install build prerequisites on Linux
-        if: runner.os == 'Linux'
+        if: ${{ steps.availability.outputs.enabled == 'true' && runner.os == 'Linux' }}
         shell: bash
         run: |
           sudo apt-get update -o Acquire::Retries=5
           sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl file git tar unzip
 
       - name: Install Cangjie SDK and stdx
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         run: |
           chmod +x ./scripts/install_cangjie_ci.sh
@@ -197,6 +204,7 @@ jobs:
 
       - name: Build release bundle
         id: bundle
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         working-directory: ${{ steps.workspace.outputs.core_dir }}
         run: |
@@ -210,6 +218,7 @@ jobs:
           echo "bundle_path=${bundle_path}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload bundle
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: soonlink-core-${{ matrix.artifact_platform }}
@@ -226,7 +235,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Prepare release asset directory
+        shell: bash
+        run: mkdir -p dist/release-assets
+
       - name: Download bundles
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           path: dist/release-assets
@@ -247,23 +261,43 @@ jobs:
           cd dist/release-assets
           sha256sum ./* > SHA256SUMS
 
+      - name: Build release body
+        id: body
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          body_path="dist/release-body.md"
+          shopt -s nullglob
+          bundle_paths=(dist/release-assets/soonlink-core-*.tar.gz)
+
+          {
+            echo "SoonLink Core release assets for \`${{ needs.metadata.outputs.release_tag }}\`."
+            echo
+            if ((${#bundle_paths[@]} > 0)); then
+              echo "Included bundles:"
+              for bundle_path in "${bundle_paths[@]}"; do
+                echo "- $(basename "${bundle_path}")"
+              done
+            else
+              echo "> No platform bundle was attached in this run."
+              echo ">"
+              echo "> Configure the matching \`CANGJIE_SDK_*_URL\` repository variables to enable binary packaging on GitHub Actions."
+            fi
+            echo
+            echo "Included deployment assets:"
+            echo "- soonlink-core-compose.yaml"
+            echo "- soonlink-core-compose.release.yaml"
+            echo "- soonlink-core.env.example"
+            echo "- SHA256SUMS"
+          } > "${body_path}"
+
+          echo "path=${body_path}" >> "${GITHUB_OUTPUT}"
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.metadata.outputs.release_tag }}
           target_commitish: ${{ github.sha }}
           files: dist/release-assets/*
-          body: |
-            SoonLink Core release assets for `${{ needs.metadata.outputs.release_tag }}`.
-
-            Included bundles:
-            - linux-x86_64
-            - linux-aarch64
-            - darwin-x86_64
-            - darwin-aarch64
-            - windows-x86_64
-
-            Included deployment assets:
-            - compose.yaml
-            - compose.release.yaml
-            - .env.example
+          body_path: ${{ steps.body.outputs.path }}

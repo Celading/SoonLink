@@ -95,7 +95,20 @@ jobs:
             echo "deps_dir=${RUNNER_TEMP}/soonlink-deps"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Resolve Docker publish availability
+        id: availability
+        shell: bash
+        run: |
+          if [[ -n "${{ secrets.DOCKERHUB_USERNAME }}" && -n "${{ secrets.DOCKERHUB_TOKEN }}" ]]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "enabled=false" >> "${GITHUB_OUTPUT}"
+          echo "::warning::Skipping Docker publish because DOCKERHUB_USERNAME or DOCKERHUB_TOKEN is not configured."
+
       - name: Configure GitCode Credentials
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         run: |
           if [[ -n "${{ secrets.GITCODE_USERNAME }}" && -n "${{ secrets.GITCODE_TOKEN }}" ]]; then
@@ -106,6 +119,7 @@ jobs:
           echo "GitCode credentials are not configured; continuing with public clone access."
 
       - name: Configure AtomGit Credentials
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         run: |
           if [[ -n "${{ secrets.ATOMGIT_USERNAME }}" && -n "${{ secrets.ATOMGIT_TOKEN }}" ]]; then
@@ -116,6 +130,7 @@ jobs:
           echo "AtomGit credentials are not configured; continuing with public clone access."
 
       - name: Clone Dependency Repositories
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -125,6 +140,7 @@ jobs:
           git clone --depth 1 "${JINGUISSL_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/jinguiSSL"
 
       - name: Prepare Docker Build Context
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -136,12 +152,15 @@ jobs:
             --jinguissl "${{ steps.vars.outputs.deps_dir }}/jinguiSSL"
 
       - name: Set Up QEMU
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         uses: docker/setup-qemu-action@v3
 
       - name: Set Up Buildx
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Log In To Docker Hub
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -149,6 +168,7 @@ jobs:
 
       - name: Build Tag List
         id: tags
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -165,6 +185,7 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
       - name: Build And Push Docker Image
+        if: ${{ steps.availability.outputs.enabled == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: ${{ steps.vars.outputs.context_dir }}
