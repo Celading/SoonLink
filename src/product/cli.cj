@@ -262,6 +262,8 @@ public func renderCliHelp(): String {
     "  --name <name>           manual device display name\n" +
     "  --device-type <type>    manual device type, default remote\n" +
     "  --connector <type>      manual connector type, default soonlink-http\n" +
+    "  --scheme <value>        endpoint scheme, for example http / https\n" +
+    "  --base-path <path>      endpoint base path, for example /soonlink\n" +
     "  --ip <host>             manual device host or IP\n" +
     "  --port <port>           manual device port\n" +
     "  --state <state>         trust state for trust-device\n" +
@@ -443,6 +445,8 @@ func buildCliDeviceRecord(commandLine: Array<String>, defaultPort: Int64): Devic
     record.name = findCliArgValue(commandLine, "--name")
     record.deviceType = firstNonEmptyCliArg(commandLine, "--device-type", "--type")
     record.connectorType = firstNonEmptyCliArg(commandLine, "--connector", "--connector-type")
+    record.endpointScheme = findCliArgValue(commandLine, "--scheme")
+    record.endpointBasePath = findCliArgValue(commandLine, "--base-path")
     record.ip = firstNonEmptyCliArg(commandLine, "--ip", "--host")
 
     let portRaw = findCliArgValue(commandLine, "--port").trimAscii()

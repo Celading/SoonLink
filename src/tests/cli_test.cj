@@ -78,7 +78,10 @@ public class Cli_test {
 
         let action = resolveCliAction(argv)
         @Assert(action.command, "help")
-        @Assert(renderCliHelp().contains("soonlnk serve"))
+        let help = renderCliHelp()
+        @Assert(help.contains("soonlnk serve"))
+        @Assert(help.contains("--scheme"))
+        @Assert(help.contains("--base-path"))
     }
 
     @TestCase

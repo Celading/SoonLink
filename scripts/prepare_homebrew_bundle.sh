@@ -90,6 +90,8 @@ cp "$ROOT_DIR/README.md" "$STAGE_DIR/README.md"
 cp "$ROOT_DIR/README-EN.MD" "$STAGE_DIR/README-EN.MD"
 cp "$ROOT_DIR/LICENSE" "$STAGE_DIR/LICENSE"
 cp "$ROOT_DIR/CHANGELOG.MD" "$STAGE_DIR/CHANGELOG.MD"
+cp "$ROOT_DIR/.env.example" "$STAGE_DIR/.env.example"
+cp "$ROOT_DIR/compose.release.yaml" "$STAGE_DIR/compose.release.yaml"
 
 mkdir -p "$DIST_DIR"
 tar -czf "$TARBALL_PATH" -C "$DIST_DIR" "$STAGE_NAME"

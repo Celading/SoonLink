@@ -352,6 +352,7 @@ public class CoreServer {
         if (device.capability.size == 0) {
             applyDefaultDeviceCapabilities(device, profile)
         }
+        applyDefaultDeviceEndpoint(device)
         applyDefaultDeviceConnector(device)
         preserveDiscoveredTrust(device, loadPersistedTrust)
 
@@ -363,6 +364,8 @@ public class CoreServer {
         if (device.id == "local") {
             applyDeviceTrustState(device, Trusted, "runtime")
         }
+        applyDefaultDeviceEndpoint(device)
+        applyDefaultDeviceConnector(device)
         synchronized(devicesMutex) {
             devices.add(device.id, device)
         }
@@ -382,8 +385,21 @@ public class CoreServer {
         }
 
         let connectorType = normalizeConnectorType(record.connectorType)
-        if (connectorType == "local-fs") {
+        var effectiveConnectorType = connectorType
+        if (effectiveConnectorType.size == 0) {
+            effectiveConnectorType = defaultConnectorTypeForDevice(registryRecordToDevice(record))
+        }
+        if (effectiveConnectorType == "local-fs") {
             return "local-fs 仅保留给本机设备"
+        }
+        let endpointScheme = normalizeEndpointScheme(record.endpointScheme)
+        if (
+            effectiveConnectorType == "soonlink-http" &&
+            endpointScheme.size > 0 &&
+            endpointScheme != "http" &&
+            endpointScheme != "https"
+        ) {
+            return "soonlink-http 仅支持 http 或 https endpointScheme"
         }
 
         let ip = record.ip.trimAscii()
@@ -414,6 +430,7 @@ public class CoreServer {
         if (device.capability.size == 0) {
             applyDefaultDeviceCapabilities(device, profile)
         }
+        applyDefaultDeviceEndpoint(device)
         applyDefaultDeviceConnector(device)
         registerDevice(device)
         persistDeviceRecord(device)
@@ -1166,6 +1183,8 @@ public class CoreServer {
         record.name = record.name.trimAscii()
         record.deviceType = record.deviceType.trimAscii().toLower()
         record.connectorType = normalizeConnectorType(record.connectorType)
+        record.endpointScheme = normalizeEndpointScheme(record.endpointScheme)
+        record.endpointBasePath = normalizeEndpointBasePath(record.endpointBasePath)
         record.ip = record.ip.trimAscii()
 
         let validationError = validateManagedDeviceRecord(record)
@@ -1204,6 +1223,10 @@ public class CoreServer {
         if (record.connectorType.size == 0) {
             record.connectorType = "soonlink-http"
         }
+        let normalizedDevice = registryRecordToDevice(record)
+        applyDefaultDeviceEndpoint(normalizedDevice)
+        record.endpointScheme = normalizedDevice.endpointScheme
+        record.endpointBasePath = normalizedDevice.endpointBasePath
         ""
     }
 

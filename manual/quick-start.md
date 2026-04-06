@@ -3,7 +3,7 @@
 ## 1. 获取源码
 
 ```bash
-git clone https://gitcode.com/cinyu/SoonLink
+git clone https://github.com/Celading/SoonLink.git
 cd SoonLink
 ```
 

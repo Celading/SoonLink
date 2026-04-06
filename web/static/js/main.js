@@ -246,20 +246,87 @@ function getConnectorDescriptor(connectorType) {
     return defaultConnectorCatalog().find((item) => item.id === normalized) || null;
 }
 
+function normalizeEndpointSchemeValue(raw, connectorType = '') {
+    const normalized = String(raw || '').trim().toLowerCase();
+    if (normalized === 'tls' || normalized === 'ssl') {
+        return 'https';
+    }
+    if (normalized) {
+        return normalized;
+    }
+    if (connectorType === 'local-fs') {
+        return 'local';
+    }
+    if (connectorType === 'soonlink-http') {
+        return 'http';
+    }
+    return '';
+}
+
+function normalizeEndpointBasePathValue(raw) {
+    let out = String(raw || '').trim();
+    if (!out || out === '/') {
+        return '';
+    }
+    if (!out.startsWith('/')) {
+        out = `/${out}`;
+    }
+    out = out.replace(/\/{2,}/g, '/');
+    if (out.length > 1 && out.endsWith('/')) {
+        out = out.slice(0, -1);
+    }
+    return out;
+}
+
+function buildEndpointOrigin(scheme, host, port, basePath) {
+    if (scheme === 'local') {
+        return 'local://';
+    }
+    if (!host) {
+        return '';
+    }
+    const portPart = port > 0 ? `:${port}` : '';
+    const suffix = basePath || '';
+    if (scheme) {
+        return `${scheme}://${host}${portPart}${suffix}`;
+    }
+    return `${host}${portPart}${suffix}`;
+}
+
+function buildEndpointInfo(source = {}, connectorType = guessConnectorType(source)) {
+    const endpoint = source?.endpoint || {};
+    const host = String(endpoint.host ?? source?.ip ?? '').trim();
+    const port = Number(endpoint.port ?? source?.port || 0);
+    const basePath = normalizeEndpointBasePathValue(endpoint.basePath ?? source?.endpointBasePath ?? '');
+    const scheme = normalizeEndpointSchemeValue(endpoint.scheme ?? source?.endpointScheme ?? '', connectorType);
+    const origin = String(endpoint.origin || '').trim() || buildEndpointOrigin(scheme, host, port, basePath);
+    return {
+        scheme,
+        host,
+        port,
+        basePath,
+        origin,
+    };
+}
+
 function synthesizeConnectorBindings(devices = []) {
     return (Array.isArray(devices) ? devices : []).map((device) => {
         const connectorType = guessConnectorType(device);
         const connector = getConnectorDescriptor(connectorType);
+        const endpoint = buildEndpointInfo(device, connectorType);
         return {
             id: device.id,
             name: device.name,
             deviceType: device.type || device.deviceType || '',
             connectorType,
+            endpointScheme: endpoint.scheme,
+            endpointBasePath: endpoint.basePath,
             ip: device.ip || '',
             port: Number(device.port || 0),
             online: !!device.online,
             driverAvailable: connectorType !== 'manual' && !!connector,
             connector,
+            endpoint,
         };
     });
 }
@@ -278,16 +345,20 @@ function getConnectorBinding(deviceId) {
     const liveBinding = APP_STATE.connectorBindings.find((item) => item.id === deviceId);
     const connectorType = liveBinding?.connectorType || guessConnectorType(device);
     const connector = liveBinding?.connector || getConnectorDescriptor(connectorType);
+    const endpoint = buildEndpointInfo(liveBinding || device || {}, connectorType);
     return {
         id: deviceId,
         name: liveBinding?.name || device?.name || deviceId || '',
         deviceType: liveBinding?.deviceType || device?.type || device?.deviceType || '',
         connectorType,
+        endpointScheme: liveBinding?.endpointScheme || device?.endpointScheme || endpoint.scheme,
+        endpointBasePath: liveBinding?.endpointBasePath || device?.endpointBasePath || endpoint.basePath,
         ip: liveBinding?.ip || device?.ip || '',
         port: Number(liveBinding?.port || device?.port || 0),
         online: liveBinding?.online ?? !!device?.online,
         driverAvailable: liveBinding?.driverAvailable ?? (connectorType !== 'manual' && !!connector),
         connector,
+        endpoint,
     };
 }
 
@@ -318,6 +389,22 @@ function getConnectorShortName(binding) {
         default:
             return getConnectorDisplayName(binding);
     }
+}
+
+function getEndpointDisplayText(binding) {
+    const endpoint = binding?.endpoint || buildEndpointInfo(binding || {}, binding?.connectorType || '');
+    if (endpoint?.origin) {
+        return endpoint.origin;
+    }
+    if (binding?.connectorType === 'local-fs') {
+        return 'local://';
+    }
+    const host = String(binding?.ip || '').trim();
+    const port = Number(binding?.port || 0);
+    if (!host) {
+        return '未声明';
+    }
+    return port > 0 ? `${host}:${port}` : host;
 }
 
 function getConnectorDriverStateText(binding) {
@@ -1487,7 +1574,7 @@ function renderDeviceList() {
             return true;
         }
         const binding = getConnectorBinding(device.id);
-        const target = `${device.name} ${device.id} ${device.ip} ${binding.connectorType} ${getConnectorDisplayName(binding)}`.toLowerCase();
+        const target = `${device.name} ${device.id} ${device.ip} ${binding.connectorType} ${getConnectorDisplayName(binding)} ${getEndpointDisplayText(binding)}`.toLowerCase();
         return target.includes(keyword);
     });
 
@@ -1502,6 +1589,7 @@ function renderDeviceList() {
         const binding = getConnectorBinding(device.id);
         const connectorName = getConnectorDisplayName(binding);
         const connectorState = getConnectorDriverStateText(binding);
+        const endpointText = getEndpointDisplayText(binding);
         const trustLabel = getDeviceTrustLabel(device);
         const trustClass = getDeviceTrustClass(device);
         const trustState = normalizeDeviceTrustState(device.trustState);
@@ -1532,7 +1620,7 @@ function renderDeviceList() {
             </div>
             <div class="card-body">
                 <p class="mb-1 small"><strong>ID:</strong> ${escapeHtml(device.id)}</p>
-                <p class="mb-1 small"><strong>IP:</strong> ${escapeHtml(device.ip)}:${escapeHtml(String(device.port))}</p>
+                <p class="mb-1 small"><strong>端点:</strong> ${escapeHtml(endpointText)}</p>
                 <div class="device-card-meta">
                     <span class="device-chip">${escapeHtml(connectorName)}</span>
                     <span class="device-chip ${escapeAttr(getConnectorDriverStateClass(binding))}">${escapeHtml(connectorState)}</span>
@@ -1566,7 +1654,7 @@ function renderDeviceList() {
             const device = APP_STATE.allDevices.find((d) => d.id === id);
             if (device) {
                 const binding = getConnectorBinding(id);
-                showAlert(`${device.name} · ${getConnectorDisplayName(binding)} · ${getConnectorDriverStateText(binding)} · ${device.ip}:${device.port}`, 'info');
+                showAlert(`${device.name} · ${getConnectorDisplayName(binding)} · ${getConnectorDriverStateText(binding)} · ${getEndpointDisplayText(binding)}`, 'info');
             }
         });
     });
@@ -1635,7 +1723,7 @@ function initManualDeviceManager() {
         resetBtn.addEventListener('click', () => resetManualDeviceForm());
     }
 
-    ['manual-device-id', 'manual-device-name', 'manual-device-type', 'manual-device-connector-type', 'manual-device-ip', 'manual-device-port']
+    ['manual-device-id', 'manual-device-name', 'manual-device-type', 'manual-device-connector-type', 'manual-device-endpoint-scheme', 'manual-device-ip', 'manual-device-port', 'manual-device-base-path']
         .forEach((id) => {
             const input = document.getElementById(id);
             if (!input) {
@@ -1691,14 +1779,24 @@ function updateManualDeviceFormState() {
         id: getInputValue('manual-device-id'),
         deviceType: getInputValue('manual-device-type'),
         connectorType: getInputValue('manual-device-connector-type'),
+        endpointScheme: getInputValue('manual-device-endpoint-scheme'),
+        endpointBasePath: getInputValue('manual-device-base-path'),
         ip: getInputValue('manual-device-ip'),
         port: Number(getInputValue('manual-device-port') || 0),
     });
     const descriptor = getConnectorDescriptor(connectorType);
+    const endpoint = buildEndpointInfo({
+        connectorType,
+        endpointScheme: getInputValue('manual-device-endpoint-scheme'),
+        endpointBasePath: getInputValue('manual-device-base-path'),
+        ip: getInputValue('manual-device-ip'),
+        port: Number(getInputValue('manual-device-port') || 0),
+    }, connectorType);
     const binding = {
         connectorType,
         connector: descriptor,
         driverAvailable: connectorType !== 'manual' && !!descriptor,
+        endpoint,
     };
     const editingId = APP_STATE.manualDeviceEditingId;
 
@@ -1710,8 +1808,8 @@ function updateManualDeviceFormState() {
 
     const currentId = getInputValue('manual-device-id').trim();
     targetChip.textContent = currentId
-        ? `保存到 ${currentId} 的设备注册记录`
-        : '保存后写入设备注册表';
+        ? `保存到 ${currentId} · ${getEndpointDisplayText(binding)}`
+        : `保存后写入设备注册表 · ${getEndpointDisplayText(binding)}`;
 
     deleteBtn.disabled = !editingId;
     idInput.readOnly = !!editingId;
@@ -1722,8 +1820,10 @@ function resetManualDeviceForm(preserveConnector = true) {
     setInputValue('manual-device-id', '');
     setInputValue('manual-device-name', '');
     setInputValue('manual-device-type', 'remote');
+    setInputValue('manual-device-endpoint-scheme', 'http');
     setInputValue('manual-device-ip', '');
     setInputValue('manual-device-port', '');
+    setInputValue('manual-device-base-path', '');
     if (!preserveConnector || !getInputValue('manual-device-connector-type').trim()) {
         setInputValue('manual-device-connector-type', 'soonlink-http');
     }
@@ -1742,8 +1842,10 @@ function prefillManualDeviceForm(deviceId, notify = true) {
     setInputValue('manual-device-name', device.name || '');
     setInputValue('manual-device-type', device.type || device.deviceType || 'remote');
     setInputValue('manual-device-connector-type', guessConnectorType(device));
+    setInputValue('manual-device-endpoint-scheme', device.endpoint?.scheme || device.endpointScheme || 'http');
     setInputValue('manual-device-ip', device.ip || '');
     setInputValue('manual-device-port', device.port || '');
+    setInputValue('manual-device-base-path', device.endpoint?.basePath || device.endpointBasePath || '');
     updateManualDeviceFormState();
 
     if (notify) {
@@ -1757,6 +1859,8 @@ function collectManualDevicePayload() {
         name: getInputValue('manual-device-name').trim(),
         deviceType: getInputValue('manual-device-type').trim() || 'remote',
         connectorType: getInputValue('manual-device-connector-type').trim() || 'soonlink-http',
+        endpointScheme: getInputValue('manual-device-endpoint-scheme').trim() || '',
+        endpointBasePath: normalizeEndpointBasePathValue(getInputValue('manual-device-base-path')),
         ip: getInputValue('manual-device-ip').trim(),
         port: Number(getInputValue('manual-device-port') || 0),
     };
@@ -1777,6 +1881,14 @@ async function saveManualDeviceForm(event) {
     if (!payload.ip) {
         showAlert('请填写主机或 IP', 'warning');
         return;
+    }
+    if (payload.connectorType === 'soonlink-http' && payload.endpointScheme) {
+        const normalizedScheme = normalizeEndpointSchemeValue(payload.endpointScheme, payload.connectorType);
+        if (!['http', 'https'].includes(normalizedScheme)) {
+            showAlert('SoonLink HTTP 端点当前只支持 http 或 https', 'warning');
+            return;
+        }
+        payload.endpointScheme = normalizedScheme;
     }
 
     try {

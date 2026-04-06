@@ -85,10 +85,14 @@ public class CoreServer_test {
         createRecord.deviceType = "remote"
         createRecord.ip = "10.10.0.8"
         createRecord.port = 19110
+        createRecord.endpointScheme = "tls"
+        createRecord.endpointBasePath = "gateway/manual/"
 
         let created = server.upsertManagedDeviceRecord(createRecord)
         @Assert(created.id, "office-node")
         @Assert(created.connectorType, "soonlink-http")
+        @Assert(created.endpointScheme, "https")
+        @Assert(created.endpointBasePath, "/gateway/manual")
         @Assert(!created.online)
         @Assert(deviceTrustStateToString(created.trustState), "unknown")
 
@@ -99,6 +103,8 @@ public class CoreServer_test {
         updateRecord.connectorType = "future-sync"
         updateRecord.ip = "office.example.internal"
         updateRecord.port = 22440
+        updateRecord.endpointScheme = "https"
+        updateRecord.endpointBasePath = "/edge/api"
 
         let updated = server.upsertManagedDeviceRecord(updateRecord)
         @Assert(updated.name, "Office Node 2")
@@ -106,11 +112,39 @@ public class CoreServer_test {
         @Assert(updated.connectorType, "future-sync")
         @Assert(updated.ip, "office.example.internal")
         @Assert(updated.port, 22440)
+        @Assert(updated.endpointScheme, "https")
+        @Assert(updated.endpointBasePath, "/edge/api")
 
         @Assert(server.removeManagedDeviceRecord("office-node"))
         match (server.getDevice("office-node")) {
             case Some(_) => @Assert(false)
             case None => @Assert(true)
         }
+    }
+
+    @TestCase
+    public func rejectsInvalidSoonLinkSchemeWhenConnectorFallsBackFromEndpoint(): Unit {
+        let scope = testTempToken("soonlink_test_manual_device_scheme")
+        var cfg = AppConfig()
+        cfg.deviceRegistryFile = "/tmp/${scope}.json"
+        cfg.logDir = "/tmp/${scope}_logs"
+
+        let server = CoreServer(cfg, profile: coreProductProfile())
+
+        let record = DeviceRegistryRecord()
+        record.id = "proxy-node"
+        record.name = "Proxy Node"
+        record.deviceType = "remote"
+        record.ip = "proxy.example.internal"
+        record.port = 19091
+        record.endpointScheme = "ftp"
+
+        var failed = false
+        try {
+            server.upsertManagedDeviceRecord(record)
+        } catch (_: Exception) {
+            failed = true
+        }
+        @Assert(failed)
     }
 }

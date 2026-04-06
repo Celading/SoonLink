@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - core
+    tags:
+      - "v*"
   pull_request:
   workflow_dispatch:
 
@@ -32,6 +34,9 @@ jobs:
 
       - name: Validate compose file
         run: docker compose -f compose.yaml config >/dev/null
+
+      - name: Validate release compose file
+        run: docker compose --env-file .env.example -f compose.release.yaml config >/dev/null
 
   cangjie-build:
     runs-on: ubuntu-latest

@@ -378,13 +378,17 @@ func fileEntriesToJsonArray(entries: ArrayList<FileEntry>): JsonArray {
 
 func buildConnectorBindingObject(server: CoreServer, device: Device): JsonObject {
     let resolvedType = defaultConnectorTypeForDevice(device)
+    let endpoint = buildDeviceEndpoint(device)
     let out = JsonObject()
         .put("id", device.id)
         .put("name", device.name)
         .put("deviceType", device.deviceType)
         .put("connectorType", resolvedType)
+        .put("endpointScheme", endpoint.scheme)
+        .put("endpointBasePath", endpoint.basePath)
         .put("ip", device.ip)
         .putInt("port", device.port)
+        .putObj("endpoint", endpoint.toJson())
         .putBool("online", device.online)
 
     match (server.describeConnector(resolvedType)) {

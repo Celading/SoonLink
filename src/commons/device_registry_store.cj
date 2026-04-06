@@ -8,6 +8,8 @@ public class DeviceRegistryRecord {
     public var name: String = ""
     public var deviceType: String = ""
     public var connectorType: String = ""
+    public var endpointScheme: String = ""
+    public var endpointBasePath: String = ""
     public var ip: String = ""
     public var port: Int64 = 0
     public var online: Bool = false
@@ -19,15 +21,20 @@ public class DeviceRegistryRecord {
     public init() {}
 
     public func toJson(): JsonObject {
+        let device = registryRecordToDevice(this)
+        let endpoint = buildDeviceEndpoint(device)
         JsonObject()
             .put("id", id)
             .put("name", name)
             .put("deviceType", deviceType)
             .put("connectorType", connectorType)
+            .put("endpointScheme", endpoint.scheme)
+            .put("endpointBasePath", endpoint.basePath)
             .put("ip", ip)
             .putInt("port", port)
             .putBool("online", online)
             .putInt("lastSeen", lastSeen)
+            .putObj("endpoint", endpoint.toJson())
             .put("trustState", deviceTrustStateToString(trustState))
             .put("trustSource", trustSource)
             .putInt("trustUpdatedAt", trustUpdatedAt)
@@ -76,6 +83,8 @@ public class JsonDeviceRegistryStore <: DeviceRegistryStore {
             record.name = parseJsonString(objRaw, "name") ?? ""
             record.deviceType = parseJsonString(objRaw, "deviceType") ?? ""
             record.connectorType = parseJsonString(objRaw, "connectorType") ?? ""
+            record.endpointScheme = parseJsonString(objRaw, "endpointScheme") ?? (parseJsonString(objRaw, "scheme") ?? "")
+            record.endpointBasePath = parseJsonString(objRaw, "endpointBasePath") ?? (parseJsonString(objRaw, "basePath") ?? "")
             record.ip = parseJsonString(objRaw, "ip") ?? ""
 
             let portStr = parseJsonString(objRaw, "port") ?? "0"
@@ -178,6 +187,8 @@ public func deviceToRegistryRecord(device: Device): DeviceRegistryRecord {
     record.name = device.name
     record.deviceType = device.deviceType
     record.connectorType = device.connectorType
+    record.endpointScheme = device.endpointScheme
+    record.endpointBasePath = device.endpointBasePath
     record.ip = device.ip
     record.port = device.port
     record.online = device.online
@@ -194,6 +205,8 @@ public func registryRecordToDevice(record: DeviceRegistryRecord): Device {
     device.name = record.name
     device.deviceType = record.deviceType
     device.connectorType = record.connectorType
+    device.endpointScheme = record.endpointScheme
+    device.endpointBasePath = record.endpointBasePath
     device.ip = record.ip
     device.port = record.port
     device.online = record.online

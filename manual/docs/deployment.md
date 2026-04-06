@@ -18,17 +18,19 @@ cjpm test
 
 - `Dockerfile`
 - `compose.yaml`
+- `compose.release.yaml`
+- `.env.example`
 - `scripts/prepare_container_bundle.sh`
 
 推荐顺序：
 
-1. 先产出可运行二进制
-2. 再准备容器 bundle
-3. 最后执行 `docker compose up --build`
+1. 本地源码构建时，先产出可运行二进制
+2. 如果要打本地镜像，准备容器 bundle 后执行 `docker compose --env-file .env.example -f compose.yaml up --build`
+3. 如果要直接吃 GitHub / Docker Hub 发布物，执行 `docker compose --env-file .env.example -f compose.release.yaml up -d`
 
 ## 3. Homebrew
 
-仓库里保留了 Homebrew 公式渲染与 CI 验证链路，适合做 macOS 侧的安装分发。
+仓库里保留了 Homebrew 公式渲染、CI 校验与 tap 推送链路，适合做 macOS 侧的安装分发。
 
 相关脚本：
 

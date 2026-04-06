@@ -9,8 +9,8 @@ import std.unicode.*
 public class SoonLinkNodeClient {
     let client: RestClient
 
-    public init(host: String, port: Int64) {
-        let baseUrl = "http://${host}:${port}"
+    public init(host: String, port: Int64, scheme!: String = "http", basePath!: String = "") {
+        let baseUrl = buildSoonLinkNodeBaseUrl(host, port, scheme, basePath)
         this.client = RestClient(
             readTimeout: Duration.second * 15,
             writeTimeout: Duration.second * 15,
@@ -171,6 +171,17 @@ public class SoonLinkNodeClient {
         }
         (parseJsonString(completeResp.body(), "success") ?? "false") == "true"
     }
+}
+
+public func buildSoonLinkNodeBaseUrl(host: String, port: Int64, scheme: String, basePath: String): String {
+    let normalizedScheme = normalizeEndpointScheme(scheme)
+    let effectiveScheme = if (normalizedScheme.size > 0) { normalizedScheme } else { "http" }
+    let normalizedHost = host.trimAscii()
+    let normalizedBasePath = normalizeEndpointBasePath(basePath)
+    if (port > 0) {
+        return "${effectiveScheme}://${normalizedHost}:${port}${normalizedBasePath}"
+    }
+    "${effectiveScheme}://${normalizedHost}${normalizedBasePath}"
 }
 
 func normalizeNodePath(path: String): String {

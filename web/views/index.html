@@ -108,6 +108,22 @@
                                 <input class="form-control" id="manual-device-port" type="number" min="1" step="1" placeholder="19090">
                             </div>
                         </div>
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-3">
+                                <label for="manual-device-endpoint-scheme" class="form-label">端点协议</label>
+                                <input class="form-control" id="manual-device-endpoint-scheme" list="manual-device-endpoint-scheme-options" value="http" placeholder="http / https">
+                                <datalist id="manual-device-endpoint-scheme-options">
+                                    <option value="http"></option>
+                                    <option value="https"></option>
+                                    <option value="local"></option>
+                                </datalist>
+                            </div>
+                            <div class="col-md-9">
+                                <label for="manual-device-base-path" class="form-label">端点基础路径</label>
+                                <input class="form-control" id="manual-device-base-path" placeholder="/soonlink / gateway/node">
+                                <div class="form-text">用于反向代理或子路径部署，例如 `https://node.example.com/soonlink`。</div>
+                            </div>
+                        </div>
                         <div class="manual-device-status mt-3" id="manual-device-status">
                             <span class="stat-chip" id="manual-device-mode-chip">新建端点</span>
                             <span class="stat-chip" id="manual-device-driver-chip">驱动状态 -</span>

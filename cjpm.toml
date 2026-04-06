@@ -1,6 +1,6 @@
 [package]
   cjc-version = "1.0.0"
-  version = "0.5.21"
+  version = "0.5.22"
   name = "soonlnk"
   output-type = "executable"
   src-dir = "src"
@@ -10,6 +10,12 @@
 [dependencies]
   ignite = { git = "https://gitcode.com/cinyu/ignite-cangjie.git" }
   lisi = { git = "https://gitcode.com/cinyu/lisi" }
+
+[target.x86_64-w64-mingw32]
+  [target.x86_64-w64-mingw32.bin-dependencies]
+    path-option = ["${CANGJIE_STDX_PATH}/windows_x86_64_cjnative/static/stdx"]
+  [target.x86_64-w64-mingw32-Deprecated.bin-dependencies]
+    path-option = ["${CANGJIE_STDX_PATH}/cj_stdx_x86_64-w64-mingw32/static/stdx"]
 
 [target.aarch64-apple-darwin]
   [target.aarch64-apple-darwin.bin-dependencies]

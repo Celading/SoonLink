@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Cangjie-SoonLink-ff6b35?style=for-the-badge&labelColor=1a1a2e" alt="SoonLink" />
-  <img src="https://img.shields.io/badge/version-0.5.21-4f8cff?style=for-the-badge&labelColor=1a1a2e" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.5.22-4f8cff?style=for-the-badge&labelColor=1a1a2e" alt="Version" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-2ea043?style=for-the-badge&labelColor=1a1a2e" alt="License" />
 </p>
 
@@ -24,7 +24,7 @@ SoonLink is an open-source file-management and cross-device transfer service bui
 ### Build from source
 
 ```bash
-git clone https://gitcode.com/cinyu/SoonLink
+git clone https://github.com/Celading/SoonLink.git
 cd SoonLink
 cjpm build
 cjpm test
@@ -89,7 +89,7 @@ SoonLink reads the following files by default and creates them if missing:
 ## Project Layout
 
 ```text
-SoonLink-Core/
+SoonLink/
 ├── cjpm.toml
 ├── config/
 ├── src/

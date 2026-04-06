@@ -153,7 +153,7 @@ func buildMcpToolsListResult(profile: ProductProfile): String {
     tools.addObj(buildMcpToolSpec(
         "soonlink_register_device",
         "Register or update one manual SoonLink device endpoint",
-        "{\"type\":\"object\",\"properties\":{\"deviceId\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"deviceType\":{\"type\":\"string\"},\"connectorType\":{\"type\":\"string\"},\"ip\":{\"type\":\"string\"},\"port\":{\"type\":\"integer\"}},\"required\":[\"deviceId\",\"ip\"],\"additionalProperties\":false}"
+        "{\"type\":\"object\",\"properties\":{\"deviceId\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"deviceType\":{\"type\":\"string\"},\"connectorType\":{\"type\":\"string\"},\"scheme\":{\"type\":\"string\"},\"basePath\":{\"type\":\"string\"},\"ip\":{\"type\":\"string\"},\"port\":{\"type\":\"integer\"}},\"required\":[\"deviceId\",\"ip\"],\"additionalProperties\":false}"
     ))
     tools.addObj(buildMcpToolSpec(
         "soonlink_remove_device",
@@ -317,6 +317,8 @@ func buildMcpDeviceRecord(requestBody: String, defaultPort: Int64): DeviceRegist
     record.name = parseJsonString(requestBody, "name") ?? ""
     record.deviceType = parseJsonString(requestBody, "deviceType") ?? ""
     record.connectorType = parseJsonString(requestBody, "connectorType") ?? ""
+    record.endpointScheme = parseJsonString(requestBody, "endpointScheme") ?? (parseJsonString(requestBody, "scheme") ?? "")
+    record.endpointBasePath = parseJsonString(requestBody, "endpointBasePath") ?? (parseJsonString(requestBody, "basePath") ?? "")
     record.ip = parseJsonString(requestBody, "ip") ?? ""
 
     let portRaw = parseJsonString(requestBody, "port") ?? ""

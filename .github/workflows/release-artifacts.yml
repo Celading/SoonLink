@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing or target release tag, for example v0.5.21
+        description: Existing or target release tag, for example v0.5.22
         required: false
         type: string
       publish_release:
@@ -22,6 +22,9 @@ permissions:
 env:
   CANGJIE_STDX_GIT_REF: ${{ vars.CANGJIE_STDX_GIT_REF != '' && vars.CANGJIE_STDX_GIT_REF || 'v1.1.0-beta.25' }}
   CANGJIE_STDX_REPO: ${{ vars.CANGJIE_STDX_REPO != '' && vars.CANGJIE_STDX_REPO || 'https://gitcode.com/Cangjie/cangjie_stdx' }}
+  IGNITE_GIT_URL: https://gitcode.com/cinyu/ignite-cangjie.git
+  LISI_GIT_URL: https://gitcode.com/cinyu/lisi
+  JINGUISSL_GIT_URL: https://atomgit.com/cinyu/jinguiSSL
 
 jobs:
   metadata:
@@ -89,6 +92,10 @@ jobs:
             target: aarch64-apple-darwin
             artifact_platform: darwin-aarch64
             sdk_url: ${{ vars.CANGJIE_SDK_MACOS_ARM64_URL }}
+          - runner: windows-latest
+            target: x86_64-w64-mingw32
+            artifact_platform: windows-x86_64
+            sdk_url: ${{ vars.CANGJIE_SDK_WINDOWS_AMD64_URL }}
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
@@ -102,6 +109,46 @@ jobs:
             echo "set the matching repository variable before running this workflow" >&2
             exit 1
           fi
+
+      - name: Configure GitCode Credentials
+        if: ${{ secrets.GITCODE_USERNAME != '' && secrets.GITCODE_TOKEN != '' }}
+        shell: bash
+        run: |
+          git config --global url."https://${{ secrets.GITCODE_USERNAME }}:${{ secrets.GITCODE_TOKEN }}@gitcode.com/".insteadOf "https://gitcode.com/"
+
+      - name: Configure AtomGit Credentials
+        if: ${{ secrets.ATOMGIT_USERNAME != '' && secrets.ATOMGIT_TOKEN != '' }}
+        shell: bash
+        run: |
+          git config --global url."https://${{ secrets.ATOMGIT_USERNAME }}:${{ secrets.ATOMGIT_TOKEN }}@atomgit.com/".insteadOf "https://atomgit.com/"
+
+      - name: Clone dependency repositories
+        shell: bash
+        run: |
+          set -euo pipefail
+          deps_root="${RUNNER_TEMP}/soonlink-release-deps"
+          mkdir -p "${deps_root}"
+          git clone --depth 1 "${IGNITE_GIT_URL}" "${deps_root}/Ignite0500"
+          git clone --depth 1 "${LISI_GIT_URL}" "${deps_root}/lisi"
+          git clone --depth 1 "${JINGUISSL_GIT_URL}" "${deps_root}/jinguiSSL"
+
+      - name: Prepare release workspace
+        id: workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/prepare_release_workspace.sh
+          workspace_root="${RUNNER_TEMP}/soonlink-release-workspace/${{ matrix.artifact_platform }}"
+          deps_root="${RUNNER_TEMP}/soonlink-release-deps"
+          ./scripts/prepare_release_workspace.sh \
+            --output "${workspace_root}" \
+            --ignite "${deps_root}/Ignite0500" \
+            --lisi "${deps_root}/lisi" \
+            --jinguissl "${deps_root}/jinguiSSL"
+          {
+            echo "root=${workspace_root}"
+            echo "core_dir=${workspace_root}/SoonLink-Core"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Install build prerequisites on Linux
         if: runner.os == 'Linux'
@@ -124,6 +171,7 @@ jobs:
       - name: Build release bundle
         id: bundle
         shell: bash
+        working-directory: ${{ steps.workspace.outputs.core_dir }}
         run: |
           set -euo pipefail
           chmod +x ./scripts/build_release_bundle.sh ./scripts/build_release_target.sh
@@ -148,32 +196,47 @@ jobs:
     if: ${{ needs.metadata.outputs.publish_release == 'true' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download bundles
         uses: actions/download-artifact@v4
         with:
           path: dist/release-assets
           merge-multiple: true
 
+      - name: Add compose deployment assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp compose.yaml dist/release-assets/soonlink-core-compose.yaml
+          cp compose.release.yaml dist/release-assets/soonlink-core-compose.release.yaml
+          cp .env.example dist/release-assets/soonlink-core.env.example
+
       - name: Build checksum file
         shell: bash
         run: |
           set -euo pipefail
           cd dist/release-assets
-          sha256sum ./*.tar.gz > SHA256SUMS
+          sha256sum ./* > SHA256SUMS
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.metadata.outputs.release_tag }}
           target_commitish: ${{ github.sha }}
-          files: |
-            dist/release-assets/*.tar.gz
-            dist/release-assets/SHA256SUMS
+          files: dist/release-assets/*
           body: |
-            SoonLink Core release bundles for `${{ needs.metadata.outputs.release_tag }}`.
+            SoonLink Core release assets for `${{ needs.metadata.outputs.release_tag }}`.
 
-            Included targets:
+            Included bundles:
             - linux-x86_64
             - linux-aarch64
             - darwin-x86_64
             - darwin-aarch64
+            - windows-x86_64
+
+            Included deployment assets:
+            - compose.yaml
+            - compose.release.yaml
+            - .env.example

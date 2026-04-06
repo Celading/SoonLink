@@ -1,0 +1,143 @@
+name: Publish Homebrew Tap
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to publish, for example v0.5.22
+        required: false
+        type: string
+      tap_repo:
+        description: Optional override, for example Celading/homebrew-tap
+        required: false
+        type: string
+      tap_branch:
+        description: Optional override, defaults to main
+        required: false
+        type: string
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      DEFAULT_TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO }}
+      DEFAULT_TAP_BRANCH: ${{ vars.HOMEBREW_TAP_BRANCH }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tap metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(sed -n 's/^  version = "\(.*\)"/\1/p' cjpm.toml | head -n 1)"
+          if [[ -z "${version}" ]]; then
+            echo "failed to resolve version from cjpm.toml" >&2
+            exit 1
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+            release_tag="${{ github.event.release.tag_name }}"
+          else
+            release_tag="${{ inputs.release_tag }}"
+          fi
+
+          if [[ -z "${release_tag}" ]]; then
+            release_tag="v${version}"
+          fi
+
+          tap_repo="${{ inputs.tap_repo }}"
+          tap_branch="${{ inputs.tap_branch }}"
+
+          if [[ -z "${tap_repo}" ]]; then
+            tap_repo="${DEFAULT_TAP_REPO}"
+          fi
+          if [[ -z "${tap_branch}" ]]; then
+            tap_branch="${DEFAULT_TAP_BRANCH}"
+          fi
+          if [[ -z "${tap_branch}" ]]; then
+            tap_branch="main"
+          fi
+
+          if [[ -z "${tap_repo}" ]]; then
+            echo "HOMEBREW_TAP_REPO is not configured" >&2
+            exit 1
+          fi
+
+          release_version="${release_tag#v}"
+          release_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}"
+          amd_asset="soonlink-core-${release_version}-darwin-x86_64.tar.gz"
+          arm_asset="soonlink-core-${release_version}-darwin-aarch64.tar.gz"
+
+          {
+            echo "version=${release_version}"
+            echo "release_tag=${release_tag}"
+            echo "tap_repo=${tap_repo}"
+            echo "tap_branch=${tap_branch}"
+            echo "amd_asset=${amd_asset}"
+            echo "arm_asset=${arm_asset}"
+            echo "amd_url=${release_base}/${amd_asset}"
+            echo "arm_url=${release_base}/${arm_asset}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Download darwin release bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/homebrew
+          curl --retry 5 --retry-delay 5 -fL "${{ steps.meta.outputs.amd_url }}" -o "dist/homebrew/${{ steps.meta.outputs.amd_asset }}"
+          curl --retry 5 --retry-delay 5 -fL "${{ steps.meta.outputs.arm_url }}" -o "dist/homebrew/${{ steps.meta.outputs.arm_asset }}"
+
+      - name: Render Homebrew formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          amd_sha="$(sha256sum "dist/homebrew/${{ steps.meta.outputs.amd_asset }}" | awk '{print $1}')"
+          arm_sha="$(sha256sum "dist/homebrew/${{ steps.meta.outputs.arm_asset }}" | awk '{print $1}')"
+          chmod +x ./scripts/render_homebrew_formula.sh
+          ./scripts/render_homebrew_formula.sh \
+            --version "${{ steps.meta.outputs.version }}" \
+            --url-amd64 "${{ steps.meta.outputs.amd_url }}" \
+            --sha256-amd64 "${amd_sha}" \
+            --url-arm64 "${{ steps.meta.outputs.arm_url }}" \
+            --sha256-arm64 "${arm_sha}" \
+            --output "${RUNNER_TEMP}/soonlink.rb"
+
+      - name: Publish formula to tap repository
+        shell: bash
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${HOMEBREW_TAP_TOKEN}" ]]; then
+            echo "HOMEBREW_TAP_TOKEN is not configured" >&2
+            exit 1
+          fi
+
+          tap_dir="${RUNNER_TEMP}/homebrew-tap"
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${{ steps.meta.outputs.tap_repo }}.git" "${tap_dir}"
+          cd "${tap_dir}"
+          git checkout "${{ steps.meta.outputs.tap_branch }}" || git checkout -b "${{ steps.meta.outputs.tap_branch }}"
+          mkdir -p Formula
+          cp "${RUNNER_TEMP}/soonlink.rb" Formula/soonlink.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/soonlink.rb
+
+          if git diff --cached --quiet; then
+            echo "Formula already matches release ${{ steps.meta.outputs.release_tag }}; nothing to push."
+            exit 0
+          fi
+
+          git commit -m "Update soonlink formula to ${{ steps.meta.outputs.version }}"
+          git push origin "HEAD:${{ steps.meta.outputs.tap_branch }}"

@@ -59,6 +59,8 @@ public class Device {
     public var name: String = ""
     public var deviceType: String = ""
     public var connectorType: String = ""
+    public var endpointScheme: String = ""
+    public var endpointBasePath: String = ""
     public var ip: String = ""
     public var port: Int64 = 0
     public var lastSeen: Int64 = 0
@@ -92,16 +94,20 @@ public class Device {
         for (c in capability) {
             capArr.addStr(c)
         }
+        let endpoint = buildDeviceEndpoint(this)
         JsonObject()
             .put("id", id)
             .put("name", name)
             .put("type", deviceType)
             .put("connectorType", connectorType)
+            .put("endpointScheme", endpoint.scheme)
+            .put("endpointBasePath", endpoint.basePath)
             .put("ip", ip)
             .putInt("port", port)
             .putInt("lastSeen", lastSeen)
             .putArr("capability", capArr)
             .putBool("online", online)
+            .putObj("endpoint", endpoint.toJson())
             .put("trustState", deviceTrustStateToString(trustState))
             .put("trustSource", trustSource)
             .putInt("trustUpdatedAt", trustUpdatedAt)

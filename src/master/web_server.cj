@@ -2627,6 +2627,8 @@ func buildManagedDeviceRecordFromJson(body: String, fallbackId: String, defaultP
     record.name = parseJsonString(body, "name") ?? ""
     record.deviceType = parseJsonString(body, "deviceType") ?? (parseJsonString(body, "type") ?? "")
     record.connectorType = parseJsonString(body, "connectorType") ?? (parseJsonString(body, "connector") ?? "")
+    record.endpointScheme = parseJsonString(body, "endpointScheme") ?? (parseJsonString(body, "scheme") ?? "")
+    record.endpointBasePath = parseJsonString(body, "endpointBasePath") ?? (parseJsonString(body, "basePath") ?? "")
     record.ip = parseJsonString(body, "ip") ?? (parseJsonString(body, "host") ?? "")
 
     let portRaw = parseJsonString(body, "port") ?? ""
@@ -2692,13 +2694,17 @@ func firstNonEmpty(values: Array<String>): String {
 
 func buildConnectorBindingJson(server: CoreServer, device: Device): JsonObject {
     let resolvedType = defaultConnectorTypeForDevice(device)
+    let endpoint = buildDeviceEndpoint(device)
     let out = JsonObject()
         .put("id", device.id)
         .put("name", device.name)
         .put("deviceType", device.deviceType)
         .put("connectorType", resolvedType)
+        .put("endpointScheme", endpoint.scheme)
+        .put("endpointBasePath", endpoint.basePath)
         .put("ip", device.ip)
         .putInt("port", device.port)
+        .putObj("endpoint", endpoint.toJson())
         .putBool("online", device.online)
     match (server.describeConnector(resolvedType)) {
         case Some(descriptor) =>

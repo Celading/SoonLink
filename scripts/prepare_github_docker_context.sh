@@ -58,17 +58,34 @@ mkdir -p "$OUTPUT_DIR"
 copy_tree() {
   src_dir="$1"
   dest_dir="$2"
+  rm -rf "$dest_dir"
   mkdir -p "$dest_dir"
-  rsync -a --delete \
-    --exclude '.git' \
-    --exclude 'target' \
-    --exclude 'build' \
-    --exclude 'dist' \
-    --exclude '_helper' \
-    --exclude 'gitTemp' \
-    --exclude 'cjpm.lock' \
-    --exclude '.DS_Store' \
-    "$src_dir"/ "$dest_dir"/
+  (
+    cd "$src_dir"
+    tar \
+      --exclude '.git' \
+      --exclude 'target' \
+      --exclude 'build' \
+      --exclude 'dist' \
+      --exclude '.cache' \
+      --exclude '.vscode' \
+      --exclude '.idea' \
+      --exclude '.env' \
+      --exclude '.cjpm_test_tmp_*' \
+      --exclude 'cache' \
+      --exclude 'logs' \
+      --exclude 'volumes' \
+      --exclude 'output' \
+      --exclude '~' \
+      --exclude '_helper' \
+      --exclude 'gitTemp' \
+      --exclude 'cjpm.lock' \
+      --exclude '.DS_Store' \
+      -cf - .
+  ) | (
+    cd "$dest_dir"
+    tar -xf -
+  )
 }
 
 copy_tree "$ROOT_DIR" "$OUTPUT_DIR/SoonLink-Core"

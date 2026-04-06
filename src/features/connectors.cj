@@ -175,8 +175,8 @@ public class LocalFsConnectorDriver <: ConnectorDriver {
 class SoonLinkNodeFileClient <: ConnectorFileClient {
     let nodeClient: SoonLinkNodeClient
 
-    init(host: String, port: Int64) {
-        this.nodeClient = SoonLinkNodeClient(host, port)
+    init(host: String, port: Int64, scheme: String, basePath: String) {
+        this.nodeClient = SoonLinkNodeClient(host, port, scheme: scheme, basePath: basePath)
     }
 
     public func listDir(path: String): ArrayList<FileEntry> {
@@ -248,7 +248,12 @@ public class SoonLinkNodeConnectorDriver <: ConnectorDriver {
         if (!supportsDevice(device)) {
             return None
         }
-        Some(SoonLinkNodeFileClient(device.ip, device.port))
+        Some(SoonLinkNodeFileClient(
+            device.ip,
+            device.port,
+            defaultEndpointSchemeForDevice(device),
+            defaultEndpointBasePathForDevice(device)
+        ))
     }
 }
 

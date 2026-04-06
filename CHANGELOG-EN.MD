@@ -20,6 +20,13 @@ Notes:
 
 ---
 
+## [0.5.22] - 2026-04-06
+
+- `+Feature` Promoted manual node endpoint modeling from plain `ip + port` records to `scheme + host + port + basePath` across Web, CLI, MCP, and automation surfaces
+- `+Feature` SoonLink Node connectors now support `https` origins and reverse-proxy subpaths, allowing node-to-node access behind base-path deployments
+- `=Fix` Invalid endpoint schemes are now rejected for `soonlink-http` even when the connector is inferred from the address instead of being filled explicitly
+- `=Docs` Synced README, CHANGELOG, runtime version fallback, troubleshooting notes, and the release draft to `0.5.22`
+
 ## [0.5.21] - 2026-04-06
 
 - `+Feature` Fully tightened the default Core product profile to the public capability boundary: active discovery, peer transfer, relay, whitelist, favorites, and advanced security are no longer exposed by default

@@ -31,11 +31,19 @@ resolve_platform() {
     aarch64-unknown-linux-gnu) printf '%s\n' "linux-aarch64" ;;
     x86_64-apple-darwin) printf '%s\n' "darwin-x86_64" ;;
     aarch64-apple-darwin) printf '%s\n' "darwin-aarch64" ;;
+    x86_64-w64-mingw32) printf '%s\n' "windows-x86_64" ;;
     *)
       os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
       arch_name="$(uname -m | tr '[:upper:]' '[:lower:]')"
       printf '%s-%s\n' "$os_name" "$arch_name"
       ;;
+  esac
+}
+
+resolve_bin_name() {
+  case "$1" in
+    x86_64-w64-mingw32) printf '%s.exe\n' "$PACKAGE_BIN_NAME" ;;
+    *) printf '%s\n' "$PACKAGE_BIN_NAME" ;;
   esac
 }
 
@@ -101,12 +109,19 @@ if [ -z "$ARCHIVE_PLATFORM" ]; then
 fi
 
 if [ -z "$BIN_PATH" ]; then
+  PACKAGE_BIN_FILENAME="$(resolve_bin_name "$TARGET_TRIPLE")"
   for candidate in \
+    "$TARGET_DIR/release/bin/main.exe" \
     "$TARGET_DIR/release/bin/main" \
+    "$TARGET_DIR/$TARGET_TRIPLE/release/bin/main.exe" \
     "$TARGET_DIR/$TARGET_TRIPLE/release/bin/main" \
+    "$ROOT_DIR/target/release/bin/main.exe" \
     "$ROOT_DIR/target/release/bin/main" \
+    "$ROOT_DIR/target/$TARGET_TRIPLE/release/bin/main.exe" \
     "$ROOT_DIR/target/$TARGET_TRIPLE/release/bin/main" \
+    "$ROOT_DIR/build/${PACKAGE_BIN_FILENAME}" \
     "$ROOT_DIR/build/$PACKAGE_BIN_NAME" \
+    "$ROOT_DIR/${PACKAGE_BIN_FILENAME}" \
     "$ROOT_DIR/$PACKAGE_BIN_NAME"
   do
     if [ -f "$candidate" ]; then
@@ -126,12 +141,13 @@ mkdir -p "$DIST_DIR"
 STAGE_NAME="${PACKAGE_PREFIX}-${VERSION_OVERRIDE}-${ARCHIVE_PLATFORM}"
 STAGE_DIR="$DIST_DIR/$STAGE_NAME"
 TARBALL_PATH="$DIST_DIR/${STAGE_NAME}.tar.gz"
+PACKAGE_BIN_FILENAME="$(resolve_bin_name "$TARGET_TRIPLE")"
 
 rm -rf "$STAGE_DIR" "$TARBALL_PATH"
 mkdir -p "$STAGE_DIR"
 
-cp "$BIN_PATH" "$STAGE_DIR/$PACKAGE_BIN_NAME"
-chmod +x "$STAGE_DIR/$PACKAGE_BIN_NAME"
+cp "$BIN_PATH" "$STAGE_DIR/$PACKAGE_BIN_FILENAME"
+chmod +x "$STAGE_DIR/$PACKAGE_BIN_FILENAME"
 
 for public_path in \
   LICENSE \
@@ -139,7 +155,9 @@ for public_path in \
   README-EN.MD \
   CHANGELOG.MD \
   CHANGELOG-EN.MD \
+  .env.example \
   compose.yaml \
+  compose.release.yaml \
   Dockerfile \
   config \
   web \

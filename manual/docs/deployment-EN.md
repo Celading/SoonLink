@@ -18,17 +18,19 @@ For a faster machine-local deployment, the repository already includes:
 
 - `Dockerfile`
 - `compose.yaml`
+- `compose.release.yaml`
+- `.env.example`
 - `scripts/prepare_container_bundle.sh`
 
 Recommended order:
 
-1. produce a runnable binary first
-2. prepare the container bundle
-3. run `docker compose up --build`
+1. for source-based local builds, produce a runnable binary first
+2. for a local image, prepare the container bundle and run `docker compose --env-file .env.example -f compose.yaml up --build`
+3. for a release image from GitHub / Docker Hub, run `docker compose --env-file .env.example -f compose.release.yaml up -d`
 
 ## 3. Homebrew
 
-The repository also keeps the Homebrew formula-rendering and CI-validation path for macOS delivery.
+The repository also keeps the Homebrew formula rendering, CI validation, and tap publishing path for macOS delivery.
 
 Relevant scripts:
 

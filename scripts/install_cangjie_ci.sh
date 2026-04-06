@@ -23,6 +23,50 @@ EOF
   exit 1
 }
 
+cangjie_driver() {
+  if [ -x "$SDK_DIR/bin/cjc" ]; then
+    printf '%s\n' "$SDK_DIR/bin/cjc"
+    return 0
+  fi
+  if [ -x "$SDK_DIR/bin/cjc.exe" ]; then
+    printf '%s\n' "$SDK_DIR/bin/cjc.exe"
+    return 0
+  fi
+  return 1
+}
+
+native_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -aw "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+extract_archive() {
+  archive_path="$1"
+  dest_dir="$2"
+
+  if tar -xf "$archive_path" -C "$dest_dir" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -q "$archive_path" -d "$dest_dir"
+    return 0
+  fi
+
+  if command -v powershell.exe >/dev/null 2>&1; then
+    archive_native="$(native_path "$archive_path")"
+    dest_native="$(native_path "$dest_dir")"
+    powershell.exe -NoProfile -Command "Expand-Archive -Force -Path '$archive_native' -DestinationPath '$dest_native'"
+    return 0
+  fi
+
+  echo "unable to extract archive: $archive_path" >&2
+  exit 1
+}
+
 sedi() {
   expr="$1"
   file="$2"
@@ -75,11 +119,11 @@ SDK_STAGE="${SDK_PARENT}/cangjie-sdk.unpack"
 
 mkdir -p "$SDK_PARENT" "$STDX_PARENT"
 
-if [ ! -x "$SDK_DIR/bin/cjc" ]; then
+if ! cangjie_driver >/dev/null 2>&1; then
   rm -rf "$SDK_DIR" "$SDK_STAGE"
   mkdir -p "$SDK_STAGE"
   curl -L --fail "$SDK_URL" -o "$SDK_ARCHIVE"
-  tar -xzf "$SDK_ARCHIVE" -C "$SDK_STAGE"
+  extract_archive "$SDK_ARCHIVE" "$SDK_STAGE"
   first_entry="$(find "$SDK_STAGE" -mindepth 1 -maxdepth 1 | head -n 1)"
   [ -n "$first_entry" ] || {
     echo "failed to unpack Cangjie SDK from $SDK_URL" >&2

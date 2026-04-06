@@ -125,10 +125,12 @@ public class Mcp_test {
             runtime.start()
             let registerResponse = dispatchMcpRequest(
                 runtime,
-                "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"soonlink_register_device\",\"arguments\":{\"deviceId\":\"edge-node\",\"name\":\"Edge Node\",\"deviceType\":\"remote\",\"connectorType\":\"soonlink-http\",\"ip\":\"10.0.0.44\",\"port\":19090}}}"
+                "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"soonlink_register_device\",\"arguments\":{\"deviceId\":\"edge-node\",\"name\":\"Edge Node\",\"deviceType\":\"remote\",\"connectorType\":\"soonlink-http\",\"scheme\":\"tls\",\"basePath\":\"gateway/core/\",\"ip\":\"10.0.0.44\",\"port\":19090}}}"
             ) ?? ""
             @Assert(registerResponse.contains("\"success\":true"))
             @Assert(registerResponse.contains("\"edge-node\""))
+            @Assert(registerResponse.contains("\"endpointScheme\":\"https\""))
+            @Assert(registerResponse.contains("\"endpointBasePath\":\"/gateway/core\""))
 
             let removeResponse = dispatchMcpRequest(
                 runtime,

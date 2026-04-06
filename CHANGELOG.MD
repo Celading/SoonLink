@@ -20,6 +20,13 @@ SoonLink / 溯联开源版的主要变更记录。
 
 ---
 
+## [0.5.22] - 2026-04-06
+
+- `+特性` 手动节点端点模型从单纯 `ip + port` 升级为 `scheme + host + port + basePath`，Web / CLI / MCP / 自动化运行时统一收口
+- `+特性` SoonLink Node 连接器开始支持 `https` 与反向代理子路径，跨节点访问可直接对接带 base path 的部署形态
+- `=修复` 手动节点在未显式填写 connector 时，`soonlink-http` 也会严格校验非法 endpoint scheme，避免默认化路径绕过规则
+- `=文档` README、CHANGELOG、运行时版本常量、排障文档与 release 草稿统一同步到 `0.5.22`
+
 ## [0.5.21] - 2026-04-06
 
 - `+特性` Core 默认产品画像彻底收口到公开能力边界：主动发现、peer、中继、白名单、收藏与增强安全默认不再暴露

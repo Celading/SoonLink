@@ -23,6 +23,8 @@ public class DeviceRegistryStore_test {
         r1.deviceType = "remote"
         r1.ip = "192.168.1.5"
         r1.port = 8081
+        r1.endpointScheme = "https"
+        r1.endpointBasePath = "/gateway"
         r1.online = true
         r1.lastSeen = currentTimestamp()
         r1.trustState = Trusted
@@ -49,6 +51,8 @@ public class DeviceRegistryStore_test {
         @Assert(loaded.size, 2)
         @Assert(loaded[0].id, "dev-1")
         @Assert(loaded[1].id, "dev-2")
+        @Assert(loaded[0].endpointScheme, "https")
+        @Assert(loaded[0].endpointBasePath, "/gateway")
         @Assert(deviceTrustStateToString(loaded[0].trustState), "trusted")
         @Assert(loaded[0].trustSource, "pin")
         @Assert(deviceTrustStateToString(loaded[1].trustState), "blocked")
