@@ -174,6 +174,13 @@ jobs:
             echo "deveco_ohos_aarch64_url=${deveco_ohos_aarch64_url}"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Show resolved release matrix
+        shell: bash
+        run: |
+          echo "nightly_tag=${{ steps.meta.outputs.nightly_tag }}"
+          echo "deveco_ohos_aarch64_url=${{ steps.meta.outputs.deveco_ohos_aarch64_url }}"
+          echo '${{ steps.meta.outputs.bundle_matrix }}'
+
   bundles:
     needs: metadata
     strategy:
@@ -274,7 +281,7 @@ jobs:
 
       - name: Build release bundle
         id: bundle
-        if: ${{ steps.availability.outputs.enabled == 'true' && steps.sdk.outcome == 'success' }}
+        if: ${{ steps.availability.outputs.enabled == 'true' && steps.sdk.conclusion == 'success' }}
         continue-on-error: true
         shell: bash
         working-directory: ${{ steps.workspace.outputs.core_dir }}
@@ -293,7 +300,7 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
       - name: Upload bundle
-        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.outcome == 'success' }}
+        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: soonlink-core-${{ matrix.artifact_platform }}
