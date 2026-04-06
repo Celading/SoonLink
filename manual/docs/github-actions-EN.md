@@ -7,7 +7,7 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
 - `.github/workflows/core-ci.yml`
   Public-boundary checks, Compose validation, and a lightweight build smoke test.
   - When `CANGJIE_SDK_LINUX_AMD64_URL` is configured, the workflow now installs the Linux SDK and `stdx`, then runs real `cjpm build`, `cjpm test`, and container-bundle preparation.
-  - When `CANGJIE_STDX_RELEASE_VERSION` is configured, CI prefers that official prebuilt `stdx` release package. When it is unset, Linux still falls back to source builds, while macOS / Windows / OpenHarmony jobs first try the official `1.0.0.1` release bundle to avoid rebuilding `stdx` on hosted runners.
+  - When `CANGJIE_STDX_RELEASE_VERSION` is configured, CI prefers that official prebuilt `stdx` release package. When it is unset, Linux still falls back to source builds, while macOS / Windows / OpenHarmony jobs first try the release version derived from `CANGJIE_STDX_GIT_REF` and only then fall back to `1.0.0.1`.
   - It also clones `Ignite / lisi / jinguiSSL` and builds inside a temporary path-rewritten workspace instead of depending on the public repository's live git dependency shape.
   - When the repository variable is still missing, the workflow emits a warning and keeps the boundary and Compose checks only.
   - It now also includes an optional OpenHarmony `aarch64` cross-build smoke lane. When the Linux SDK is available and an OpenHarmony DEVECO bundle can be configured or auto-resolved, CI runs one `aarch64-linux-ohos` build as well.
@@ -20,7 +20,7 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
   - `windows-x86_64`
   - When the OpenHarmony toolchain can be resolved, it also adds:
     - `ohos-aarch64`
-  - When `CANGJIE_STDX_RELEASE_VERSION` is configured, release jobs reuse that official per-platform `stdx` bundle. When it is unset, macOS / Windows / OpenHarmony jobs first try the official `1.0.0.1` release bundle.
+  - When `CANGJIE_STDX_RELEASE_VERSION` is configured, release jobs reuse that official per-platform `stdx` bundle. When it is unset, macOS / Windows / OpenHarmony jobs first try the release version derived from `CANGJIE_STDX_GIT_REF` and only then fall back to `1.0.0.1`.
   - Each platform now emits both `.tar.gz` and `.zip` bundles so users can unpack a full runtime bundle more directly.
   - Each platform job now uploads staged artifacts first, and the Ubuntu `publish` job publishes the final GitHub Release assets in one place.
 - `.github/workflows/docker-publish.yml`
@@ -47,7 +47,7 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
 - `CANGJIE_NIGHTLY_TAGS_API`
   Optional. Defaults to `https://api.gitcode.com/api/v5/repos/Cangjie/nightly_build/tags?per_page=100`. Used to resolve the latest nightly tag automatically.
 - `CANGJIE_STDX_RELEASE_VERSION`
-  Optional. When set, CI prefers the official prebuilt `stdx` bundle in the form `https://gitcode.com/Cangjie/cangjie_stdx/releases/download/v<version>/cangjie-stdx-<platform>-<version>.zip`. When unset, Linux still falls back to source builds while macOS / Windows / OpenHarmony default to the official `1.0.0.1` bundle first.
+  Optional. When set, CI prefers the official prebuilt `stdx` bundle in the form `https://gitcode.com/Cangjie/cangjie_stdx/releases/download/v<version>/cangjie-stdx-<platform>-<version>.zip`. When unset, Linux still falls back to source builds while macOS / Windows / OpenHarmony first try the version derived from `CANGJIE_STDX_GIT_REF` and only then fall back to `1.0.0.1`.
 - `CANGJIE_STDX_GIT_REF`
   Optional. Defaults to `v1.1.0-beta.25`.
 - `CANGJIE_STDX_REPO`
@@ -101,7 +101,7 @@ Both bundle formats include:
 
 - `scripts/install_cangjie_ci.sh`
   Downloads the SDK, resolves or builds `stdx`, and exports CI environment variables.
-  - It now handles Windows DLL runtime path exports and falls back from symbolic links to directory copies for `stdx` aliases when runners do not permit symlink creation.
+  - It now handles Windows DLL runtime path exports, Linux/macOS multi-directory runtime library discovery, and falls back from symbolic links to directory copies for `stdx` aliases when runners do not permit symlink creation.
 - `scripts/build_release_target.sh`
   Runs the target build and packaging flow end-to-end.
 - `scripts/build_release_bundle.sh`

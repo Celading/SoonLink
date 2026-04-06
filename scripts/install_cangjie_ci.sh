@@ -108,6 +108,13 @@ EOF
   exit 1
 }
 
+normalize_release_version() {
+  case "$1" in
+    v*) printf '%s\n' "${1#v}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
 append_stdx_target() {
   target_triple="$1"
   case " $STDX_TARGETS " in
@@ -314,7 +321,12 @@ resolve_effective_stdx_release_version() {
 
   for target_triple in $STDX_TARGETS; do
     if stdx_prefers_release_bundle_for_target "$target_triple"; then
-      printf '%s\n' "1.0.0.1"
+      normalized_ref="$(normalize_release_version "$STDX_REF")"
+      if [ -n "$normalized_ref" ]; then
+        printf '%s\n' "$normalized_ref"
+      else
+        printf '%s\n' "1.0.0.1"
+      fi
       return 0
     fi
   done
@@ -402,7 +414,12 @@ download_file_with_cache() {
     return 0
   fi
 
-  curl -L --fail "$download_url" -o "$cache_file"
+  if curl -L --fail "$download_url" -o "$cache_file"; then
+    return 0
+  fi
+
+  rm -f "$cache_file"
+  return 1
 }
 
 extract_top_level_dir() {
@@ -434,6 +451,23 @@ link_or_copy_alias() {
   cp -R "$source_dir" "$alias_path"
 }
 
+collect_sdk_library_path() {
+  {
+    if [ -n "$RUNTIME_LIB_DIR" ]; then
+      printf '%s\n' "$RUNTIME_LIB_DIR"
+    fi
+    if [ -n "$TOOLS_LIB_DIR" ]; then
+      printf '%s\n' "$TOOLS_LIB_DIR"
+    fi
+    for root in "$SDK_DIR/runtime/lib" "$SDK_DIR/lib"; do
+      if [ -d "$root" ]; then
+        printf '%s\n' "$root"
+        find "$root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null
+      fi
+    done
+  } | awk 'NF && !seen[$0]++ { print }' | paste -sd ':' -
+}
+
 install_stdx_release_for_target() {
   target_triple="$1"
   release_version="$2"
@@ -444,15 +478,34 @@ install_stdx_release_for_target() {
   [ -n "$alias_name" ] || return 1
   [ -n "$release_platform" ] || return 1
 
-  release_cache_dir="${HOME:-$ROOT_DIR}/.cangjie_stdx/v${release_version}"
-  release_filename="cangjie-stdx-${release_platform}-${release_version}.zip"
-  release_url="https://gitcode.com/Cangjie/cangjie_stdx/releases/download/v${release_version}/${release_filename}"
-  release_archive="${release_cache_dir}/${release_filename}"
-  release_stage="${release_cache_dir}/${release_filename}.unpack"
-  final_dir="${release_root}/cangjie-stdx-${release_platform}-${release_version}"
+  actual_version=""
+  top_level_dir=""
+  final_dir=""
+  fallback_version="1.0.0.1"
+  candidate_versions="$release_version"
+  if [ -z "$STDX_RELEASE_VERSION" ] && [ "$release_version" != "$fallback_version" ]; then
+    candidate_versions="${candidate_versions} ${fallback_version}"
+  fi
 
-  download_file_with_cache "$release_url" "$release_archive"
-  top_level_dir="$(extract_top_level_dir "$release_archive" "$release_stage")"
+  for candidate_version in $candidate_versions; do
+    release_cache_dir="${HOME:-$ROOT_DIR}/.cangjie_stdx/v${candidate_version}"
+    release_filename="cangjie-stdx-${release_platform}-${candidate_version}.zip"
+    release_url="https://gitcode.com/Cangjie/cangjie_stdx/releases/download/v${candidate_version}/${release_filename}"
+    release_archive="${release_cache_dir}/${release_filename}"
+    release_stage="${release_cache_dir}/${release_filename}.unpack"
+
+    if download_file_with_cache "$release_url" "$release_archive"; then
+      top_level_dir="$(extract_top_level_dir "$release_archive" "$release_stage")"
+      actual_version="$candidate_version"
+      final_dir="${release_root}/cangjie-stdx-${release_platform}-${candidate_version}"
+      break
+    fi
+  done
+
+  [ -n "$actual_version" ] || {
+    echo "failed to install stdx release bundle for $target_triple" >&2
+    exit 1
+  }
 
   mkdir -p "$release_root"
   rm -rf "$final_dir" "$release_root/$alias_name"
@@ -582,15 +635,16 @@ export PATH="$(join_path_entries "$CANGJIE_BIN_DIR" "$CANGJIE_TOOLS_DIR" "$PATH"
 
 RUNTIME_LIB_DIR="$(runtime_library_dir || true)"
 TOOLS_LIB_DIR="$(tools_library_dir || true)"
+SDK_LIBRARY_PATH="$(collect_sdk_library_path || true)"
 case "$(uname -s)" in
   Linux)
-    if [ -n "$RUNTIME_LIB_DIR" ] || [ -n "$TOOLS_LIB_DIR" ]; then
-      export LD_LIBRARY_PATH="$(join_path_entries "$RUNTIME_LIB_DIR" "$TOOLS_LIB_DIR" "${LD_LIBRARY_PATH:-}")"
+    if [ -n "$SDK_LIBRARY_PATH" ]; then
+      export LD_LIBRARY_PATH="$(join_path_entries "$SDK_LIBRARY_PATH" "${LD_LIBRARY_PATH:-}")"
     fi
     ;;
   Darwin)
-    if [ -n "$RUNTIME_LIB_DIR" ] || [ -n "$TOOLS_LIB_DIR" ]; then
-      export DYLD_LIBRARY_PATH="$(join_path_entries "$RUNTIME_LIB_DIR" "$TOOLS_LIB_DIR" "${DYLD_LIBRARY_PATH:-}")"
+    if [ -n "$SDK_LIBRARY_PATH" ]; then
+      export DYLD_LIBRARY_PATH="$(join_path_entries "$SDK_LIBRARY_PATH" "${DYLD_LIBRARY_PATH:-}")"
     fi
     ;;
   MINGW*|MSYS*|CYGWIN*)
