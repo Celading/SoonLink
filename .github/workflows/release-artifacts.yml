@@ -208,7 +208,8 @@ jobs:
             --sdk-dir "${RUNNER_TEMP}/cangjie" \
             --stdx-dir "${RUNNER_TEMP}/cangjie_stdx" \
             --stdx-repo "${{ env.CANGJIE_STDX_REPO }}" \
-            --stdx-ref "${{ env.CANGJIE_STDX_GIT_REF }}"
+            --stdx-ref "${{ env.CANGJIE_STDX_GIT_REF }}" \
+            --stdx-target "${{ matrix.target }}"
 
       - name: Build release bundle
         id: bundle

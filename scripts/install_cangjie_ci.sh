@@ -7,6 +7,7 @@ SDK_DIR="${ROOT_DIR}/.ci/cangjie"
 STDX_DIR="${ROOT_DIR}/.ci/cangjie_stdx"
 STDX_REPO="${CANGJIE_STDX_REPO:-https://gitcode.com/Cangjie/cangjie_stdx}"
 STDX_REF="${CANGJIE_STDX_GIT_REF:-v1.1.0-beta.25}"
+STDX_TARGETS=""
 FORCE_STDX_BUILD=0
 
 find_sdk_executable() {
@@ -95,9 +96,23 @@ Usage:
     [--stdx-dir <dir>] \
     [--stdx-repo <url>] \
     [--stdx-ref <git-ref>] \
+    [--stdx-target <triple>] \
     [--force-stdx-build]
 EOF
   exit 1
+}
+
+append_stdx_target() {
+  target_triple="$1"
+  case " $STDX_TARGETS " in
+    *" $target_triple "*) return 0 ;;
+  esac
+
+  if [ -n "$STDX_TARGETS" ]; then
+    STDX_TARGETS="${STDX_TARGETS} ${target_triple}"
+  else
+    STDX_TARGETS="$target_triple"
+  fi
 }
 
 cangjie_driver() {
@@ -199,6 +214,21 @@ find_stdx_alias_source() {
         \( -name '*linux*aarch64*llvm*' -o -name '*linux*aarch64*cjnative*' \) \
         2>/dev/null | head -n 1
       ;;
+    cj_stdx_darwin_x86_64_llvm)
+      find "$stdx_root" -mindepth 1 -maxdepth 1 -type d \
+        \( -name '*darwin*x86_64*llvm*' -o -name '*macos*x86_64*llvm*' \) \
+        2>/dev/null | head -n 1
+      ;;
+    cj_stdx_darwin_aarch64_llvm)
+      find "$stdx_root" -mindepth 1 -maxdepth 1 -type d \
+        \( -name '*darwin*aarch64*llvm*' -o -name '*macos*aarch64*llvm*' -o -name '*darwin*arm64*llvm*' \) \
+        2>/dev/null | head -n 1
+      ;;
+    windows_x86_64_cjnative)
+      find "$stdx_root" -mindepth 1 -maxdepth 1 -type d \
+        \( -name 'windows_x86_64_cjnative' -o -name '*windows*x86_64*cjnative*' -o -name '*x86_64*w64*mingw32*' \) \
+        2>/dev/null | head -n 1
+      ;;
     *)
       return 1
       ;;
@@ -215,6 +245,58 @@ ensure_stdx_alias() {
   [ -d "$alias_source/static/stdx" ] || return 0
 
   ln -s "$(basename "$alias_source")" "$stdx_root/$alias_name"
+}
+
+stdx_alias_name_for_target() {
+  case "$1" in
+    x86_64-unknown-linux-gnu) printf '%s\n' "linux_x86_64_llvm" ;;
+    aarch64-unknown-linux-gnu) printf '%s\n' "linux_aarch64_llvm" ;;
+    x86_64-apple-darwin) printf '%s\n' "cj_stdx_darwin_x86_64_llvm" ;;
+    aarch64-apple-darwin) printf '%s\n' "cj_stdx_darwin_aarch64_llvm" ;;
+    x86_64-w64-mingw32) printf '%s\n' "windows_x86_64_cjnative" ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+stdx_target_output_exists() {
+  stdx_root="$1"
+  target_triple="$2"
+  alias_name="$(stdx_alias_name_for_target "$target_triple" || true)"
+
+  [ -n "$alias_name" ] || return 0
+  [ -d "$stdx_root/$alias_name/static/stdx" ] && return 0
+
+  alias_source="$(find_stdx_alias_source "$stdx_root" "$alias_name" || true)"
+  [ -n "$alias_source" ] && [ -d "$alias_source/static/stdx" ]
+}
+
+list_stdx_outputs() {
+  stdx_root="$1"
+  [ -d "$stdx_root" ] || return 0
+
+  find "$stdx_root" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null \
+    | sort \
+    | tr '\n' ',' \
+    | sed 's/,$//'
+}
+
+verify_requested_stdx_targets() {
+  stdx_root="$1"
+
+  for target_triple in $STDX_TARGETS; do
+    alias_name="$(stdx_alias_name_for_target "$target_triple" || true)"
+    [ -n "$alias_name" ] || continue
+
+    if [ ! -d "$stdx_root/$alias_name/static/stdx" ]; then
+      available_outputs="$(list_stdx_outputs "$stdx_root" || true)"
+      [ -n "$available_outputs" ] || available_outputs="none"
+      annotate_github_error "stdx output for $target_triple is unavailable under $stdx_root (available: $available_outputs)"
+      echo "stdx output for $target_triple is unavailable under $stdx_root (available: $available_outputs)" >&2
+      exit 1
+    fi
+  done
 }
 
 native_path() {
@@ -279,6 +361,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --stdx-ref)
       STDX_REF="${2:-}"
+      shift 2
+      ;;
+    --stdx-target)
+      append_stdx_target "${2:-}"
       shift 2
       ;;
     --force-stdx-build)
@@ -378,7 +464,18 @@ if [ -f "$STDX_DIR/src/stdx/dynamicLoader/opensslSymbols.c" ]; then
   sedi 's/if (&dlclose != NULL && g_singletonHandleSsl != NULL && g_singletonHandleSsl != g_singletonHandle)/if (g_singletonHandleSsl != NULL \&\& g_singletonHandleSsl != g_singletonHandle)/' "$STDX_DIR/src/stdx/dynamicLoader/opensslSymbols.c"
 fi
 
-if [ "$FORCE_STDX_BUILD" = "1" ] || [ ! -d "$STDX_DIR/target" ]; then
+if [ -n "$STDX_TARGETS" ]; then
+  for target_triple in $STDX_TARGETS; do
+    if [ "$FORCE_STDX_BUILD" != "1" ] && stdx_target_output_exists "$STDX_DIR/target" "$target_triple"; then
+      continue
+    fi
+
+    (
+      cd "$STDX_DIR"
+      require_command_success "stdx cjpm build --target $target_triple" "$CJPM_BIN" build --target "$target_triple"
+    )
+  done
+elif [ "$FORCE_STDX_BUILD" = "1" ] || [ ! -d "$STDX_DIR/target" ]; then
   (
     cd "$STDX_DIR"
     require_command_success "stdx cjpm build" "$CJPM_BIN" build
@@ -389,7 +486,12 @@ export CANGJIE_STDX_PATH="$(resolve_stdx_root || printf '%s\n' "$STDX_DIR/target
 if [ -d "$CANGJIE_STDX_PATH" ]; then
   ensure_stdx_alias "$CANGJIE_STDX_PATH" "linux_x86_64_llvm"
   ensure_stdx_alias "$CANGJIE_STDX_PATH" "linux_aarch64_llvm"
+  ensure_stdx_alias "$CANGJIE_STDX_PATH" "cj_stdx_darwin_x86_64_llvm"
+  ensure_stdx_alias "$CANGJIE_STDX_PATH" "cj_stdx_darwin_aarch64_llvm"
+  ensure_stdx_alias "$CANGJIE_STDX_PATH" "windows_x86_64_cjnative"
 fi
+
+verify_requested_stdx_targets "$CANGJIE_STDX_PATH"
 
 if [ -n "${GITHUB_ENV:-}" ]; then
   {
