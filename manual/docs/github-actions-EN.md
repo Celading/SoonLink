@@ -9,6 +9,7 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
   - When `CANGJIE_SDK_LINUX_AMD64_URL` is configured, the workflow now installs the Linux SDK and `stdx`, then runs real `cjpm build`, `cjpm test`, and container-bundle preparation.
   - It also clones `Ignite / lisi / jinguiSSL` and builds inside a temporary path-rewritten workspace instead of depending on the public repository's live git dependency shape.
   - When the repository variable is still missing, the workflow emits a warning and keeps the boundary and Compose checks only.
+  - It now also includes an optional OpenHarmony `aarch64` cross-build smoke lane. When the Linux SDK is available and an OpenHarmony DEVECO bundle can be configured or auto-resolved, CI runs one `aarch64-linux-ohos` build as well.
 - `.github/workflows/release-artifacts.yml`
   Builds GitHub Release bundles for:
   - `linux-x86_64`
@@ -16,6 +17,8 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
   - `darwin-x86_64`
   - `darwin-aarch64`
   - `windows-x86_64`
+  - When the OpenHarmony toolchain can be resolved, it also adds:
+    - `ohos-aarch64`
   - Each platform now emits both `.tar.gz` and `.zip` bundles so users can unpack a full runtime bundle more directly.
 - `.github/workflows/docker-publish.yml`
   Publishes Docker Hub images with the default platform set:
@@ -36,6 +39,10 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
   SDK URL for macOS Apple Silicon runners. When unset, the workflow falls back to the official `1.1.0-beta.25` SDK.
 - `CANGJIE_SDK_WINDOWS_AMD64_URL`
   SDK URL for Windows x64 runners. When unset, the workflow falls back to the official `1.1.0-beta.25` SDK zip package.
+- `DEVECO_CANGJIE_OHOS_AARCH64_URL`
+  Download URL for the OpenHarmony aarch64 cross-toolchain bundle used as `DEVECO_CANGJIE_HOME`. When unset, the workflow first queries the GitCode tags API and then tries to resolve a matching nightly release asset automatically.
+- `CANGJIE_NIGHTLY_TAGS_API`
+  Optional. Defaults to `https://api.gitcode.com/api/v5/repos/Cangjie/nightly_build/tags?per_page=100`. Used to resolve the latest nightly tag automatically.
 - `CANGJIE_STDX_GIT_REF`
   Optional. Defaults to `v1.1.0-beta.25`.
 - `CANGJIE_STDX_REPO`
@@ -56,6 +63,7 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
 - `HOMEBREW_TAP_TOKEN`
 
 GitCode and AtomGit credentials are only needed when dependency repositories require authentication. Public read-only dependencies can leave them unset. `HOMEBREW_TAP_TOKEN` is used to push the generated formula into the tap repository.
+If you want OpenHarmony nightly tag auto-discovery to work, configure `GITCODE_TOKEN` as well because the current GitCode tags API requires the `private-token` request header.
 
 ## Reuse The Same Script Locally
 
@@ -102,11 +110,14 @@ Both bundle formats include:
 - The pushed tag must either match the `cjpm.toml` version exactly or append one extra dotted revision, for example release tag `0.5.27.1` on package version `0.5.27`.
 - `linux-aarch64` now uses a native `ubuntu-24.04-arm` runner with an ARM64 SDK so release bundles do not depend on x86_64 Linux SDK layouts that omit `linux_aarch64_cjnative` modules.
 - `release-artifacts` now attempts all five default platforms out of the box:
+- `release-artifacts` now attempts all five default platforms by default and adds a sixth OpenHarmony bundle when the toolchain is available:
   - `linux-x86_64`
   - `linux-aarch64`
   - `darwin-x86_64`
   - `darwin-aarch64`
   - `windows-x86_64`
+- `darwin-x86_64` now runs on `macos-15-intel` instead of the previous `macos-13` label, which had started getting cancelled upstream.
+- OpenHarmony nightly tag discovery now prefers the GitCode tags API instead of `git ls-remote`.
 - If you want to move to a newer SDK later, repository variables can still override these default download URLs.
 - Manual `homebrew-tap` runs now fall back to the current `cjpm.toml` version when `release_tag` is left empty, avoiding the previous empty-value failure.
 - Windows is currently limited to `windows-x86_64`. Do not promise Windows ARM64 publicly until the SDK and stdx layout become reproducible.

@@ -17,7 +17,9 @@ permissions:
 env:
   CANGJIE_STDX_GIT_REF: ${{ vars.CANGJIE_STDX_GIT_REF != '' && vars.CANGJIE_STDX_GIT_REF || 'v1.1.0-beta.25' }}
   CANGJIE_STDX_REPO: ${{ vars.CANGJIE_STDX_REPO != '' && vars.CANGJIE_STDX_REPO || 'https://gitcode.com/Cangjie/cangjie_stdx' }}
+  CANGJIE_NIGHTLY_TAGS_API: ${{ vars.CANGJIE_NIGHTLY_TAGS_API != '' && vars.CANGJIE_NIGHTLY_TAGS_API || 'https://api.gitcode.com/api/v5/repos/Cangjie/nightly_build/tags?per_page=100' }}
   CANGJIE_SDK_LINUX_AMD64_URL: ${{ vars.CANGJIE_SDK_LINUX_AMD64_URL }}
+  DEVECO_CANGJIE_OHOS_AARCH64_URL: ${{ vars.DEVECO_CANGJIE_OHOS_AARCH64_URL }}
   IGNITE_GIT_URL: https://gitcode.com/cinyu/ignite-cangjie.git
   LISI_GIT_URL: https://gitcode.com/cinyu/lisi
   JINGUISSL_GIT_URL: https://atomgit.com/cinyu/jinguiSSL
@@ -161,3 +163,155 @@ jobs:
             exit 0
           fi
           docker build -t soonlink-ci:local .
+
+  ohos-cross-build:
+    runs-on: ubuntu-latest
+    needs: boundary
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update -o Acquire::Retries=5
+          sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl file git tar unzip zip python3
+
+      - name: Resolve OpenHarmony toolchain URL
+        id: ohos
+        shell: bash
+        env:
+          GITCODE_API_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          resolve_gitcode_latest_tag() {
+            if [[ -z "${GITCODE_API_TOKEN:-}" ]]; then
+              return 1
+            fi
+
+            curl --retry 3 --retry-delay 2 -fsSL "${CANGJIE_NIGHTLY_TAGS_API}" \
+              -H 'Accept: application/json' \
+              -H "private-token: ${GITCODE_API_TOKEN}" \
+              | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next((item.get("name","") for item in data if item.get("name")), ""))'
+          }
+
+          resolve_first_reachable_url() {
+            for candidate in "$@"; do
+              if [[ -z "${candidate}" ]]; then
+                continue
+              fi
+              if curl --retry 2 --retry-delay 2 -fsI "${candidate}" >/dev/null; then
+                printf '%s\n' "${candidate}"
+                return 0
+              fi
+            done
+
+            return 1
+          }
+
+          if [[ -z "${CANGJIE_SDK_LINUX_AMD64_URL}" ]]; then
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::Skipping OpenHarmony cross-build because CANGJIE_SDK_LINUX_AMD64_URL is not configured."
+            exit 0
+          fi
+
+          deveco_url="${DEVECO_CANGJIE_OHOS_AARCH64_URL}"
+          nightly_tag=""
+          if [[ -z "${deveco_url}" ]]; then
+            nightly_tag="$(resolve_gitcode_latest_tag || true)"
+            if [[ -n "${nightly_tag}" ]]; then
+              deveco_url="$(resolve_first_reachable_url \
+                "https://gitcode.com/Cangjie/nightly_build/releases/download/${nightly_tag}/cangjie-sdk-ohos-aarch64-${nightly_tag}.tar.gz" \
+                "https://gitcode.com/Cangjie/nightly_build/-/releases/download/${nightly_tag}/cangjie-sdk-ohos-aarch64-${nightly_tag}.tar.gz" \
+                "https://gitcode.com/Cangjie/nightly_build/-/releases/${nightly_tag}/downloads/cangjie-sdk-ohos-aarch64-${nightly_tag}.tar.gz" \
+              || true)"
+            fi
+          fi
+
+          if [[ -z "${deveco_url}" ]]; then
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::Skipping OpenHarmony cross-build because no reachable DEVECO_CANGJIE_OHOS_AARCH64_URL could be resolved. Configure DEVECO_CANGJIE_OHOS_AARCH64_URL or GITCODE_TOKEN for nightly tag discovery."
+            exit 0
+          fi
+
+          {
+            echo "enabled=true"
+            echo "deveco_url=${deveco_url}"
+            echo "nightly_tag=${nightly_tag}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Install Cangjie SDK, stdx, and OpenHarmony toolchain
+        if: ${{ steps.ohos.outputs.enabled == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/install_cangjie_ci.sh
+          ./scripts/install_cangjie_ci.sh \
+            --sdk-url "${CANGJIE_SDK_LINUX_AMD64_URL}" \
+            --sdk-dir "${RUNNER_TEMP}/cangjie" \
+            --stdx-dir "${RUNNER_TEMP}/cangjie_stdx" \
+            --stdx-repo "${{ env.CANGJIE_STDX_REPO }}" \
+            --stdx-ref "${{ env.CANGJIE_STDX_GIT_REF }}" \
+            --stdx-target aarch64-linux-ohos \
+            --deveco-sdk-url "${{ steps.ohos.outputs.deveco_url }}" \
+            --deveco-dir "${RUNNER_TEMP}/deveco_cangjie"
+
+      - name: Configure GitCode Credentials
+        if: ${{ steps.ohos.outputs.enabled == 'true' }}
+        shell: bash
+        run: |
+          if [[ -n "${{ secrets.GITCODE_USERNAME }}" && -n "${{ secrets.GITCODE_TOKEN }}" ]]; then
+            git config --global url."https://${{ secrets.GITCODE_USERNAME }}:${{ secrets.GITCODE_TOKEN }}@gitcode.com/".insteadOf "https://gitcode.com/"
+            exit 0
+          fi
+
+          echo "GitCode credentials are not configured; continuing with public clone access."
+
+      - name: Configure AtomGit Credentials
+        if: ${{ steps.ohos.outputs.enabled == 'true' }}
+        shell: bash
+        run: |
+          if [[ -n "${{ secrets.ATOMGIT_USERNAME }}" && -n "${{ secrets.ATOMGIT_TOKEN }}" ]]; then
+            git config --global url."https://${{ secrets.ATOMGIT_USERNAME }}:${{ secrets.ATOMGIT_TOKEN }}@atomgit.com/".insteadOf "https://atomgit.com/"
+            exit 0
+          fi
+
+          echo "AtomGit credentials are not configured; continuing with public clone access."
+
+      - name: Clone dependency repositories
+        id: deps_ohos
+        if: ${{ steps.ohos.outputs.enabled == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          deps_root="${RUNNER_TEMP}/soonlink-core-ohos-deps"
+          mkdir -p "${deps_root}"
+          git clone --depth 1 "${IGNITE_GIT_URL}" "${deps_root}/Ignite0500"
+          git clone --depth 1 "${LISI_GIT_URL}" "${deps_root}/lisi"
+          git clone --depth 1 "${JINGUISSL_GIT_URL}" "${deps_root}/jinguiSSL"
+          echo "root=${deps_root}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare CI workspace
+        id: workspace_ohos
+        if: ${{ steps.ohos.outputs.enabled == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/prepare_release_workspace.sh
+          workspace_root="${RUNNER_TEMP}/soonlink-core-ohos-workspace"
+          ./scripts/prepare_release_workspace.sh \
+            --output "${workspace_root}" \
+            --ignite "${{ steps.deps_ohos.outputs.root }}/Ignite0500" \
+            --lisi "${{ steps.deps_ohos.outputs.root }}/lisi" \
+            --jinguissl "${{ steps.deps_ohos.outputs.root }}/jinguiSSL"
+          {
+            echo "root=${workspace_root}"
+            echo "core_dir=${workspace_root}/SoonLink-Core"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build OpenHarmony target
+        if: ${{ steps.ohos.outputs.enabled == 'true' }}
+        working-directory: ${{ steps.workspace_ohos.outputs.core_dir }}
+        run: |
+          set -euo pipefail
+          cjpm build --target aarch64-linux-ohos --target-dir ./target-ohos

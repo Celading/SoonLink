@@ -29,6 +29,8 @@ resolve_platform() {
   case "$1" in
     x86_64-unknown-linux-gnu) printf '%s\n' "linux-x86_64" ;;
     aarch64-unknown-linux-gnu) printf '%s\n' "linux-aarch64" ;;
+    aarch64-linux-ohos) printf '%s\n' "ohos-aarch64" ;;
+    aarch64-linux-ohos-cjnative) printf '%s\n' "ohos-aarch64" ;;
     x86_64-apple-darwin) printf '%s\n' "darwin-x86_64" ;;
     aarch64-apple-darwin) printf '%s\n' "darwin-aarch64" ;;
     x86_64-w64-mingw32) printf '%s\n' "windows-x86_64" ;;

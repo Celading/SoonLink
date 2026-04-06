@@ -4,6 +4,8 @@ set -eu
 ROOT_DIR="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 SDK_URL=""
 SDK_DIR="${ROOT_DIR}/.ci/cangjie"
+DEVECO_SDK_URL=""
+DEVECO_DIR="${ROOT_DIR}/.ci/deveco_cangjie"
 STDX_DIR="${ROOT_DIR}/.ci/cangjie_stdx"
 STDX_REPO="${CANGJIE_STDX_REPO:-https://gitcode.com/Cangjie/cangjie_stdx}"
 STDX_REF="${CANGJIE_STDX_GIT_REF:-v1.1.0-beta.25}"
@@ -93,6 +95,8 @@ Usage:
   install_cangjie_ci.sh \
     --sdk-url <url> \
     [--sdk-dir <dir>] \
+    [--deveco-sdk-url <url>] \
+    [--deveco-dir <dir>] \
     [--stdx-dir <dir>] \
     [--stdx-repo <url>] \
     [--stdx-ref <git-ref>] \
@@ -229,6 +233,11 @@ find_stdx_alias_source() {
         \( -name 'windows_x86_64_cjnative' -o -name '*windows*x86_64*cjnative*' -o -name '*x86_64*w64*mingw32*' \) \
         2>/dev/null | head -n 1
       ;;
+    linux_ohos_aarch64_cjnative)
+      find "$stdx_root" -mindepth 1 -maxdepth 1 -type d \
+        \( -name 'linux_ohos_aarch64_cjnative' -o -name '*linux*ohos*aarch64*cjnative*' -o -name '*ohos*aarch64*llvm*' \) \
+        2>/dev/null | head -n 1
+      ;;
     *)
       return 1
       ;;
@@ -254,9 +263,18 @@ stdx_alias_name_for_target() {
     x86_64-apple-darwin) printf '%s\n' "cj_stdx_darwin_x86_64_llvm" ;;
     aarch64-apple-darwin) printf '%s\n' "cj_stdx_darwin_aarch64_llvm" ;;
     x86_64-w64-mingw32) printf '%s\n' "windows_x86_64_cjnative" ;;
+    aarch64-linux-ohos) printf '%s\n' "linux_ohos_aarch64_cjnative" ;;
+    aarch64-linux-ohos-cjnative) printf '%s\n' "linux_ohos_aarch64_cjnative" ;;
     *)
       return 1
       ;;
+  esac
+}
+
+requires_deveco_target() {
+  case "$1" in
+    aarch64-linux-ohos|aarch64-linux-ohos-cjnative) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -331,6 +349,36 @@ extract_archive() {
   exit 1
 }
 
+install_archive_root() {
+  archive_url="$1"
+  install_dir="$2"
+  archive_name="$3"
+
+  parent_dir="$(dirname "$install_dir")"
+  archive_path="${parent_dir}/${archive_name}"
+  stage_dir="${parent_dir}/${archive_name}.unpack"
+
+  rm -rf "$install_dir" "$stage_dir"
+  mkdir -p "$stage_dir"
+  curl -L --fail "$archive_url" -o "$archive_path"
+  extract_archive "$archive_path" "$stage_dir"
+
+  first_entry="$(find "$stage_dir" -mindepth 1 -maxdepth 1 | head -n 1)"
+  [ -n "$first_entry" ] || {
+    echo "failed to unpack archive from $archive_url" >&2
+    exit 1
+  }
+
+  if [ -d "$first_entry" ] && [ "$(find "$stage_dir" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = "1" ]; then
+    mv "$first_entry" "$install_dir"
+  else
+    mkdir -p "$install_dir"
+    cp -R "$stage_dir"/. "$install_dir"/
+  fi
+
+  rm -rf "$stage_dir" "$archive_path"
+}
+
 sedi() {
   expr="$1"
   file="$2"
@@ -349,6 +397,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --sdk-dir)
       SDK_DIR="${2:-}"
+      shift 2
+      ;;
+    --deveco-sdk-url)
+      DEVECO_SDK_URL="${2:-}"
+      shift 2
+      ;;
+    --deveco-dir)
+      DEVECO_DIR="${2:-}"
       shift 2
       ;;
     --stdx-dir)
@@ -381,29 +437,13 @@ done
 [ -n "$SDK_URL" ] || usage
 
 SDK_PARENT="$(dirname "$SDK_DIR")"
+DEVECO_PARENT="$(dirname "$DEVECO_DIR")"
 STDX_PARENT="$(dirname "$STDX_DIR")"
-SDK_ARCHIVE="${SDK_PARENT}/cangjie-sdk.tar.gz"
-SDK_STAGE="${SDK_PARENT}/cangjie-sdk.unpack"
 
-mkdir -p "$SDK_PARENT" "$STDX_PARENT"
+mkdir -p "$SDK_PARENT" "$DEVECO_PARENT" "$STDX_PARENT"
 
 if ! cangjie_driver >/dev/null 2>&1; then
-  rm -rf "$SDK_DIR" "$SDK_STAGE"
-  mkdir -p "$SDK_STAGE"
-  curl -L --fail "$SDK_URL" -o "$SDK_ARCHIVE"
-  extract_archive "$SDK_ARCHIVE" "$SDK_STAGE"
-  first_entry="$(find "$SDK_STAGE" -mindepth 1 -maxdepth 1 | head -n 1)"
-  [ -n "$first_entry" ] || {
-    echo "failed to unpack Cangjie SDK from $SDK_URL" >&2
-    exit 1
-  }
-  if [ -d "$first_entry" ] && [ "$(find "$SDK_STAGE" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = "1" ]; then
-    mv "$first_entry" "$SDK_DIR"
-  else
-    mkdir -p "$SDK_DIR"
-    cp -R "$SDK_STAGE"/. "$SDK_DIR"/
-  fi
-  rm -rf "$SDK_STAGE" "$SDK_ARCHIVE"
+  install_archive_root "$SDK_URL" "$SDK_DIR" "cangjie-sdk.tar.gz"
 fi
 
 export CANGJIE_HOME="$SDK_DIR"
@@ -452,6 +492,29 @@ command -v cjpm >/dev/null 2>&1 || {
 require_command_success "cjc -v" "$CANGJIE_BIN" -v
 require_command_success "cjpm --version" "$CJPM_BIN" --version
 
+deveco_required=0
+for target_triple in $STDX_TARGETS; do
+  if requires_deveco_target "$target_triple"; then
+    deveco_required=1
+    break
+  fi
+done
+
+if [ "$deveco_required" = "1" ]; then
+  if [ ! -d "$DEVECO_DIR" ] && [ -n "$DEVECO_SDK_URL" ]; then
+    install_archive_root "$DEVECO_SDK_URL" "$DEVECO_DIR" "deveco-cangjie-sdk.tar.gz"
+  fi
+
+  if [ -d "$DEVECO_DIR" ]; then
+    export DEVECO_CANGJIE_HOME="$DEVECO_DIR"
+  fi
+
+  [ -n "${DEVECO_CANGJIE_HOME:-}" ] || {
+    echo "DEVECO_CANGJIE_HOME is required for OpenHarmony targets" >&2
+    exit 1
+  }
+fi
+
 if [ ! -d "$STDX_DIR/.git" ]; then
   rm -rf "$STDX_DIR"
   git clone --depth 1 --branch "$STDX_REF" "$STDX_REPO" "$STDX_DIR"
@@ -489,6 +552,7 @@ if [ -d "$CANGJIE_STDX_PATH" ]; then
   ensure_stdx_alias "$CANGJIE_STDX_PATH" "cj_stdx_darwin_x86_64_llvm"
   ensure_stdx_alias "$CANGJIE_STDX_PATH" "cj_stdx_darwin_aarch64_llvm"
   ensure_stdx_alias "$CANGJIE_STDX_PATH" "windows_x86_64_cjnative"
+  ensure_stdx_alias "$CANGJIE_STDX_PATH" "linux_ohos_aarch64_cjnative"
 fi
 
 verify_requested_stdx_targets "$CANGJIE_STDX_PATH"
@@ -497,6 +561,9 @@ if [ -n "${GITHUB_ENV:-}" ]; then
   {
     echo "CANGJIE_HOME=$CANGJIE_HOME"
     echo "CANGJIE_STDX_PATH=$CANGJIE_STDX_PATH"
+    if [ -n "${DEVECO_CANGJIE_HOME:-}" ]; then
+      echo "DEVECO_CANGJIE_HOME=$DEVECO_CANGJIE_HOME"
+    fi
     if [ -n "${LD_LIBRARY_PATH:-}" ]; then
       echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
     fi

@@ -23,6 +23,7 @@ permissions:
 env:
   CANGJIE_STDX_GIT_REF: ${{ vars.CANGJIE_STDX_GIT_REF != '' && vars.CANGJIE_STDX_GIT_REF || 'v1.1.0-beta.25' }}
   CANGJIE_STDX_REPO: ${{ vars.CANGJIE_STDX_REPO != '' && vars.CANGJIE_STDX_REPO || 'https://gitcode.com/Cangjie/cangjie_stdx' }}
+  CANGJIE_NIGHTLY_TAGS_API: ${{ vars.CANGJIE_NIGHTLY_TAGS_API != '' && vars.CANGJIE_NIGHTLY_TAGS_API || 'https://api.gitcode.com/api/v5/repos/Cangjie/nightly_build/tags?per_page=100' }}
   IGNITE_GIT_URL: https://gitcode.com/cinyu/ignite-cangjie.git
   LISI_GIT_URL: https://gitcode.com/cinyu/lisi
   JINGUISSL_GIT_URL: https://atomgit.com/cinyu/jinguiSSL
@@ -43,6 +44,8 @@ jobs:
       - name: Resolve release metadata
         id: meta
         shell: bash
+        env:
+          GITCODE_API_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -51,6 +54,31 @@ jobs:
               v*) printf '%s\n' "${1#v}" ;;
               *) printf '%s\n' "$1" ;;
             esac
+          }
+
+          resolve_gitcode_latest_tag() {
+            if [[ -z "${GITCODE_API_TOKEN:-}" ]]; then
+              return 1
+            fi
+
+            curl --retry 3 --retry-delay 2 -fsSL "${CANGJIE_NIGHTLY_TAGS_API}" \
+              -H 'Accept: application/json' \
+              -H "private-token: ${GITCODE_API_TOKEN}" \
+              | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next((item.get("name","") for item in data if item.get("name")), ""))'
+          }
+
+          resolve_first_reachable_url() {
+            for candidate in "$@"; do
+              if [[ -z "${candidate}" ]]; then
+                continue
+              fi
+              if curl --retry 2 --retry-delay 2 -fsI "${candidate}" >/dev/null; then
+                printf '%s\n' "${candidate}"
+                return 0
+              fi
+            done
+
+            return 1
           }
 
           package_version="$(sed -n 's/^  version = "\(.*\)"/\1/p' cjpm.toml | head -n 1)"
@@ -110,12 +138,28 @@ jobs:
             windows_amd64_sdk_url='https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-windows-x64-1.1.0-beta.25.zip&objectKey=69cb95dc6e8ed61e6e07fd46'
           fi
 
+          deveco_ohos_aarch64_url="${{ vars.DEVECO_CANGJIE_OHOS_AARCH64_URL }}"
+          nightly_tag=""
+          if [[ -z "${deveco_ohos_aarch64_url}" ]]; then
+            nightly_tag="$(resolve_gitcode_latest_tag || true)"
+            if [[ -n "${nightly_tag}" ]]; then
+              deveco_ohos_aarch64_url="$(resolve_first_reachable_url \
+                "https://gitcode.com/Cangjie/nightly_build/releases/download/${nightly_tag}/cangjie-sdk-ohos-aarch64-${nightly_tag}.tar.gz" \
+                "https://gitcode.com/Cangjie/nightly_build/-/releases/download/${nightly_tag}/cangjie-sdk-ohos-aarch64-${nightly_tag}.tar.gz" \
+                "https://gitcode.com/Cangjie/nightly_build/-/releases/${nightly_tag}/downloads/cangjie-sdk-ohos-aarch64-${nightly_tag}.tar.gz" \
+              || true)"
+            fi
+          fi
+
           bundle_matrix='{"include":['
           bundle_matrix="${bundle_matrix}{\"runner\":\"ubuntu-latest\",\"target\":\"x86_64-unknown-linux-gnu\",\"artifact_platform\":\"linux-x86_64\",\"sdk_url\":\"${linux_amd64_sdk_url}\"}"
           bundle_matrix="${bundle_matrix},{\"runner\":\"ubuntu-24.04-arm\",\"target\":\"aarch64-unknown-linux-gnu\",\"artifact_platform\":\"linux-aarch64\",\"sdk_url\":\"${linux_arm64_sdk_url}\"}"
-          bundle_matrix="${bundle_matrix},{\"runner\":\"macos-13\",\"target\":\"x86_64-apple-darwin\",\"artifact_platform\":\"darwin-x86_64\",\"sdk_url\":\"${macos_amd64_sdk_url}\"}"
+          bundle_matrix="${bundle_matrix},{\"runner\":\"macos-15-intel\",\"target\":\"x86_64-apple-darwin\",\"artifact_platform\":\"darwin-x86_64\",\"sdk_url\":\"${macos_amd64_sdk_url}\"}"
           bundle_matrix="${bundle_matrix},{\"runner\":\"macos-14\",\"target\":\"aarch64-apple-darwin\",\"artifact_platform\":\"darwin-aarch64\",\"sdk_url\":\"${macos_arm64_sdk_url}\"}"
           bundle_matrix="${bundle_matrix},{\"runner\":\"windows-latest\",\"target\":\"x86_64-w64-mingw32\",\"artifact_platform\":\"windows-x86_64\",\"sdk_url\":\"${windows_amd64_sdk_url}\"}"
+          if [[ -n "${deveco_ohos_aarch64_url}" ]]; then
+            bundle_matrix="${bundle_matrix},{\"runner\":\"ubuntu-latest\",\"target\":\"aarch64-linux-ohos\",\"artifact_platform\":\"ohos-aarch64\",\"sdk_url\":\"${linux_amd64_sdk_url}\",\"deveco_sdk_url\":\"${deveco_ohos_aarch64_url}\"}"
+          fi
 
           bundle_matrix="${bundle_matrix}]}"
 
@@ -125,6 +169,8 @@ jobs:
             echo "release_tag=${release_tag}"
             echo "publish_release=${publish_release}"
             echo "bundle_matrix=${bundle_matrix}"
+            echo "nightly_tag=${nightly_tag}"
+            echo "deveco_ohos_aarch64_url=${deveco_ohos_aarch64_url}"
           } >> "${GITHUB_OUTPUT}"
 
   bundles:
@@ -220,7 +266,9 @@ jobs:
             --stdx-dir "${RUNNER_TEMP}/cangjie_stdx" \
             --stdx-repo "${{ env.CANGJIE_STDX_REPO }}" \
             --stdx-ref "${{ env.CANGJIE_STDX_GIT_REF }}" \
-            --stdx-target "${{ matrix.target }}"
+            --stdx-target "${{ matrix.target }}" \
+            --deveco-sdk-url "${{ matrix.deveco_sdk_url }}" \
+            --deveco-dir "${RUNNER_TEMP}/deveco_cangjie"
 
       - name: Build release bundle
         id: bundle
