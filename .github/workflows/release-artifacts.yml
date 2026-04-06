@@ -193,7 +193,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl file git tar unzip
 
       - name: Install Cangjie SDK and stdx
+        id: sdk
         if: ${{ steps.availability.outputs.enabled == 'true' }}
+        continue-on-error: true
         shell: bash
         run: |
           chmod +x ./scripts/install_cangjie_ci.sh
@@ -206,7 +208,8 @@ jobs:
 
       - name: Build release bundle
         id: bundle
-        if: ${{ steps.availability.outputs.enabled == 'true' }}
+        if: ${{ steps.availability.outputs.enabled == 'true' && steps.sdk.outcome == 'success' }}
+        continue-on-error: true
         shell: bash
         working-directory: ${{ steps.workspace.outputs.core_dir }}
         run: |
@@ -220,7 +223,7 @@ jobs:
           echo "bundle_path=${bundle_path}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload bundle
-        if: ${{ steps.availability.outputs.enabled == 'true' }}
+        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: soonlink-core-${{ matrix.artifact_platform }}
