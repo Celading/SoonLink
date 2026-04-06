@@ -35,6 +35,7 @@ jobs:
       release_version: ${{ steps.meta.outputs.release_version }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
       publish_release: ${{ steps.meta.outputs.publish_release }}
+      bundle_matrix: ${{ steps.meta.outputs.bundle_matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -70,7 +71,7 @@ jobs:
           fi
 
           if [[ -z "${release_tag}" ]]; then
-            release_tag="${version}"
+            release_tag="${package_version}"
           fi
 
           release_version="$(normalize_release_version "${release_tag}")"
@@ -84,39 +85,42 @@ jobs:
             exit 1
           fi
 
+          linux_sdk_url="${{ vars.CANGJIE_SDK_LINUX_AMD64_URL }}"
+          if [[ -z "${linux_sdk_url}" ]]; then
+            linux_sdk_url='https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-linux-x64-1.1.0-beta.25.tar.gz&objectKey=69cb718e6e8ed61e6e07fd42'
+          fi
+
+          bundle_matrix='{"include":['
+          bundle_matrix="${bundle_matrix}{\"runner\":\"ubuntu-latest\",\"target\":\"x86_64-unknown-linux-gnu\",\"artifact_platform\":\"linux-x86_64\",\"sdk_url\":\"${linux_sdk_url}\"}"
+          bundle_matrix="${bundle_matrix},{\"runner\":\"ubuntu-latest\",\"target\":\"aarch64-unknown-linux-gnu\",\"artifact_platform\":\"linux-aarch64\",\"sdk_url\":\"${linux_sdk_url}\"}"
+
+          if [[ -n "${{ vars.CANGJIE_SDK_MACOS_AMD64_URL }}" ]]; then
+            bundle_matrix="${bundle_matrix},{\"runner\":\"macos-13\",\"target\":\"x86_64-apple-darwin\",\"artifact_platform\":\"darwin-x86_64\",\"sdk_url\":\"${{ vars.CANGJIE_SDK_MACOS_AMD64_URL }}\"}"
+          fi
+
+          if [[ -n "${{ vars.CANGJIE_SDK_MACOS_ARM64_URL }}" ]]; then
+            bundle_matrix="${bundle_matrix},{\"runner\":\"macos-14\",\"target\":\"aarch64-apple-darwin\",\"artifact_platform\":\"darwin-aarch64\",\"sdk_url\":\"${{ vars.CANGJIE_SDK_MACOS_ARM64_URL }}\"}"
+          fi
+
+          if [[ -n "${{ vars.CANGJIE_SDK_WINDOWS_AMD64_URL }}" ]]; then
+            bundle_matrix="${bundle_matrix},{\"runner\":\"windows-latest\",\"target\":\"x86_64-w64-mingw32\",\"artifact_platform\":\"windows-x86_64\",\"sdk_url\":\"${{ vars.CANGJIE_SDK_WINDOWS_AMD64_URL }}\"}"
+          fi
+
+          bundle_matrix="${bundle_matrix}]}"
+
           {
             echo "package_version=${package_version}"
             echo "release_version=${release_version}"
             echo "release_tag=${release_tag}"
             echo "publish_release=${publish_release}"
+            echo "bundle_matrix=${bundle_matrix}"
           } >> "${GITHUB_OUTPUT}"
 
   bundles:
     needs: metadata
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact_platform: linux-x86_64
-            sdk_url: ${{ vars.CANGJIE_SDK_LINUX_AMD64_URL != '' && vars.CANGJIE_SDK_LINUX_AMD64_URL || 'https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-linux-x64-1.1.0-beta.25.tar.gz&objectKey=69cb718e6e8ed61e6e07fd42' }}
-          - runner: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            artifact_platform: linux-aarch64
-            sdk_url: ${{ vars.CANGJIE_SDK_LINUX_AMD64_URL != '' && vars.CANGJIE_SDK_LINUX_AMD64_URL || 'https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-linux-x64-1.1.0-beta.25.tar.gz&objectKey=69cb718e6e8ed61e6e07fd42' }}
-          - runner: macos-13
-            target: x86_64-apple-darwin
-            artifact_platform: darwin-x86_64
-            sdk_url: ${{ vars.CANGJIE_SDK_MACOS_AMD64_URL }}
-          - runner: macos-14
-            target: aarch64-apple-darwin
-            artifact_platform: darwin-aarch64
-            sdk_url: ${{ vars.CANGJIE_SDK_MACOS_ARM64_URL }}
-          - runner: windows-latest
-            target: x86_64-w64-mingw32
-            artifact_platform: windows-x86_64
-            sdk_url: ${{ vars.CANGJIE_SDK_WINDOWS_AMD64_URL }}
+      matrix: ${{ fromJson(needs.metadata.outputs.bundle_matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
