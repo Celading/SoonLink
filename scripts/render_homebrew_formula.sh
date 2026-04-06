@@ -97,11 +97,27 @@ class Soonlink < Formula
   end
 
   def install
-    libexec.install Dir["*"]
+    payload_root = buildpath
+    children = Dir.children(buildpath.to_s).sort
+    if children.length == 1 && File.directory?(buildpath/children.first)
+      payload_root = buildpath/children.first
+    end
+
+    Dir.children(payload_root.to_s).sort.each do |entry|
+      libexec.install payload_root/entry
+    end
+
+    executable = libexec/"soonlnk"
+    unless executable.exist?
+      nested_root = libexec.children.find(&:directory?)
+      executable = nested_root/"soonlnk" if nested_root
+    end
+    raise "soonlnk binary missing from package payload" unless executable.exist?
+
     (bin/"soonlink").write <<~SH
       #!/bin/sh
       cd "\#{libexec}"
-      exec "\#{libexec}/soonlnk" "\$@"
+      exec "\#{executable}" "\$@"
     SH
     chmod 0755, bin/"soonlink"
   end
@@ -123,11 +139,27 @@ class Soonlink < Formula
   license "Apache-2.0"
 
   def install
-    libexec.install Dir["*"]
+    payload_root = buildpath
+    children = Dir.children(buildpath.to_s).sort
+    if children.length == 1 && File.directory?(buildpath/children.first)
+      payload_root = buildpath/children.first
+    end
+
+    Dir.children(payload_root.to_s).sort.each do |entry|
+      libexec.install payload_root/entry
+    end
+
+    executable = libexec/"soonlnk"
+    unless executable.exist?
+      nested_root = libexec.children.find(&:directory?)
+      executable = nested_root/"soonlnk" if nested_root
+    end
+    raise "soonlnk binary missing from package payload" unless executable.exist?
+
     (bin/"soonlink").write <<~SH
       #!/bin/sh
       cd "\#{libexec}"
-      exec "\#{libexec}/soonlnk" "\$@"
+      exec "\#{executable}" "\$@"
     SH
     chmod 0755, bin/"soonlink"
   end

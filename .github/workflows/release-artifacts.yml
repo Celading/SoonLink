@@ -111,16 +111,24 @@ jobs:
           fi
 
       - name: Configure GitCode Credentials
-        if: ${{ secrets.GITCODE_USERNAME != '' && secrets.GITCODE_TOKEN != '' }}
         shell: bash
         run: |
-          git config --global url."https://${{ secrets.GITCODE_USERNAME }}:${{ secrets.GITCODE_TOKEN }}@gitcode.com/".insteadOf "https://gitcode.com/"
+          if [[ -n "${{ secrets.GITCODE_USERNAME }}" && -n "${{ secrets.GITCODE_TOKEN }}" ]]; then
+            git config --global url."https://${{ secrets.GITCODE_USERNAME }}:${{ secrets.GITCODE_TOKEN }}@gitcode.com/".insteadOf "https://gitcode.com/"
+            exit 0
+          fi
+
+          echo "GitCode credentials are not configured; continuing with public clone access."
 
       - name: Configure AtomGit Credentials
-        if: ${{ secrets.ATOMGIT_USERNAME != '' && secrets.ATOMGIT_TOKEN != '' }}
         shell: bash
         run: |
-          git config --global url."https://${{ secrets.ATOMGIT_USERNAME }}:${{ secrets.ATOMGIT_TOKEN }}@atomgit.com/".insteadOf "https://atomgit.com/"
+          if [[ -n "${{ secrets.ATOMGIT_USERNAME }}" && -n "${{ secrets.ATOMGIT_TOKEN }}" ]]; then
+            git config --global url."https://${{ secrets.ATOMGIT_USERNAME }}:${{ secrets.ATOMGIT_TOKEN }}@atomgit.com/".insteadOf "https://atomgit.com/"
+            exit 0
+          fi
+
+          echo "AtomGit credentials are not configured; continuing with public clone access."
 
       - name: Clone dependency repositories
         shell: bash
