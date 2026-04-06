@@ -135,6 +135,19 @@ resolve_stdx_root_from_output() {
   return 1
 }
 
+search_stdx_root() {
+  search_root="$1"
+  [ -d "$search_root" ] || return 1
+
+  match_dir="$(find "$search_root" -type d -path '*/static/stdx' 2>/dev/null | head -n 1 || true)"
+  if [ -n "$match_dir" ]; then
+    dirname "$(dirname "$(dirname "$match_dir")")"
+    return 0
+  fi
+
+  return 1
+}
+
 resolve_stdx_root() {
   candidate_root="$(resolve_stdx_root_from_output "$STDX_DIR/target" || true)"
   if [ -n "$candidate_root" ]; then
@@ -154,7 +167,54 @@ resolve_stdx_root() {
     fi
   done
 
+  for search_root in \
+    "${RUNNER_TEMP:-}" \
+    "$(dirname "$CANGJIE_HOME")" \
+    "$STDX_PARENT" \
+    "${HOME:-}" \
+    "${HOME:-}/.cangjie"
+  do
+    candidate_root="$(search_stdx_root "$search_root" || true)"
+    if [ -n "$candidate_root" ]; then
+      printf '%s\n' "$candidate_root"
+      return 0
+    fi
+  done
+
   return 1
+}
+
+find_stdx_alias_source() {
+  stdx_root="$1"
+  alias_name="$2"
+
+  case "$alias_name" in
+    linux_x86_64_llvm)
+      find "$stdx_root" -mindepth 1 -maxdepth 1 -type d \
+        \( -name '*linux*x86_64*llvm*' -o -name '*linux*x86_64*cjnative*' \) \
+        2>/dev/null | head -n 1
+      ;;
+    linux_aarch64_llvm)
+      find "$stdx_root" -mindepth 1 -maxdepth 1 -type d \
+        \( -name '*linux*aarch64*llvm*' -o -name '*linux*aarch64*cjnative*' \) \
+        2>/dev/null | head -n 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+ensure_stdx_alias() {
+  stdx_root="$1"
+  alias_name="$2"
+
+  [ -d "$stdx_root/$alias_name/static/stdx" ] && return 0
+  alias_source="$(find_stdx_alias_source "$stdx_root" "$alias_name" || true)"
+  [ -n "$alias_source" ] || return 0
+  [ -d "$alias_source/static/stdx" ] || return 0
+
+  ln -s "$(basename "$alias_source")" "$stdx_root/$alias_name"
 }
 
 native_path() {
@@ -326,6 +386,10 @@ if [ "$FORCE_STDX_BUILD" = "1" ] || [ ! -d "$STDX_DIR/target" ]; then
 fi
 
 export CANGJIE_STDX_PATH="$(resolve_stdx_root || printf '%s\n' "$STDX_DIR/target")"
+if [ -d "$CANGJIE_STDX_PATH" ]; then
+  ensure_stdx_alias "$CANGJIE_STDX_PATH" "linux_x86_64_llvm"
+  ensure_stdx_alias "$CANGJIE_STDX_PATH" "linux_aarch64_llvm"
+fi
 
 if [ -n "${GITHUB_ENV:-}" ]; then
   {
