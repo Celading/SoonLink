@@ -130,6 +130,8 @@ copy_tree "$IGNITE_DIR" "$OUTPUT_DIR/Ignite0500"
 copy_tree "$LISI_DIR" "$OUTPUT_DIR/lisi"
 copy_tree "$JINGUISSL_DIR" "$OUTPUT_DIR/jinguiSSL"
 
+sh "$ROOT_DIR/scripts/apply_tls_dep_compat.sh" "$OUTPUT_DIR"
+
 sedi 's#^  ignite = { .*#  ignite = { path = "../Ignite0500" }#' "$OUTPUT_DIR/SoonLink-Core/cjpm.toml"
 sedi 's#^  lisi = { .*#  lisi = { path = "../lisi" }#' "$OUTPUT_DIR/SoonLink-Core/cjpm.toml"
 sedi 's#^  jinguissl = { .*#  jinguissl = { path = "../jinguiSSL" }#' "$OUTPUT_DIR/Ignite0500/cjpm.toml"

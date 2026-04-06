@@ -96,4 +96,6 @@ copy_tree "$IGNITE_DIR" "$OUTPUT_DIR/Ignite0500"
 copy_tree "$LISI_DIR" "$OUTPUT_DIR/lisi"
 copy_tree "$JINGUISSL_DIR" "$OUTPUT_DIR/jinguiSSL"
 
+sh "$ROOT_DIR/scripts/apply_tls_dep_compat.sh" "$OUTPUT_DIR"
+
 printf '%s\n' "$OUTPUT_DIR"
