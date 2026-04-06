@@ -25,6 +25,34 @@ find_sdk_executable() {
   return 1
 }
 
+escape_github_annotation() {
+  printf '%s' "$1" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g'
+}
+
+annotate_github_error() {
+  [ -n "${GITHUB_ACTIONS:-}" ] || return 0
+  message="$(escape_github_annotation "$1")"
+  printf '::error::%s\n' "$message"
+}
+
+require_command_success() {
+  log_file="$(mktemp "${TMPDIR:-/tmp}/soonlink-ci-command-XXXXXX.log")"
+  label="$1"
+  shift
+
+  if "$@" >"$log_file" 2>&1; then
+    rm -f "$log_file"
+    return 0
+  fi
+
+  summary="$(tail -n 20 "$log_file" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+  [ -n "$summary" ] || summary="no stderr captured"
+  annotate_github_error "$label failed: $summary"
+  cat "$log_file" >&2
+  rm -f "$log_file"
+  return 1
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -178,6 +206,9 @@ command -v cjpm >/dev/null 2>&1 || {
   exit 1
 }
 
+require_command_success "cjc -v" "$CANGJIE_BIN" -v
+require_command_success "cjpm --version" "$CJPM_BIN" --version
+
 if [ ! -d "$STDX_DIR/.git" ]; then
   rm -rf "$STDX_DIR"
   git clone --depth 1 --branch "$STDX_REF" "$STDX_REPO" "$STDX_DIR"
@@ -193,7 +224,7 @@ fi
 if [ "$FORCE_STDX_BUILD" = "1" ] || [ ! -d "$STDX_DIR/target" ]; then
   (
     cd "$STDX_DIR"
-    "$CJPM_BIN" build
+    require_command_success "stdx cjpm build" "$CJPM_BIN" build
   )
 fi
 
