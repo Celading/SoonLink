@@ -50,7 +50,7 @@ Once `CANGJIE_HOME` and `CANGJIE_STDX_PATH` are available locally, the same rele
   --target x86_64-unknown-linux-gnu \
   --target-dir ./target-release/linux-x86_64 \
   --archive-platform linux-x86_64 \
-  --version 0.5.17
+  --version 0.5.21
 ```
 
 That command runs `cjpm build --target ...` and then produces `dist/releases/soonlink-core-<version>-<platform>.tar.gz`.

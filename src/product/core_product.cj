@@ -39,14 +39,6 @@ public func buildCoreProduct(config: AppConfig): SoonLinkProduct {
     SoonLinkProduct(config, profile: coreProductProfile())
 }
 
-public func buildProProduct(config: AppConfig): SoonLinkProduct {
-    SoonLinkProduct(config, profile: proProductProfile())
-}
-
-public func buildFullProduct(config: AppConfig): SoonLinkProduct {
-    SoonLinkProduct(config, profile: fullProductProfile())
-}
-
 public func buildProduct(config: AppConfig): ProductApp {
     SoonLinkProduct(config, profile: resolveProductProfile())
 }

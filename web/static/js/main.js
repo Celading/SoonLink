@@ -5,16 +5,16 @@ const APP_STATE = {
         themeVariant: 'remote',
     },
     productContext: {
-        edition: 'full',
+        edition: 'core',
         productName: 'SoonLink',
         capabilities: {
             passiveDiscovery: true,
-            activeDiscovery: true,
-            peerTransfer: true,
-            relay: true,
-            whitelist: true,
-            favorites: true,
-            advancedSecurity: true,
+            activeDiscovery: false,
+            peerTransfer: false,
+            relay: false,
+            whitelist: false,
+            favorites: false,
+            advancedSecurity: false,
         },
     },
     activePageId: 'devices-page',
@@ -168,16 +168,16 @@ function parseInitialUrlState() {
 
 function defaultProductContext() {
     return {
-        edition: 'full',
+        edition: 'core',
         productName: 'SoonLink',
         capabilities: {
             passiveDiscovery: true,
-            activeDiscovery: true,
-            peerTransfer: true,
-            relay: true,
-            whitelist: true,
-            favorites: true,
-            advancedSecurity: true,
+            activeDiscovery: false,
+            peerTransfer: false,
+            relay: false,
+            whitelist: false,
+            favorites: false,
+            advancedSecurity: false,
         },
     };
 }
@@ -935,10 +935,10 @@ function applyAccessContext() {
     const isAdmin = !!APP_STATE.accessContext.isLocalAdmin;
 
     body.dataset.roleVariant = isAdmin ? 'admin' : 'remote';
-    body.dataset.productEdition = APP_STATE.productContext.edition || 'full';
+    body.dataset.productEdition = APP_STATE.productContext.edition || 'core';
     modePill.textContent = isAdmin ? '本机管理模式' : '普通访问';
     if (editionPill) {
-        editionPill.textContent = (APP_STATE.productContext.edition || 'full').toUpperCase();
+        editionPill.textContent = (APP_STATE.productContext.edition || 'core').toUpperCase();
     }
 
     document.querySelectorAll('.admin-only').forEach((node) => {

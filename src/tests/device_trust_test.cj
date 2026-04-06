@@ -88,7 +88,7 @@ public class DeviceTrust_test {
         cfg.deviceRegistryFile = "/tmp/${scope}_registry.json"
         cfg.whitelistTomlFile = "/tmp/${scope}_whitelist.toml"
 
-        let server = CoreServer(cfg, profile: fullProductProfile())
+        let server = CoreServer(cfg, profile: capabilityCompleteTestProfile())
         let record = DeviceRegistryRecord()
         record.id = "relay-node"
         record.name = "Relay Node"

@@ -22,3 +22,14 @@ func testTempToken(label: String): String {
 func testTempPath(label: String): String {
     "/tmp/" + testTempToken(label)
 }
+
+func capabilityCompleteTestProfile(): ProductProfile {
+    var profile = coreProductProfile()
+    profile.supportsActiveDiscovery = true
+    profile.supportsPeerTransfer = true
+    profile.supportsRelay = true
+    profile.supportsWhitelist = true
+    profile.supportsFavorites = true
+    profile.supportsAdvancedSecurity = true
+    profile
+}

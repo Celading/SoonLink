@@ -3,37 +3,22 @@ package soonlnk.commons
 import std.unicode.*
 
 public struct ProductProfile {
-    public var edition: String = "full"
+    public var edition: String = "core"
     public var productName: String = "SoonLink"
     public var supportsPassiveDiscovery: Bool = true
-    public var supportsActiveDiscovery: Bool = true
-    public var supportsPeerTransfer: Bool = true
-    public var supportsRelay: Bool = true
-    public var supportsWhitelist: Bool = true
-    public var supportsFavorites: Bool = true
-    public var supportsAdvancedSecurity: Bool = true
+    public var supportsActiveDiscovery: Bool = false
+    public var supportsPeerTransfer: Bool = false
+    public var supportsRelay: Bool = false
+    public var supportsWhitelist: Bool = false
+    public var supportsFavorites: Bool = false
+    public var supportsAdvancedSecurity: Bool = false
     public var supportsMcp: Bool = true
 
     public init() {}
 }
 
 public func defaultProductProfile(): ProductProfile {
-    fullProductProfile()
-}
-
-public func fullProductProfile(): ProductProfile {
-    var out = ProductProfile()
-    out.edition = "full"
-    out.productName = "SoonLink"
-    out.supportsPassiveDiscovery = true
-    out.supportsActiveDiscovery = true
-    out.supportsPeerTransfer = true
-    out.supportsRelay = true
-    out.supportsWhitelist = true
-    out.supportsFavorites = true
-    out.supportsAdvancedSecurity = true
-    out.supportsMcp = true
-    out
+    coreProductProfile()
 }
 
 public func coreProductProfile(): ProductProfile {
@@ -47,21 +32,6 @@ public func coreProductProfile(): ProductProfile {
     out.supportsWhitelist = false
     out.supportsFavorites = false
     out.supportsAdvancedSecurity = false
-    out.supportsMcp = true
-    out
-}
-
-public func proProductProfile(): ProductProfile {
-    var out = ProductProfile()
-    out.edition = "pro"
-    out.productName = "SuLink"
-    out.supportsPassiveDiscovery = true
-    out.supportsActiveDiscovery = true
-    out.supportsPeerTransfer = true
-    out.supportsRelay = true
-    out.supportsWhitelist = true
-    out.supportsFavorites = true
-    out.supportsAdvancedSecurity = true
     out.supportsMcp = true
     out
 }
@@ -151,13 +121,13 @@ public func resolveProductVersion(raw: String): String {
     if (trimmed.size > 0) {
         return trimmed
     }
-    "0.5.17"
+    "0.5.21"
 }
 
 public func resolveRuntimeDisplayName(profile: ProductProfile): String {
-    match (profile.edition) {
-        case "full" => "SoonLink Full"
-        case "pro" => "SuLink"
-        case _ => profile.productName
+    let trimmed = profile.productName.trimAscii()
+    if (trimmed.size > 0) {
+        return trimmed
     }
+    "SoonLink"
 }

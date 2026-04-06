@@ -20,6 +20,14 @@ SoonLink / 溯联开源版的主要变更记录。
 
 ---
 
+## [0.5.21] - 2026-04-06
+
+- `+特性` Core 默认产品画像彻底收口到公开能力边界：主动发现、peer、中继、白名单、收藏与增强安全默认不再暴露
+- `+特性` Web 控制台默认 edition / capability 上下文切换为 `core`，首页徽标与能力门控和实际公开版保持一致
+- `=修复` 占位鉴权 / 加密提供者统一回落到稳定的 `placeholder` 标识，避免 edition 派生名继续泄露预览分支语义
+- `=工程` 增加 GitHub Release 制品流水线、跨平台打包脚本和 `linux/amd64 + linux/arm64` Docker 发布默认平台
+- `=文档` 版本、GitHub Actions 说明、排障文档与 release 草稿统一同步到 `0.5.21`
+
 ## [0.5.17] - 2026-04-04
 
 - `+特性` 开源版 `manual/` 成为正式手册入口，补齐 quick start、API、docs、skills 与问题排查内容

@@ -10,6 +10,7 @@ public class ProductProfile_test {
     public func coreProfileSlicesPreviewCapabilities(): Unit {
         let profile = coreProductProfile()
         @Assert(profile.edition, "core")
+        @Assert(defaultProductProfile().edition, "core")
         @Assert(!profile.supportsActiveDiscovery)
         @Assert(!profile.supportsPeerTransfer)
         @Assert(!profile.supportsRelay)
@@ -32,9 +33,9 @@ public class ProductProfile_test {
     }
 
     @TestCase
-    public func fullProfileKeepsAdvancedCapabilities(): Unit {
-        let profile = fullProductProfile()
-        @Assert(profile.edition, "full")
+    public func capabilityCompleteProfileKeepsAdvancedCapabilities(): Unit {
+        let profile = capabilityCompleteTestProfile()
+        @Assert(profile.edition, "core")
         @Assert(profile.supportsActiveDiscovery)
         @Assert(profile.supportsPeerTransfer)
         @Assert(profile.supportsRelay)
@@ -45,10 +46,10 @@ public class ProductProfile_test {
 
     @TestCase
     public func runtimeIdentityHelpersPreferPublicNamesAndStableFallbacks(): Unit {
-        @Assert(resolveRuntimeDisplayName(fullProductProfile()), "SoonLink Full")
-        @Assert(resolveRuntimeDisplayName(proProductProfile()), "SuLink")
+        @Assert(resolveRuntimeDisplayName(capabilityCompleteTestProfile()), "SoonLink")
         @Assert(resolveRuntimeDisplayName(coreProductProfile()), "SoonLink")
-        @Assert(resolveProductVersion(""), "0.5.17")
+        @Assert(resolveRuntimeDisplayName(ProductProfile()), "SoonLink")
+        @Assert(resolveProductVersion(""), "0.5.21")
         @Assert(resolveTechnicalPackageName(""), "soonlnk")
     }
 }

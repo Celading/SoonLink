@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing or target release tag, for example v0.5.17
+        description: Existing or target release tag, for example v0.5.21
         required: false
         type: string
       publish_release:

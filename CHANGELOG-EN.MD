@@ -20,6 +20,14 @@ Notes:
 
 ---
 
+## [0.5.21] - 2026-04-06
+
+- `+Feature` Fully tightened the default Core product profile to the public capability boundary: active discovery, peer transfer, relay, whitelist, favorites, and advanced security are no longer exposed by default
+- `+Feature` Switched the Web console default edition / capability context to `core`, keeping the landing badges and capability gates aligned with the real public edition
+- `=Fix` Unified placeholder auth / crypto providers to the stable `placeholder` identifier so edition-derived preview labels no longer leak into the public baseline
+- `=Chore` Added GitHub Release artifact automation, cross-platform packaging scripts, and `linux/amd64 + linux/arm64` as the default Docker publish platforms
+- `=Docs` Synced version references, GitHub Actions guidance, troubleshooting notes, and the initial release draft to `0.5.21`
+
 ## [0.5.17] - 2026-04-04
 
 - `+Feature` Turned `manual/` into the formal open-source handbook with quick start, API, docs, skills, and troubleshooting entrypoints

@@ -27,13 +27,7 @@ public class CorePlaceholderAuthProvider <: AuthProvider {
     }
 
     public func name(): String {
-        if (profile.edition == "pro") {
-            return "pro-placeholder"
-        }
-        if (profile.edition == "full") {
-            return "full-placeholder"
-        }
-        "core-placeholder"
+        "placeholder"
     }
 
     public func descriptor(): AuthDescriptor {
@@ -76,13 +70,7 @@ public class CorePlaceholderCryptoProvider <: CryptoProvider {
     }
 
     public func name(): String {
-        if (profile.edition == "pro") {
-            return "pro-placeholder"
-        }
-        if (profile.edition == "full") {
-            return "full-placeholder"
-        }
-        "core-placeholder"
+        "placeholder"
     }
 
     public func descriptor(): CryptoDescriptor {

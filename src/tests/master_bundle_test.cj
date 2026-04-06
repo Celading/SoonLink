@@ -26,13 +26,13 @@ public class MasterBundle_test {
     }
 
     @TestCase
-    public func fullProfileKeepsPeerMaster(): Unit {
+    public func capabilityCompleteProfileKeepsPeerMaster(): Unit {
         let scope = testTempToken("soonlink_test_devices_full")
         var cfg = AppConfig()
         cfg.deviceRegistryFile = "/tmp/${scope}.json"
         cfg.logDir = "/tmp/${scope}_logs"
 
-        let server = CoreServer(cfg, profile: fullProductProfile())
+        let server = CoreServer(cfg, profile: capabilityCompleteTestProfile())
         let masters = MasterBundle(server)
         let mode = masters.peers.updateSecurityMode("encrypted")
         @Assert(mode, "encrypted")
