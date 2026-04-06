@@ -7,6 +7,7 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
 - `.github/workflows/core-ci.yml`
   Public-boundary checks, Compose validation, and a lightweight build smoke test.
   - When `CANGJIE_SDK_LINUX_AMD64_URL` is configured, the workflow now installs the Linux SDK and `stdx`, then runs real `cjpm build`, `cjpm test`, and container-bundle preparation.
+  - When `CANGJIE_STDX_RELEASE_VERSION` is also configured, CI now prefers the official prebuilt `stdx` release package instead of rebuilding `stdx` from source.
   - It also clones `Ignite / lisi / jinguiSSL` and builds inside a temporary path-rewritten workspace instead of depending on the public repository's live git dependency shape.
   - When the repository variable is still missing, the workflow emits a warning and keeps the boundary and Compose checks only.
   - It now also includes an optional OpenHarmony `aarch64` cross-build smoke lane. When the Linux SDK is available and an OpenHarmony DEVECO bundle can be configured or auto-resolved, CI runs one `aarch64-linux-ohos` build as well.
@@ -19,6 +20,7 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
   - `windows-x86_64`
   - When the OpenHarmony toolchain can be resolved, it also adds:
     - `ohos-aarch64`
+  - When `CANGJIE_STDX_RELEASE_VERSION` is configured, release jobs reuse the official per-platform `stdx` bundle instead of compiling `stdx` inside every matrix job.
   - Each platform now emits both `.tar.gz` and `.zip` bundles so users can unpack a full runtime bundle more directly.
 - `.github/workflows/docker-publish.yml`
   Publishes Docker Hub images with the default platform set:
@@ -43,6 +45,8 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
   Download URL for the OpenHarmony aarch64 cross-toolchain bundle used as `DEVECO_CANGJIE_HOME`. When unset, the workflow first queries the GitCode tags API and then tries to resolve a matching nightly release asset automatically.
 - `CANGJIE_NIGHTLY_TAGS_API`
   Optional. Defaults to `https://api.gitcode.com/api/v5/repos/Cangjie/nightly_build/tags?per_page=100`. Used to resolve the latest nightly tag automatically.
+- `CANGJIE_STDX_RELEASE_VERSION`
+  Optional. When set, CI prefers the official prebuilt `stdx` bundle in the form `https://gitcode.com/Cangjie/cangjie_stdx/releases/download/v<version>/cangjie-stdx-<platform>-<version>.zip` instead of rebuilding `stdx` from source.
 - `CANGJIE_STDX_GIT_REF`
   Optional. Defaults to `v1.1.0-beta.25`.
 - `CANGJIE_STDX_REPO`
@@ -95,7 +99,8 @@ Both bundle formats include:
 ## Scripts
 
 - `scripts/install_cangjie_ci.sh`
-  Downloads the SDK, builds stdx, and exports CI environment variables.
+  Downloads the SDK, resolves or builds `stdx`, and exports CI environment variables.
+  - It now prefers official `stdx` release bundles when a matching release version is configured and falls back to source builds otherwise.
 - `scripts/build_release_target.sh`
   Runs the target build and packaging flow end-to-end.
 - `scripts/build_release_bundle.sh`

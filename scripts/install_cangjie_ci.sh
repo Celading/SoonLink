@@ -9,6 +9,7 @@ DEVECO_DIR="${ROOT_DIR}/.ci/deveco_cangjie"
 STDX_DIR="${ROOT_DIR}/.ci/cangjie_stdx"
 STDX_REPO="${CANGJIE_STDX_REPO:-https://gitcode.com/Cangjie/cangjie_stdx}"
 STDX_REF="${CANGJIE_STDX_GIT_REF:-v1.1.0-beta.25}"
+STDX_RELEASE_VERSION="${CANGJIE_STDX_RELEASE_VERSION:-}"
 STDX_TARGETS=""
 FORCE_STDX_BUILD=0
 
@@ -100,6 +101,7 @@ Usage:
     [--stdx-dir <dir>] \
     [--stdx-repo <url>] \
     [--stdx-ref <git-ref>] \
+    [--stdx-release-version <version>] \
     [--stdx-target <triple>] \
     [--force-stdx-build]
 EOF
@@ -271,6 +273,21 @@ stdx_alias_name_for_target() {
   esac
 }
 
+stdx_release_platform_for_target() {
+  case "$1" in
+    x86_64-unknown-linux-gnu) printf '%s\n' "linux-x64" ;;
+    aarch64-unknown-linux-gnu) printf '%s\n' "linux-aarch64" ;;
+    x86_64-apple-darwin) printf '%s\n' "mac-x64" ;;
+    aarch64-apple-darwin) printf '%s\n' "mac-aarch64" ;;
+    x86_64-w64-mingw32) printf '%s\n' "windows-x64" ;;
+    aarch64-linux-ohos) printf '%s\n' "ohos-aarch64" ;;
+    aarch64-linux-ohos-cjnative) printf '%s\n' "ohos-aarch64" ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 requires_deveco_target() {
   case "$1" in
     aarch64-linux-ohos|aarch64-linux-ohos-cjnative) return 0 ;;
@@ -349,6 +366,62 @@ extract_archive() {
   exit 1
 }
 
+download_file_with_cache() {
+  download_url="$1"
+  cache_file="$2"
+
+  mkdir -p "$(dirname "$cache_file")"
+  if [ -f "$cache_file" ]; then
+    return 0
+  fi
+
+  curl -L --fail "$download_url" -o "$cache_file"
+}
+
+extract_top_level_dir() {
+  archive_path="$1"
+  stage_dir="$2"
+
+  rm -rf "$stage_dir"
+  mkdir -p "$stage_dir"
+  extract_archive "$archive_path" "$stage_dir"
+
+  top_level_dir="$(find "$stage_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
+  [ -n "$top_level_dir" ] && [ -d "$top_level_dir" ] || {
+    echo "could not find extracted top-level directory in $archive_path" >&2
+    exit 1
+  }
+
+  printf '%s\n' "$top_level_dir"
+}
+
+install_stdx_release_for_target() {
+  target_triple="$1"
+  release_version="$2"
+  release_root="$3"
+
+  alias_name="$(stdx_alias_name_for_target "$target_triple" || true)"
+  release_platform="$(stdx_release_platform_for_target "$target_triple" || true)"
+  [ -n "$alias_name" ] || return 1
+  [ -n "$release_platform" ] || return 1
+
+  release_cache_dir="${HOME:-$ROOT_DIR}/.cangjie_stdx/v${release_version}"
+  release_filename="cangjie-stdx-${release_platform}-${release_version}.zip"
+  release_url="https://gitcode.com/Cangjie/cangjie_stdx/releases/download/v${release_version}/${release_filename}"
+  release_archive="${release_cache_dir}/${release_filename}"
+  release_stage="${release_cache_dir}/${release_filename}.unpack"
+  final_dir="${release_root}/cangjie-stdx-${release_platform}-${release_version}"
+
+  download_file_with_cache "$release_url" "$release_archive"
+  top_level_dir="$(extract_top_level_dir "$release_archive" "$release_stage")"
+
+  mkdir -p "$release_root"
+  rm -rf "$final_dir" "$release_root/$alias_name"
+  mv "$top_level_dir" "$final_dir"
+  ln -s "$(basename "$final_dir")" "$release_root/$alias_name"
+  rm -rf "$release_stage"
+}
+
 install_archive_root() {
   archive_url="$1"
   install_dir="$2"
@@ -417,6 +490,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --stdx-ref)
       STDX_REF="${2:-}"
+      shift 2
+      ;;
+    --stdx-release-version)
+      STDX_RELEASE_VERSION="${2:-}"
       shift 2
       ;;
     --stdx-target)
@@ -513,6 +590,45 @@ if [ "$deveco_required" = "1" ]; then
     echo "DEVECO_CANGJIE_HOME is required for OpenHarmony targets" >&2
     exit 1
   }
+fi
+
+STDX_RELEASE_ROOT="${STDX_PARENT}/cangjie_stdx_release"
+if [ -n "$STDX_RELEASE_VERSION" ] && [ -n "$STDX_TARGETS" ]; then
+  rm -rf "$STDX_RELEASE_ROOT"
+  mkdir -p "$STDX_RELEASE_ROOT"
+
+  for target_triple in $STDX_TARGETS; do
+    install_stdx_release_for_target "$target_triple" "$STDX_RELEASE_VERSION" "$STDX_RELEASE_ROOT"
+  done
+
+  export CANGJIE_STDX_PATH="$STDX_RELEASE_ROOT"
+  verify_requested_stdx_targets "$CANGJIE_STDX_PATH"
+
+  if [ -n "${GITHUB_ENV:-}" ]; then
+    {
+      echo "CANGJIE_HOME=$CANGJIE_HOME"
+      echo "CANGJIE_STDX_PATH=$CANGJIE_STDX_PATH"
+      if [ -n "${DEVECO_CANGJIE_HOME:-}" ]; then
+        echo "DEVECO_CANGJIE_HOME=$DEVECO_CANGJIE_HOME"
+      fi
+      if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+        echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+      fi
+      if [ -n "${DYLD_LIBRARY_PATH:-}" ]; then
+        echo "DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH"
+      fi
+    } >> "$GITHUB_ENV"
+  fi
+
+  if [ -n "${GITHUB_PATH:-}" ]; then
+    {
+      echo "$CANGJIE_BIN_DIR"
+      echo "$CANGJIE_TOOLS_DIR"
+    } >> "$GITHUB_PATH"
+  fi
+
+  printf '%s\n' "$CANGJIE_HOME"
+  exit 0
 fi
 
 if [ ! -d "$STDX_DIR/.git" ]; then

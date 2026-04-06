@@ -23,6 +23,7 @@ permissions:
 env:
   CANGJIE_STDX_GIT_REF: ${{ vars.CANGJIE_STDX_GIT_REF != '' && vars.CANGJIE_STDX_GIT_REF || 'v1.1.0-beta.25' }}
   CANGJIE_STDX_REPO: ${{ vars.CANGJIE_STDX_REPO != '' && vars.CANGJIE_STDX_REPO || 'https://gitcode.com/Cangjie/cangjie_stdx' }}
+  CANGJIE_STDX_RELEASE_VERSION: ${{ vars.CANGJIE_STDX_RELEASE_VERSION }}
   CANGJIE_NIGHTLY_TAGS_API: ${{ vars.CANGJIE_NIGHTLY_TAGS_API != '' && vars.CANGJIE_NIGHTLY_TAGS_API || 'https://api.gitcode.com/api/v5/repos/Cangjie/nightly_build/tags?per_page=100' }}
   IGNITE_GIT_URL: https://gitcode.com/cinyu/ignite-cangjie.git
   LISI_GIT_URL: https://gitcode.com/cinyu/lisi
@@ -266,6 +267,7 @@ jobs:
             --stdx-dir "${RUNNER_TEMP}/cangjie_stdx" \
             --stdx-repo "${{ env.CANGJIE_STDX_REPO }}" \
             --stdx-ref "${{ env.CANGJIE_STDX_GIT_REF }}" \
+            --stdx-release-version "${{ env.CANGJIE_STDX_RELEASE_VERSION }}" \
             --stdx-target "${{ matrix.target }}" \
             --deveco-sdk-url "${{ matrix.deveco_sdk_url }}" \
             --deveco-dir "${RUNNER_TEMP}/deveco_cangjie"
