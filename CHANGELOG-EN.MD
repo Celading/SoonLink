@@ -20,6 +20,13 @@ Notes:
 
 ---
 
+## [0.5.27] - 2026-04-06
+
+- `=Chore` Unified GitHub Release, Docker, and Homebrew publish flows around plain dotted tags such as `0.8.27` and `0.0.5.17`
+- `=Fix` Added tag-versus-`cjpm.toml` version validation to release workflows so release metadata and asset filenames cannot drift apart
+- `=Fix` Restored stable public automation by switching Homebrew CI to a temporary tap install and correcting formula wrapper rendering
+- `=Docs` Synced README, CHANGELOG, troubleshooting notes, GitHub Actions guidance, runtime version fallback, and related tests to `0.5.27`
+
 ## [0.5.22] - 2026-04-06
 
 - `+Feature` Promoted manual node endpoint modeling from plain `ip + port` records to `scheme + host + port + basePath` across Web, CLI, MCP, and automation surfaces

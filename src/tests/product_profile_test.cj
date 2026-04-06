@@ -49,7 +49,7 @@ public class ProductProfile_test {
         @Assert(resolveRuntimeDisplayName(capabilityCompleteTestProfile()), "SoonLink")
         @Assert(resolveRuntimeDisplayName(coreProductProfile()), "SoonLink")
         @Assert(resolveRuntimeDisplayName(ProductProfile()), "SoonLink")
-        @Assert(resolveProductVersion(""), "0.5.22")
+        @Assert(resolveProductVersion(""), "0.5.27")
         @Assert(resolveTechnicalPackageName(""), "soonlnk")
     }
 }

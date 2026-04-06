@@ -20,6 +20,13 @@ SoonLink / 溯联开源版的主要变更记录。
 
 ---
 
+## [0.5.27] - 2026-04-06
+
+- `=工程` GitHub Release、Docker 与 Homebrew 发布链统一支持 `0.8.27`、`0.0.5.17` 这类纯数字 dotted tag
+- `=修复` Release / Docker / Homebrew 工作流增加 tag 与 `cjpm.toml` 版本一致性校验，避免 release 元数据与产物文件名错位
+- `=修复` Homebrew CI 改为临时 tap 安装并修正 formula 启动脚本渲染，公开仓自动化验证恢复稳定
+- `=文档` README、CHANGELOG、排障文档、GitHub Actions 说明、运行时版本常量与对应测试统一同步到 `0.5.27`
+
 ## [0.5.22] - 2026-04-06
 
 - `+特性` 手动节点端点模型从单纯 `ip + port` 升级为 `scheme + host + port + basePath`，Web / CLI / MCP / 自动化运行时统一收口
