@@ -1,0 +1,117 @@
+ARG TARGETPLATFORM
+ARG TARGETARCH
+
+FROM --platform=$TARGETPLATFORM ubuntu:24.04 AS builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG TARGETARCH
+ARG CANGJIE_VERSION=1.1.0-beta.25
+ARG STDX_GIT_REF=v1.1.0-beta.25
+ARG CANGJIE_SDK_LINUX_ARM64_URL=https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-linux-aarch64-1.1.0-beta.25.tar.gz&objectKey=69cb74a76e8ed61e6e07fd45
+ARG CANGJIE_SDK_LINUX_AMD64_URL=https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-linux-x64-1.1.0-beta.25.tar.gz&objectKey=69cb718e6e8ed61e6e07fd42
+
+RUN sed -i 's/ noble-backports//g' /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update -o Acquire::Retries=5 \
+    && apt-get install -y --no-install-recommends \
+        binutils \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        file \
+        git \
+        libc6-dev \
+        libssl-dev \
+        ninja-build \
+        pkg-config \
+        python3 \
+        unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt
+
+RUN case "$TARGETARCH" in \
+      arm64) echo "$CANGJIE_SDK_LINUX_ARM64_URL" > /tmp/cangjie-sdk-url ;; \
+      amd64) echo "$CANGJIE_SDK_LINUX_AMD64_URL" > /tmp/cangjie-sdk-url ;; \
+      *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && curl -L "$(cat /tmp/cangjie-sdk-url)" -o /tmp/cangjie-sdk.tar.gz \
+    && tar -xzf /tmp/cangjie-sdk.tar.gz -C /opt \
+    && rm -f /tmp/cangjie-sdk.tar.gz /tmp/cangjie-sdk-url
+
+ENV CANGJIE_HOME=/opt/cangjie
+ENV PATH=${CANGJIE_HOME}/bin:${CANGJIE_HOME}/tools/bin:/root/.cjpm/bin:${PATH}
+
+RUN git clone --depth 1 --branch ${STDX_GIT_REF} https://gitcode.com/Cangjie/cangjie_stdx /opt/cangjie_stdx
+WORKDIR /opt/cangjie_stdx
+RUN sed -i 's/if (&dlopen == NULL)/if (0)/' /opt/cangjie_stdx/src/stdx/dynamicLoader/opensslSymbols.c \
+    && sed -i 's/if (&dlsym == NULL)/if (0)/' /opt/cangjie_stdx/src/stdx/dynamicLoader/opensslSymbols.c \
+    && sed -i 's/if (&dlclose != NULL && g_singletonHandle != NULL)/if (g_singletonHandle != NULL)/' /opt/cangjie_stdx/src/stdx/dynamicLoader/opensslSymbols.c \
+    && sed -i 's/if (&dlclose != NULL && g_singletonHandleSsl != NULL && g_singletonHandleSsl != g_singletonHandle)/if (g_singletonHandleSsl != NULL \&\& g_singletonHandleSsl != g_singletonHandle)/' /opt/cangjie_stdx/src/stdx/dynamicLoader/opensslSymbols.c
+RUN cjpm build || (cat /opt/cangjie_stdx/build-script-cache/release/stdx/bin/script-log && false)
+
+ENV CANGJIE_STDX_PATH=/opt/cangjie_stdx/target
+
+COPY . /workspace
+
+RUN case "$TARGETARCH" in \
+      arm64) stdx_dir='linux_aarch64_cjnative' ;; \
+      amd64) stdx_dir='linux_x86_64_cjnative' ;; \
+      *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && sed -i 's#^  ignite = { .*#  ignite = { path = "../Ignite0500" }#' /workspace/SoonLink-Core/cjpm.toml \
+    && sed -i 's#^  lisi = { .*#  lisi = { path = "../lisi" }#' /workspace/SoonLink-Core/cjpm.toml \
+    && sed -i 's#^  jinguissl = { .*#  jinguissl = { path = "../jinguiSSL" }#' /workspace/Ignite0500/cjpm.toml \
+    && sed -i "s#linux_x86_64_llvm/static/stdx#linux_x86_64_cjnative/static/stdx#g" /workspace/SoonLink-Core/cjpm.toml /workspace/Ignite0500/cjpm.toml /workspace/lisi/cjpm.toml \
+    && sed -i "s#linux_aarch64_llvm/static/stdx#linux_aarch64_cjnative/static/stdx#g" /workspace/SoonLink-Core/cjpm.toml /workspace/Ignite0500/cjpm.toml /workspace/lisi/cjpm.toml \
+    && printf '%s' "$stdx_dir" > /tmp/cangjie-runtime-dir
+
+WORKDIR /workspace/SoonLink-Core
+RUN export LD_LIBRARY_PATH="${CANGJIE_HOME}/runtime/lib/$(cat /tmp/cangjie-runtime-dir):${CANGJIE_HOME}/tools/lib" \
+    && cjpm build \
+    && ./scripts/prepare_container_bundle.sh --bin /workspace/SoonLink-Core/target/release/bin/main \
+    && file /workspace/SoonLink-Core/dist/soonlnk \
+    && ldd /workspace/SoonLink-Core/dist/soonlnk
+
+FROM --platform=$TARGETPLATFORM ubuntu:24.04 AS runtime
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG TARGETARCH
+
+RUN sed -i 's/ noble-backports//g' /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update -o Acquire::Retries=5 \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libgcc-s1 \
+        libssl3 \
+        libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN mkdir -p /opt/cangjie-runtime \
+    && groupadd -r soonlink \
+    && useradd -r -g soonlink soonlink \
+    && case "$TARGETARCH" in \
+         arm64) ln -s /opt/cangjie-runtime/lib/linux_aarch64_cjnative /opt/cangjie-runtime/current ;; \
+         amd64) ln -s /opt/cangjie-runtime/lib/linux_x86_64_cjnative /opt/cangjie-runtime/current ;; \
+         *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
+       esac
+
+COPY --from=builder /workspace/SoonLink-Core/dist/soonlnk /app/soonlnk
+COPY --from=builder /workspace/SoonLink-Core/config /app/config
+COPY --from=builder /workspace/SoonLink-Core/web /app/web
+COPY --from=builder /workspace/SoonLink-Core/docker/entrypoint.sh /app/docker/entrypoint.sh
+COPY --from=builder /opt/cangjie/runtime/lib /opt/cangjie-runtime/lib
+
+ENV LD_LIBRARY_PATH=/opt/cangjie-runtime/current
+
+RUN chmod +x /app/soonlnk /app/docker/entrypoint.sh \
+    && mkdir -p /app/runtime/config /app/runtime/tmp /app/runtime/logs /app/runtime/cache/relay /app/data \
+    && chown -R soonlink:soonlink /app /opt/cangjie-runtime
+
+USER soonlink
+
+EXPOSE 8081
+
+ENTRYPOINT ["/app/docker/entrypoint.sh"]

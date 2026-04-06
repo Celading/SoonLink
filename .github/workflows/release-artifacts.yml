@@ -1,0 +1,179 @@
+name: Release Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing or target release tag, for example v0.5.17
+        required: false
+        type: string
+      publish_release:
+        description: Publish uploaded bundles to GitHub Releases
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CANGJIE_STDX_GIT_REF: ${{ vars.CANGJIE_STDX_GIT_REF != '' && vars.CANGJIE_STDX_GIT_REF || 'v1.1.0-beta.25' }}
+  CANGJIE_STDX_REPO: ${{ vars.CANGJIE_STDX_REPO != '' && vars.CANGJIE_STDX_REPO || 'https://gitcode.com/Cangjie/cangjie_stdx' }}
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      publish_release: ${{ steps.meta.outputs.publish_release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(sed -n 's/^  version = "\(.*\)"/\1/p' cjpm.toml | head -n 1)"
+          if [[ -z "${version}" ]]; then
+            echo "failed to resolve version from cjpm.toml" >&2
+            exit 1
+          fi
+
+          release_tag=""
+          publish_release="false"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+            publish_release="true"
+          else
+            release_tag="${{ inputs.release_tag }}"
+            publish_release="${{ inputs.publish_release }}"
+          fi
+
+          if [[ -z "${release_tag}" ]]; then
+            release_tag="v${version}"
+          fi
+
+          {
+            echo "version=${version}"
+            echo "release_tag=${release_tag}"
+            echo "publish_release=${publish_release}"
+          } >> "${GITHUB_OUTPUT}"
+
+  bundles:
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_platform: linux-x86_64
+            sdk_url: ${{ vars.CANGJIE_SDK_LINUX_AMD64_URL }}
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_platform: linux-aarch64
+            sdk_url: ${{ vars.CANGJIE_SDK_LINUX_AMD64_URL }}
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            artifact_platform: darwin-x86_64
+            sdk_url: ${{ vars.CANGJIE_SDK_MACOS_AMD64_URL }}
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            artifact_platform: darwin-aarch64
+            sdk_url: ${{ vars.CANGJIE_SDK_MACOS_ARM64_URL }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate SDK URL
+        shell: bash
+        run: |
+          if [[ -z "${{ matrix.sdk_url }}" ]]; then
+            echo "missing SDK URL for ${{ matrix.artifact_platform }}" >&2
+            echo "set the matching repository variable before running this workflow" >&2
+            exit 1
+          fi
+
+      - name: Install build prerequisites on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update -o Acquire::Retries=5
+          sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl file git tar unzip
+
+      - name: Install Cangjie SDK and stdx
+        shell: bash
+        run: |
+          chmod +x ./scripts/install_cangjie_ci.sh
+          ./scripts/install_cangjie_ci.sh \
+            --sdk-url "${{ matrix.sdk_url }}" \
+            --sdk-dir "${RUNNER_TEMP}/cangjie" \
+            --stdx-dir "${RUNNER_TEMP}/cangjie_stdx" \
+            --stdx-repo "${{ env.CANGJIE_STDX_REPO }}" \
+            --stdx-ref "${{ env.CANGJIE_STDX_GIT_REF }}"
+
+      - name: Build release bundle
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/build_release_bundle.sh ./scripts/build_release_target.sh
+          bundle_path="$(./scripts/build_release_target.sh \
+            --target "${{ matrix.target }}" \
+            --target-dir "${RUNNER_TEMP}/build-${{ matrix.artifact_platform }}" \
+            --archive-platform "${{ matrix.artifact_platform }}" \
+            --version "${{ needs.metadata.outputs.version }}")"
+          echo "bundle_path=${bundle_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: soonlink-core-${{ matrix.artifact_platform }}
+          path: ${{ steps.bundle.outputs.bundle_path }}
+          if-no-files-found: error
+
+  publish:
+    needs:
+      - metadata
+      - bundles
+    if: ${{ needs.metadata.outputs.publish_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/release-assets
+          merge-multiple: true
+
+      - name: Build checksum file
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist/release-assets
+          sha256sum ./*.tar.gz > SHA256SUMS
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.metadata.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            dist/release-assets/*.tar.gz
+            dist/release-assets/SHA256SUMS
+          body: |
+            SoonLink Core release bundles for `${{ needs.metadata.outputs.release_tag }}`.
+
+            Included targets:
+            - linux-x86_64
+            - linux-aarch64
+            - darwin-x86_64
+            - darwin-aarch64
