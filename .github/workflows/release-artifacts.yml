@@ -301,10 +301,28 @@ jobs:
 
       - name: Upload bundle
         if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage_dir="${GITHUB_WORKSPACE}/bundle-artifacts/${{ matrix.artifact_platform }}"
+          rm -rf "${stage_dir}"
+          mkdir -p "${stage_dir}"
+
+          while IFS= read -r bundle_path; do
+            if [[ -z "${bundle_path}" ]]; then
+              continue
+            fi
+            cp "${bundle_path}" "${stage_dir}/"
+          done <<'EOF'
+          ${{ steps.bundle.outputs.bundle_paths }}
+          EOF
+
+      - name: Upload staged bundle artifact
+        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: soonlink-core-${{ matrix.artifact_platform }}
-          path: ${{ steps.workspace.outputs.core_dir }}/dist/releases/*
+          path: ${{ github.workspace }}/bundle-artifacts/${{ matrix.artifact_platform }}/*
           if-no-files-found: error
 
   publish:
