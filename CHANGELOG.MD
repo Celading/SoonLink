@@ -22,6 +22,10 @@ SoonLink / 溯联开源版的主要变更记录。
 
 ## [0.5.27] - 2026-04-06
 
+- `=修复` `release-artifacts` 在缺少 SDK URL 时改为按平台跳过而不是整条流水线失败，且会继续创建 GitHub Release
+- `=修复` `docker-publish` 在缺少 Docker Hub 凭据时改为告警跳过，不再把 tag 发布链整体打红
+- `=修复` `homebrew-tap` 在缺少 tap 配置、token 或 Darwin 制品时改为告警跳过，避免 release 后置链路误炸
+- `=工程` Linux Release bundle 默认回落到公开可用的 beta.25 SDK URL，保证最小制品链可直接运行
 - `=工程` GitHub Release、Docker 与 Homebrew 发布链统一支持 `0.8.27`、`0.0.5.17` 这类纯数字 dotted tag
 - `=修复` Release / Docker / Homebrew 工作流增加 tag 与 `cjpm.toml` 版本一致性校验，避免 release 元数据与产物文件名错位
 - `=修复` Homebrew CI 改为临时 tap 安装并修正 formula 启动脚本渲染，公开仓自动化验证恢复稳定

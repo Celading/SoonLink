@@ -22,6 +22,10 @@ Notes:
 
 ## [0.5.27] - 2026-04-06
 
+- `=Fix` `release-artifacts` now skips only the platforms missing SDK URLs instead of failing the entire release workflow, while still creating the GitHub Release
+- `=Fix` `docker-publish` now warns and skips when Docker Hub credentials are absent instead of turning the whole tag pipeline red
+- `=Fix` `homebrew-tap` now warns and skips when the tap repo, token, or Darwin assets are missing, preventing noisy post-release failures
+- `=Chore` Linux release bundles now fall back to the public beta.25 SDK URL so the minimum artifact lane can run without extra repository variables
 - `=Chore` Unified GitHub Release, Docker, and Homebrew publish flows around plain dotted tags such as `0.8.27` and `0.0.5.17`
 - `=Fix` Added tag-versus-`cjpm.toml` version validation to release workflows so release metadata and asset filenames cannot drift apart
 - `=Fix` Restored stable public automation by switching Homebrew CI to a temporary tap install and correcting formula wrapper rendering

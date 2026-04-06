@@ -79,6 +79,6 @@ That command runs `cjpm build --target ...` and then produces `dist/releases/soo
 ## Notes
 
 - Pushing tags such as `0.8.27` or `0.0.5.17` automatically triggers `release-artifacts` and `docker-publish`; once the GitHub Release is published, `homebrew-tap` follows.
-- The pushed tag version must match the `cjpm.toml` version in that commit. If they drift, the release workflow fails early so asset filenames and release metadata stay aligned.
+- The pushed tag must either match the `cjpm.toml` version exactly or append one extra dotted revision, for example release tag `0.5.27.1` on package version `0.5.27`.
 - `linux-aarch64` is currently built as a target-triple build from an x86_64 Linux runner. If a future nightly regresses that cross-target path, move that matrix entry to a native ARM64 runner.
 - Windows is currently limited to `windows-x86_64`. Do not promise Windows ARM64 publicly until the SDK and stdx layout become reproducible.

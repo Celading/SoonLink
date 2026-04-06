@@ -31,7 +31,8 @@ jobs:
   metadata:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.meta.outputs.version }}
+      package_version: ${{ steps.meta.outputs.package_version }}
+      release_version: ${{ steps.meta.outputs.release_version }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
       publish_release: ${{ steps.meta.outputs.publish_release }}
     steps:
@@ -51,8 +52,8 @@ jobs:
             esac
           }
 
-          version="$(sed -n 's/^  version = "\(.*\)"/\1/p' cjpm.toml | head -n 1)"
-          if [[ -z "${version}" ]]; then
+          package_version="$(sed -n 's/^  version = "\(.*\)"/\1/p' cjpm.toml | head -n 1)"
+          if [[ -z "${package_version}" ]]; then
             echo "failed to resolve version from cjpm.toml" >&2
             exit 1
           fi
@@ -78,13 +79,14 @@ jobs:
             exit 1
           fi
 
-          if [[ "${release_version}" != "${version}" ]]; then
-            echo "release tag ${release_tag} does not match cjpm.toml version ${version}" >&2
+          if [[ "${release_version}" != "${package_version}" && "${release_version}" != "${package_version}".* ]]; then
+            echo "release tag ${release_tag} must match cjpm.toml version ${package_version} or use ${package_version}.n" >&2
             exit 1
           fi
 
           {
-            echo "version=${version}"
+            echo "package_version=${package_version}"
+            echo "release_version=${release_version}"
             echo "release_tag=${release_tag}"
             echo "publish_release=${publish_release}"
           } >> "${GITHUB_OUTPUT}"
@@ -214,7 +216,7 @@ jobs:
             --target "${{ matrix.target }}" \
             --target-dir "${RUNNER_TEMP}/build-${{ matrix.artifact_platform }}" \
             --archive-platform "${{ matrix.artifact_platform }}" \
-            --version "${{ needs.metadata.outputs.version }}")"
+            --version "${{ needs.metadata.outputs.release_version }}")"
           echo "bundle_path=${bundle_path}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload bundle
@@ -273,6 +275,8 @@ jobs:
 
           {
             echo "SoonLink Core release assets for \`${{ needs.metadata.outputs.release_tag }}\`."
+            echo
+            echo "Package version: \`${{ needs.metadata.outputs.package_version }}\`."
             echo
             if ((${#bundle_paths[@]} > 0)); then
               echo "Included bundles:"

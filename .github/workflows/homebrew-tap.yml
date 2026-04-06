@@ -45,8 +45,8 @@ jobs:
             esac
           }
 
-          version="$(sed -n 's/^  version = "\(.*\)"/\1/p' cjpm.toml | head -n 1)"
-          if [[ -z "${version}" ]]; then
+          package_version="$(sed -n 's/^  version = "\(.*\)"/\1/p' cjpm.toml | head -n 1)"
+          if [[ -z "${package_version}" ]]; then
             echo "failed to resolve version from cjpm.toml" >&2
             exit 1
           fi
@@ -66,8 +66,8 @@ jobs:
             echo "release tag must use x.y.z or x.y.z.n, got: ${release_tag}" >&2
             exit 1
           fi
-          if [[ "${release_version}" != "${version}" ]]; then
-            echo "release tag ${release_tag} does not match cjpm.toml version ${version}" >&2
+          if [[ "${release_version}" != "${package_version}" && "${release_version}" != "${package_version}".* ]]; then
+            echo "release tag ${release_tag} must match cjpm.toml version ${package_version} or use ${package_version}.n" >&2
             exit 1
           fi
 

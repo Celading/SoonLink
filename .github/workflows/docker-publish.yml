@@ -77,8 +77,8 @@ jobs:
                 echo "release tag must use x.y.z or x.y.z.n, got: ${GITHUB_REF_NAME}" >&2
                 exit 1
               fi
-              if [[ "${image_tag}" != "${version}" ]]; then
-                echo "release tag ${GITHUB_REF_NAME} does not match cjpm.toml version ${version}" >&2
+              if [[ "${image_tag}" != "${version}" && "${image_tag}" != "${version}".* ]]; then
+                echo "release tag ${GITHUB_REF_NAME} must match cjpm.toml version ${version} or use ${version}.n" >&2
                 exit 1
               fi
             else
