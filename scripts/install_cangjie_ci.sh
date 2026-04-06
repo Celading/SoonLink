@@ -25,6 +25,22 @@ find_sdk_executable() {
   return 1
 }
 
+find_sdk_directory() {
+  sdk_root="$1"
+  shift
+
+  while [ "$#" -gt 0 ]; do
+    candidate="$(find "$sdk_root" -type d -path "$1" 2>/dev/null | head -n 1 || true)"
+    if [ -n "$candidate" ] && [ -d "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    shift
+  done
+
+  return 1
+}
+
 escape_github_annotation() {
   printf '%s' "$1" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g'
 }
@@ -33,6 +49,23 @@ annotate_github_error() {
   [ -n "${GITHUB_ACTIONS:-}" ] || return 0
   message="$(escape_github_annotation "$1")"
   printf '::error::%s\n' "$message"
+}
+
+join_path_entries() {
+  joined=""
+
+  while [ "$#" -gt 0 ]; do
+    if [ -n "$1" ]; then
+      if [ -n "$joined" ]; then
+        joined="${joined}:$1"
+      else
+        joined="$1"
+      fi
+    fi
+    shift
+  done
+
+  printf '%s\n' "$joined"
 }
 
 require_command_success() {
@@ -73,6 +106,20 @@ cangjie_driver() {
 
 cjpm_driver() {
   find_sdk_executable "$SDK_DIR" cjpm cjpm.exe
+}
+
+runtime_library_dir() {
+  runtime_lib="$(find "$SDK_DIR" -type f \( -name 'libcangjie-runtime.so' -o -name 'libcangjie-runtime.dylib' \) 2>/dev/null | head -n 1 || true)"
+  if [ -n "$runtime_lib" ]; then
+    dirname "$runtime_lib"
+    return 0
+  fi
+
+  find_sdk_directory "$SDK_DIR" '*/runtime/lib/*'
+}
+
+tools_library_dir() {
+  find_sdk_directory "$SDK_DIR" '*/tools/lib'
 }
 
 native_path() {
@@ -196,6 +243,21 @@ CANGJIE_BIN_DIR="$(dirname "$CANGJIE_BIN")"
 CANGJIE_TOOLS_DIR="$(dirname "$CJPM_BIN")"
 export PATH="$CANGJIE_BIN_DIR:$CANGJIE_TOOLS_DIR:$PATH"
 
+RUNTIME_LIB_DIR="$(runtime_library_dir || true)"
+TOOLS_LIB_DIR="$(tools_library_dir || true)"
+case "$(uname -s)" in
+  Linux)
+    if [ -n "$RUNTIME_LIB_DIR" ] || [ -n "$TOOLS_LIB_DIR" ]; then
+      export LD_LIBRARY_PATH="$(join_path_entries "$RUNTIME_LIB_DIR" "$TOOLS_LIB_DIR" "${LD_LIBRARY_PATH:-}")"
+    fi
+    ;;
+  Darwin)
+    if [ -n "$RUNTIME_LIB_DIR" ] || [ -n "$TOOLS_LIB_DIR" ]; then
+      export DYLD_LIBRARY_PATH="$(join_path_entries "$RUNTIME_LIB_DIR" "$TOOLS_LIB_DIR" "${DYLD_LIBRARY_PATH:-}")"
+    fi
+    ;;
+esac
+
 command -v cjc >/dev/null 2>&1 || {
   echo "cjc is still unavailable after SDK setup" >&2
   exit 1
@@ -234,6 +296,12 @@ if [ -n "${GITHUB_ENV:-}" ]; then
   {
     echo "CANGJIE_HOME=$CANGJIE_HOME"
     echo "CANGJIE_STDX_PATH=$CANGJIE_STDX_PATH"
+    if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+      echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+    fi
+    if [ -n "${DYLD_LIBRARY_PATH:-}" ]; then
+      echo "DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH"
+    fi
   } >> "$GITHUB_ENV"
 fi
 
