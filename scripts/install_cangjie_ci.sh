@@ -9,6 +9,22 @@ STDX_REPO="${CANGJIE_STDX_REPO:-https://gitcode.com/Cangjie/cangjie_stdx}"
 STDX_REF="${CANGJIE_STDX_GIT_REF:-v1.1.0-beta.25}"
 FORCE_STDX_BUILD=0
 
+find_sdk_executable() {
+  sdk_root="$1"
+  shift
+
+  while [ "$#" -gt 0 ]; do
+    candidate="$(find "$sdk_root" -type f -name "$1" 2>/dev/null | head -n 1 || true)"
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    shift
+  done
+
+  return 1
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -24,15 +40,11 @@ EOF
 }
 
 cangjie_driver() {
-  if [ -x "$SDK_DIR/bin/cjc" ]; then
-    printf '%s\n' "$SDK_DIR/bin/cjc"
-    return 0
-  fi
-  if [ -x "$SDK_DIR/bin/cjc.exe" ]; then
-    printf '%s\n' "$SDK_DIR/bin/cjc.exe"
-    return 0
-  fi
-  return 1
+  find_sdk_executable "$SDK_DIR" cjc cjc.exe
+}
+
+cjpm_driver() {
+  find_sdk_executable "$SDK_DIR" cjpm cjpm.exe
 }
 
 native_path() {
@@ -139,7 +151,32 @@ if ! cangjie_driver >/dev/null 2>&1; then
 fi
 
 export CANGJIE_HOME="$SDK_DIR"
-export PATH="$CANGJIE_HOME/bin:$CANGJIE_HOME/tools/bin:$PATH"
+
+CANGJIE_BIN="$(cangjie_driver || true)"
+[ -n "$CANGJIE_BIN" ] || {
+  echo "failed to locate cjc inside $SDK_DIR after SDK extraction" >&2
+  exit 1
+}
+
+CJPM_BIN="$(cjpm_driver || true)"
+[ -n "$CJPM_BIN" ] || {
+  echo "failed to locate cjpm inside $SDK_DIR after SDK extraction" >&2
+  exit 1
+}
+
+CANGJIE_BIN_DIR="$(dirname "$CANGJIE_BIN")"
+CANGJIE_TOOLS_DIR="$(dirname "$CJPM_BIN")"
+export PATH="$CANGJIE_BIN_DIR:$CANGJIE_TOOLS_DIR:$PATH"
+
+command -v cjc >/dev/null 2>&1 || {
+  echo "cjc is still unavailable after SDK setup" >&2
+  exit 1
+}
+
+command -v cjpm >/dev/null 2>&1 || {
+  echo "cjpm is still unavailable after SDK setup" >&2
+  exit 1
+}
 
 if [ ! -d "$STDX_DIR/.git" ]; then
   rm -rf "$STDX_DIR"
@@ -156,7 +193,7 @@ fi
 if [ "$FORCE_STDX_BUILD" = "1" ] || [ ! -d "$STDX_DIR/target" ]; then
   (
     cd "$STDX_DIR"
-    cjpm build
+    "$CJPM_BIN" build
   )
 fi
 
@@ -171,8 +208,8 @@ fi
 
 if [ -n "${GITHUB_PATH:-}" ]; then
   {
-    echo "$CANGJIE_HOME/bin"
-    echo "$CANGJIE_HOME/tools/bin"
+    echo "$CANGJIE_BIN_DIR"
+    echo "$CANGJIE_TOOLS_DIR"
   } >> "$GITHUB_PATH"
 fi
 
