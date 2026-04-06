@@ -122,6 +122,41 @@ tools_library_dir() {
   find_sdk_directory "$SDK_DIR" '*/tools/lib'
 }
 
+resolve_stdx_root_from_output() {
+  output_dir="$1"
+  [ -d "$output_dir" ] || return 1
+
+  match_dir="$(find "$output_dir" -type d -path '*/static/stdx' 2>/dev/null | head -n 1 || true)"
+  if [ -n "$match_dir" ]; then
+    dirname "$(dirname "$(dirname "$match_dir")")"
+    return 0
+  fi
+
+  return 1
+}
+
+resolve_stdx_root() {
+  candidate_root="$(resolve_stdx_root_from_output "$STDX_DIR/target" || true)"
+  if [ -n "$candidate_root" ]; then
+    printf '%s\n' "$candidate_root"
+    return 0
+  fi
+
+  for candidate in \
+    "$(dirname "$CANGJIE_HOME")/stdx_Build" \
+    "$CANGJIE_HOME/../stdx_Build" \
+    "$(dirname "$STDX_DIR")/stdx_Build"
+  do
+    candidate_root="$(resolve_stdx_root_from_output "$candidate" || true)"
+    if [ -n "$candidate_root" ]; then
+      printf '%s\n' "$candidate_root"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 native_path() {
   if command -v cygpath >/dev/null 2>&1; then
     cygpath -aw "$1"
@@ -290,7 +325,7 @@ if [ "$FORCE_STDX_BUILD" = "1" ] || [ ! -d "$STDX_DIR/target" ]; then
   )
 fi
 
-export CANGJIE_STDX_PATH="$STDX_DIR/target"
+export CANGJIE_STDX_PATH="$(resolve_stdx_root || printf '%s\n' "$STDX_DIR/target")"
 
 if [ -n "${GITHUB_ENV:-}" ]; then
   {
