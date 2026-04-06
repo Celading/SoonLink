@@ -7,6 +7,34 @@ TARGET_DIR="${ROOT_DIR}/target"
 ARCHIVE_PLATFORM=""
 VERSION_OVERRIDE=""
 
+escape_github_annotation() {
+  printf '%s' "$1" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g'
+}
+
+annotate_github_error() {
+  [ -n "${GITHUB_ACTIONS:-}" ] || return 0
+  message="$(escape_github_annotation "$1")"
+  printf '::error::%s\n' "$message"
+}
+
+require_command_success() {
+  label="$1"
+  shift
+  log_file="$(mktemp "${TMPDIR:-/tmp}/soonlink-release-build-XXXXXX.log")"
+
+  if "$@" >"$log_file" 2>&1; then
+    rm -f "$log_file"
+    return 0
+  fi
+
+  summary="$(tail -n 20 "$log_file" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+  [ -n "$summary" ] || summary="no stderr captured"
+  annotate_github_error "$label failed: $summary"
+  cat "$log_file" >&2
+  rm -f "$log_file"
+  return 1
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -49,7 +77,8 @@ done
 mkdir -p "$TARGET_DIR"
 cd "$ROOT_DIR"
 
-cjpm build --target "$TARGET_TRIPLE" --target-dir "$TARGET_DIR"
+require_command_success "cjpm build for ${TARGET_TRIPLE}" \
+  cjpm build --target "$TARGET_TRIPLE" --target-dir "$TARGET_DIR"
 
 set -- \
   "$ROOT_DIR/scripts/build_release_bundle.sh" \
@@ -64,4 +93,15 @@ if [ -n "$VERSION_OVERRIDE" ]; then
   set -- "$@" --version "$VERSION_OVERRIDE"
 fi
 
-exec "$@"
+bundle_log="$(mktemp "${TMPDIR:-/tmp}/soonlink-release-bundle-XXXXXX.log")"
+if ! bundle_stdout="$("$@" 2>"$bundle_log")"; then
+  summary="$(tail -n 20 "$bundle_log" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+  [ -n "$summary" ] || summary="no stderr captured"
+  annotate_github_error "release bundle packaging for ${TARGET_TRIPLE} failed: ${summary}"
+  cat "$bundle_log" >&2
+  rm -f "$bundle_log"
+  exit 1
+fi
+
+rm -f "$bundle_log"
+printf '%s\n' "$bundle_stdout"
