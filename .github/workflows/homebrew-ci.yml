@@ -63,5 +63,15 @@ jobs:
 
       - name: Install local formula
         run: |
-          brew install --formula "$PWD/dist/homebrew/soonlink.rb"
+          set -euo pipefail
+          tap_name="local/soonlink-ci"
+          if ! brew tap | grep -qx "$tap_name"; then
+            brew tap-new "$tap_name"
+          fi
+
+          tap_dir="$(brew --repo "$tap_name")"
+          mkdir -p "$tap_dir/Formula"
+          cp "$PWD/dist/homebrew/soonlink.rb" "$tap_dir/Formula/soonlink.rb"
+
+          brew install "$tap_name/soonlink"
           brew test soonlink
