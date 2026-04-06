@@ -181,6 +181,14 @@ jobs:
           echo "deveco_ohos_aarch64_url=${{ steps.meta.outputs.deveco_ohos_aarch64_url }}"
           echo '${{ steps.meta.outputs.bundle_matrix }}'
 
+      - name: Create or refresh GitHub release stub
+        if: ${{ steps.meta.outputs.publish_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          body: "Preparing SoonLink Core release assets..."
+
   bundles:
     needs: metadata
     strategy:
@@ -319,11 +327,14 @@ jobs:
 
       - name: Publish platform bundle to GitHub release
         if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' && needs.metadata.outputs.publish_release == 'true' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.metadata.outputs.release_tag }}
-          target_commitish: ${{ github.sha }}
-          files: ${{ github.workspace }}/bundle-artifacts/${{ matrix.artifact_platform }}/*
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ needs.metadata.outputs.release_tag }}" \
+            "${GITHUB_WORKSPACE}/bundle-artifacts/${{ matrix.artifact_platform }}"/* \
+            --clobber
 
       - name: Upload staged bundle artifact
         if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' && needs.metadata.outputs.publish_release != 'true' }}
