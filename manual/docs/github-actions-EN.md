@@ -31,11 +31,11 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
 - `CANGJIE_SDK_LINUX_ARM64_URL`
   Cangjie SDK download URL used by Linux ARM64 runners. The `linux-aarch64` release bundle now runs on a native `ubuntu-24.04-arm` runner.
 - `CANGJIE_SDK_MACOS_AMD64_URL`
-  SDK URL for macOS Intel runners.
+  SDK URL for macOS Intel runners. When unset, the workflow falls back to the official `1.1.0-beta.25` SDK.
 - `CANGJIE_SDK_MACOS_ARM64_URL`
-  SDK URL for macOS Apple Silicon runners.
+  SDK URL for macOS Apple Silicon runners. When unset, the workflow falls back to the official `1.1.0-beta.25` SDK.
 - `CANGJIE_SDK_WINDOWS_AMD64_URL`
-  SDK URL for Windows x64 runners.
+  SDK URL for Windows x64 runners. When unset, the workflow falls back to the official `1.1.0-beta.25` SDK zip package.
 - `CANGJIE_STDX_GIT_REF`
   Optional. Defaults to `v1.1.0-beta.25`.
 - `CANGJIE_STDX_REPO`
@@ -101,5 +101,12 @@ Both bundle formats include:
 - Pushing tags such as `0.8.27` or `0.0.5.17` automatically triggers `release-artifacts` and `docker-publish`; once the GitHub Release is published, `homebrew-tap` follows.
 - The pushed tag must either match the `cjpm.toml` version exactly or append one extra dotted revision, for example release tag `0.5.27.1` on package version `0.5.27`.
 - `linux-aarch64` now uses a native `ubuntu-24.04-arm` runner with an ARM64 SDK so release bundles do not depend on x86_64 Linux SDK layouts that omit `linux_aarch64_cjnative` modules.
+- `release-artifacts` now attempts all five default platforms out of the box:
+  - `linux-x86_64`
+  - `linux-aarch64`
+  - `darwin-x86_64`
+  - `darwin-aarch64`
+  - `windows-x86_64`
+- If you want to move to a newer SDK later, repository variables can still override these default download URLs.
 - Manual `homebrew-tap` runs now fall back to the current `cjpm.toml` version when `release_tag` is left empty, avoiding the previous empty-value failure.
 - Windows is currently limited to `windows-x86_64`. Do not promise Windows ARM64 publicly until the SDK and stdx layout become reproducible.
