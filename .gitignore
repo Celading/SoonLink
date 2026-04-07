@@ -6,6 +6,7 @@ target
 .vscode/
 .idea/
 .cache/
+.ci/
 
 # cangjie
 build/

@@ -1,0 +1,112 @@
+name: soonlink-core-release-linux
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+      - "*.*.*.*"
+  workflow_dispatch:
+
+jobs:
+  bundle-linux-x86_64:
+    runs-on: euleros-2.10.1
+    steps:
+      - uses: checkout-action@0.0.1
+
+      - name: Install CI prerequisites
+        run: |
+          cd repo_workspace
+          chmod +x ./scripts/install_ci_prerequisites.sh
+          ./scripts/install_ci_prerequisites.sh
+
+      - name: Configure dependency credentials
+        run: |
+          if [ -n "${GITCODE_USERNAME:-}" ] && [ -n "${GITCODE_TOKEN:-}" ]; then
+            git config --global url."https://${GITCODE_USERNAME}:${GITCODE_TOKEN}@gitcode.com/".insteadOf "https://gitcode.com/"
+          fi
+
+          if [ -n "${ATOMGIT_USERNAME:-}" ] && [ -n "${ATOMGIT_TOKEN:-}" ]; then
+            git config --global url."https://${ATOMGIT_USERNAME}:${ATOMGIT_TOKEN}@atomgit.com/".insteadOf "https://atomgit.com/"
+          fi
+
+      - name: Build Linux release bundle
+        run: |
+          set -eu
+          cd repo_workspace
+
+          SDK_URL="${CANGJIE_SDK_LINUX_AMD64_URL:-https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-linux-x64-1.1.0-beta.25.tar.gz&objectKey=69cb718e6e8ed61e6e07fd42}"
+          STDX_REPO="${CANGJIE_STDX_REPO:-https://gitcode.com/Cangjie/cangjie_stdx}"
+          STDX_REF="${CANGJIE_STDX_GIT_REF:-v1.1.0-beta.25}"
+          DEPS_ROOT="$(pwd)/.ci/gitcode-release-deps"
+          WORKSPACE_ROOT="$(pwd)/.ci/gitcode-release-workspace"
+          RELEASE_ROOT="$(pwd)/dist/gitcode-release"
+          TAG_NAME="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+          RELEASE_VERSION="${TAG_NAME#v}"
+          PACKAGE_VERSION="$(awk -F '\"' '/^[[:space:]]*version[[:space:]]*=/{print $2; exit}' cjpm.toml)"
+
+          if [ -z "${RELEASE_VERSION}" ]; then
+            RELEASE_VERSION="${PACKAGE_VERSION}"
+          fi
+
+          printf '%s\n' "${RELEASE_VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' || {
+            echo "release version must use x.y.z or x.y.z.n, got: ${RELEASE_VERSION}" >&2
+            exit 1
+          }
+
+          case "${RELEASE_VERSION}" in
+            "${PACKAGE_VERSION}"|${PACKAGE_VERSION}.*) ;;
+            *)
+              echo "release version ${RELEASE_VERSION} must match cjpm.toml version ${PACKAGE_VERSION} or use ${PACKAGE_VERSION}.n" >&2
+              exit 1
+              ;;
+          esac
+
+          rm -rf "${DEPS_ROOT}" "${WORKSPACE_ROOT}" "${RELEASE_ROOT}"
+          mkdir -p "${DEPS_ROOT}" "${RELEASE_ROOT}"
+
+          git clone --depth 1 "${IGNITE_GIT_URL:-https://gitcode.com/cinyu/ignite-cangjie.git}" "${DEPS_ROOT}/Ignite0500"
+          git clone --depth 1 "${LISI_GIT_URL:-https://gitcode.com/cinyu/lisi}" "${DEPS_ROOT}/lisi"
+          git clone --depth 1 "${JINGUISSL_GIT_URL:-https://atomgit.com/cinyu/jinguiSSL}" "${DEPS_ROOT}/jinguiSSL"
+
+          chmod +x ./scripts/install_cangjie_ci.sh ./scripts/prepare_release_workspace.sh ./scripts/build_release_target.sh ./scripts/build_release_bundle.sh
+          ./scripts/install_cangjie_ci.sh \
+            --sdk-url "${SDK_URL}" \
+            --sdk-dir "$(pwd)/.ci/cangjie" \
+            --stdx-dir "$(pwd)/.ci/cangjie_stdx" \
+            --stdx-repo "${STDX_REPO}" \
+            --stdx-ref "${STDX_REF}" \
+            --stdx-release-version "${CANGJIE_STDX_RELEASE_VERSION:-}" \
+            --stdx-target x86_64-unknown-linux-gnu
+
+          ./scripts/prepare_release_workspace.sh \
+            --output "${WORKSPACE_ROOT}" \
+            --ignite "${DEPS_ROOT}/Ignite0500" \
+            --lisi "${DEPS_ROOT}/lisi" \
+            --jinguissl "${DEPS_ROOT}/jinguiSSL"
+
+          cd "${WORKSPACE_ROOT}/SoonLink-Core"
+          BUNDLE_PATHS="$(./scripts/build_release_target.sh \
+            --target x86_64-unknown-linux-gnu \
+            --target-dir "$(pwd)/target-release/linux-x86_64" \
+            --archive-platform linux-x86_64 \
+            --version "${RELEASE_VERSION}")"
+
+          printf '%s\n' "${BUNDLE_PATHS}" | while IFS= read -r bundle_path; do
+            [ -n "${bundle_path}" ] || continue
+            cp "${bundle_path}" "${RELEASE_ROOT}/"
+          done
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            (
+              cd "${RELEASE_ROOT}"
+              sha256sum ./* > SHA256SUMS
+            )
+          elif command -v shasum >/dev/null 2>&1; then
+            (
+              cd "${RELEASE_ROOT}"
+              shasum -a 256 ./* > SHA256SUMS
+            )
+          fi
+
+          echo "Prepared GitCode release files:"
+          ls -lh "${RELEASE_ROOT}"

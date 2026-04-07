@@ -1,8 +1,13 @@
-# GitHub Actions / Release
+# GitHub / GitCode CI & Release
 
-SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, release bundles, and Docker publishing can evolve as separate but reusable lanes.
+SoonLink Core now keeps two public automation lanes side by side:
 
-## Workflows
+- GitHub handles the full multi-platform release, Docker, and Homebrew publishing path.
+- GitCode handles the public-repo Linux CI path and tag-driven Linux bundle assembly under `.gitcode/workflows/`.
+
+That split keeps the public-source validation path lightweight while leaving the full cross-platform release surface on GitHub.
+
+## GitHub Workflows
 
 - `.github/workflows/core-ci.yml`
   Public-boundary checks, Compose validation, and a lightweight build smoke test.
@@ -30,10 +35,25 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
 - `.github/workflows/homebrew-tap.yml`
   After a GitHub Release is published, renders the Homebrew formula from the Darwin x64 / arm64 bundles and pushes it to the tap repository.
 
-## Required Repository Variables
+## GitCode Workflows
+
+- `.gitcode/workflows/core-ci.yml`
+  Runs the public-repo verification path on GitCode's default `euleros-2.10.1` runner.
+  - After `checkout-action@0.0.1`, all commands execute inside `repo_workspace`.
+  - The workflow runs the public-boundary audit first, installs Linux prerequisites, installs the Cangjie SDK and `stdx`, clones `Ignite / lisi / jinguiSSL`, projects a clean temporary workspace, and then runs `cjpm build` plus `cjpm test`.
+  - Compose validation only runs when `docker compose` is available on the runner. Missing Docker support is treated as a warning instead of a false CI regression.
+- `.gitcode/workflows/release-linux.yml`
+  Builds a GitCode-side Linux release bundle for tags and manual runs.
+  - Triggered by `x.y.z` or `x.y.z.n` tags, or manually from the GitCode UI.
+  - Currently emits `linux-x86_64` `.tar.gz` and `.zip` bundles plus `SHA256SUMS` under `dist/gitcode-release/`.
+  - This workflow is meant to give the GitCode remote a reproducible tag packaging lane, not to replace the full GitHub multi-platform release publication.
+
+## Variables and Credentials
 
 - `CANGJIE_SDK_LINUX_AMD64_URL`
   Cangjie SDK download URL used by Linux x86_64 runners.
+  - GitHub `core-ci` skips the real build when it is unset.
+  - GitCode workflows fall back to the current default `1.1.0-beta.25` Linux x64 SDK URL when it is unset.
 - `CANGJIE_SDK_LINUX_ARM64_URL`
   Cangjie SDK download URL used by Linux ARM64 runners. The `linux-aarch64` release bundle now runs on a native `ubuntu-24.04-arm` runner.
 - `CANGJIE_SDK_MACOS_AMD64_URL`
@@ -56,8 +76,14 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
   Target tap repository, for example `Celading/homebrew-tap`.
 - `HOMEBREW_TAP_BRANCH`
   Optional. Defaults to `main`.
+- `IGNITE_GIT_URL`
+  Optional. Defaults to `https://gitcode.com/cinyu/ignite-cangjie.git`.
+- `LISI_GIT_URL`
+  Optional. Defaults to `https://gitcode.com/cinyu/lisi`.
+- `JINGUISSL_GIT_URL`
+  Optional. Defaults to `https://atomgit.com/cinyu/jinguiSSL`.
 
-## Docker Publishing Secrets
+## Credentials
 
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN`
@@ -69,6 +95,7 @@ SoonLink Core now includes a GitHub-oriented automation skeleton so source CI, r
 
 GitCode and AtomGit credentials are only needed when dependency repositories require authentication. Public read-only dependencies can leave them unset. `HOMEBREW_TAP_TOKEN` is used to push the generated formula into the tap repository.
 If you want OpenHarmony nightly tag auto-discovery to work, configure `GITCODE_TOKEN` as well because the current GitCode tags API requires the `private-token` request header.
+GitCode workflows are better treated as shell-oriented project variables or injected environment variables with the same names, instead of assuming GitHub-specific repository variable UX.
 
 ## Reuse The Same Script Locally
 
@@ -102,6 +129,9 @@ Both bundle formats include:
 - `scripts/install_cangjie_ci.sh`
   Downloads the SDK, resolves or builds `stdx`, and exports CI environment variables.
   - It now handles Windows DLL runtime path exports, Linux/macOS multi-directory runtime library discovery, and falls back from symbolic links to directory copies for `stdx` aliases when runners do not permit symlink creation.
+- `scripts/install_ci_prerequisites.sh`
+  Shared runner bootstrap script for GitHub and GitCode Linux jobs.
+  - It currently supports `apt-get`, `dnf`, and `yum`, which keeps Ubuntu and Euler runners on the same minimal dependency contract.
 - `scripts/build_release_target.sh`
   Runs the target build and packaging flow end-to-end.
 - `scripts/build_release_bundle.sh`
@@ -113,6 +143,7 @@ Both bundle formats include:
 ## Notes
 
 - Pushing tags such as `0.8.27` or `0.0.5.17` automatically triggers `release-artifacts` and `docker-publish`; once the GitHub Release is published, `homebrew-tap` follows.
+- The GitCode tag workflow is intentionally limited to the Linux x86_64 bundle. GitHub remains the primary multi-platform release surface.
 - The pushed tag must either match the `cjpm.toml` version exactly or append one extra dotted revision, for example release tag `0.5.27.1` on package version `0.5.27`.
 - `linux-aarch64` now uses a native `ubuntu-24.04-arm` runner with an ARM64 SDK so release bundles do not depend on x86_64 Linux SDK layouts that omit `linux_aarch64_cjnative` modules.
 - `release-artifacts` now attempts all five default platforms by default and adds a sixth OpenHarmony bundle when the toolchain is available:

@@ -1,0 +1,81 @@
+name: soonlink-core-ci
+
+on:
+  push:
+    branches: [ "main", "core" ]
+  pull_request:
+    branches: [ "main", "core" ]
+  workflow_dispatch:
+
+jobs:
+  verify-linux:
+    runs-on: euleros-2.10.1
+    steps:
+      - uses: checkout-action@0.0.1
+
+      - name: Run public boundary audit
+        run: |
+          cd repo_workspace
+          chmod +x ./scripts/check_public_boundary.sh
+          ./scripts/check_public_boundary.sh
+
+      - name: Install CI prerequisites
+        run: |
+          cd repo_workspace
+          chmod +x ./scripts/install_ci_prerequisites.sh
+          ./scripts/install_ci_prerequisites.sh
+
+      - name: Configure dependency credentials
+        run: |
+          if [ -n "${GITCODE_USERNAME:-}" ] && [ -n "${GITCODE_TOKEN:-}" ]; then
+            git config --global url."https://${GITCODE_USERNAME}:${GITCODE_TOKEN}@gitcode.com/".insteadOf "https://gitcode.com/"
+          fi
+
+          if [ -n "${ATOMGIT_USERNAME:-}" ] && [ -n "${ATOMGIT_TOKEN:-}" ]; then
+            git config --global url."https://${ATOMGIT_USERNAME}:${ATOMGIT_TOKEN}@atomgit.com/".insteadOf "https://atomgit.com/"
+          fi
+
+      - name: Build and test Linux workspace projection
+        run: |
+          set -eu
+          cd repo_workspace
+
+          SDK_URL="${CANGJIE_SDK_LINUX_AMD64_URL:-https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-linux-x64-1.1.0-beta.25.tar.gz&objectKey=69cb718e6e8ed61e6e07fd42}"
+          STDX_REPO="${CANGJIE_STDX_REPO:-https://gitcode.com/Cangjie/cangjie_stdx}"
+          STDX_REF="${CANGJIE_STDX_GIT_REF:-v1.1.0-beta.25}"
+          DEPS_ROOT="$(pwd)/.ci/gitcode-deps"
+          WORKSPACE_ROOT="$(pwd)/.ci/gitcode-workspace"
+
+          rm -rf "${DEPS_ROOT}" "${WORKSPACE_ROOT}"
+          mkdir -p "${DEPS_ROOT}"
+
+          git clone --depth 1 "${IGNITE_GIT_URL:-https://gitcode.com/cinyu/ignite-cangjie.git}" "${DEPS_ROOT}/Ignite0500"
+          git clone --depth 1 "${LISI_GIT_URL:-https://gitcode.com/cinyu/lisi}" "${DEPS_ROOT}/lisi"
+          git clone --depth 1 "${JINGUISSL_GIT_URL:-https://atomgit.com/cinyu/jinguiSSL}" "${DEPS_ROOT}/jinguiSSL"
+
+          chmod +x ./scripts/install_cangjie_ci.sh ./scripts/prepare_release_workspace.sh
+          ./scripts/install_cangjie_ci.sh \
+            --sdk-url "${SDK_URL}" \
+            --sdk-dir "$(pwd)/.ci/cangjie" \
+            --stdx-dir "$(pwd)/.ci/cangjie_stdx" \
+            --stdx-repo "${STDX_REPO}" \
+            --stdx-ref "${STDX_REF}" \
+            --stdx-release-version "${CANGJIE_STDX_RELEASE_VERSION:-}" \
+            --stdx-target x86_64-unknown-linux-gnu
+
+          ./scripts/prepare_release_workspace.sh \
+            --output "${WORKSPACE_ROOT}" \
+            --ignite "${DEPS_ROOT}/Ignite0500" \
+            --lisi "${DEPS_ROOT}/lisi" \
+            --jinguissl "${DEPS_ROOT}/jinguiSSL"
+
+          cd "${WORKSPACE_ROOT}/SoonLink-Core"
+          cjpm build
+          cjpm test
+
+          if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+            docker compose -f compose.yaml config >/dev/null
+            docker compose --env-file .env.example -f compose.release.yaml config >/dev/null
+          else
+            echo "docker compose is unavailable on this runner; skipping compose validation"
+          fi

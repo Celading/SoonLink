@@ -49,9 +49,12 @@ require_path "scripts/prepare_homebrew_bundle.sh"
 require_path "scripts/build_release_bundle.sh"
 require_path "scripts/build_release_target.sh"
 require_path "scripts/install_cangjie_ci.sh"
+require_path "scripts/install_ci_prerequisites.sh"
 require_path "scripts/prepare_release_workspace.sh"
 require_path "scripts/render_homebrew_formula.sh"
 require_path "scripts/check_public_boundary.sh"
+require_path ".gitcode/workflows/core-ci.yml"
+require_path ".gitcode/workflows/release-linux.yml"
 require_path ".github/workflows/core-ci.yml"
 require_path ".github/workflows/release-artifacts.yml"
 require_path ".github/workflows/docker-publish.yml"
@@ -71,7 +74,7 @@ if tracked_symlinks | grep . >/dev/null 2>&1; then
   exit 1
 fi
 
-FORBIDDEN_TRACKED_PATTERN='(^|/)(_[^/]+|cache|logs|target|build|output|dist|volumes|gitTemp|\.cache|\.vscode|\.idea)(/|$)|^config/(devices\.json|favorites\.toml|whitelist\.toml)$|(^|/)\.git(/|$)|(^|/)\.DS_Store$'
+FORBIDDEN_TRACKED_PATTERN='(^|/)(_[^/]+|cache|logs|target|build|output|dist|volumes|gitTemp|\.cache|\.ci|\.vscode|\.idea)(/|$)|^config/(devices\.json|favorites\.toml|whitelist\.toml)$|(^|/)\.git(/|$)|(^|/)\.DS_Store$'
 
 if tracked_files | grep -E "$FORBIDDEN_TRACKED_PATTERN" >/dev/null 2>&1; then
   echo "internal workspace, git metadata, or runtime paths are tracked" >&2
