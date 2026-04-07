@@ -29,19 +29,20 @@ write_lisi_helper() {
   cat > "$file" <<'EOF'
 package lisi.net.TlsTool
 
-import stdx.crypto.common.PrivateKey
+import stdx.net.tls.TlsServerConfig
+import stdx.crypto.x509.X509Certificate
 import stdx.crypto.keys.{ECDSAPrivateKey, RSAPrivateKey, SM2PrivateKey}
 
-func decodeTlsPrivateKeyFromPem(keyPem: String): PrivateKey {
+func buildTlsServerConfigFromPemWithCompat(certChain: Array<X509Certificate>, keyPem: String): TlsServerConfig {
     try {
-        return RSAPrivateKey.decodeFromPem(keyPem)
+        return TlsServerConfig(certChain, RSAPrivateKey.decodeFromPem(keyPem))
     } catch (_: Exception) {}
 
     try {
-        return ECDSAPrivateKey.decodeFromPem(keyPem)
+        return TlsServerConfig(certChain, ECDSAPrivateKey.decodeFromPem(keyPem))
     } catch (_: Exception) {}
 
-    SM2PrivateKey.decodeFromPem(keyPem)
+    TlsServerConfig(certChain, SM2PrivateKey.decodeFromPem(keyPem))
 }
 EOF
 }
@@ -52,19 +53,20 @@ write_ignite_helper() {
   cat > "$file" <<'EOF'
 package ignite.api2
 
-import stdx.crypto.common.PrivateKey
+import stdx.net.tls.TlsServerConfig
+import stdx.crypto.x509.X509Certificate
 import stdx.crypto.keys.{ECDSAPrivateKey, RSAPrivateKey, SM2PrivateKey}
 
-func decodeTlsPrivateKeyFromPem(keyPem: String): PrivateKey {
+func buildTlsServerConfigFromPemWithCompat(certChain: Array<X509Certificate>, keyPem: String): TlsServerConfig {
     try {
-        return RSAPrivateKey.decodeFromPem(keyPem)
+        return TlsServerConfig(certChain, RSAPrivateKey.decodeFromPem(keyPem))
     } catch (_: Exception) {}
 
     try {
-        return ECDSAPrivateKey.decodeFromPem(keyPem)
+        return TlsServerConfig(certChain, ECDSAPrivateKey.decodeFromPem(keyPem))
     } catch (_: Exception) {}
 
-    SM2PrivateKey.decodeFromPem(keyPem)
+    TlsServerConfig(certChain, SM2PrivateKey.decodeFromPem(keyPem))
 }
 EOF
 }
@@ -74,7 +76,8 @@ patch_lisi_tls_tool() {
   [ -f "$file" ] || return 0
 
   sedi '/import stdx.crypto.keys.GeneralPrivateKey/d' "$file"
-  sedi 's/GeneralPrivateKey.decodeFromPem(keyPem)/decodeTlsPrivateKeyFromPem(keyPem)/' "$file"
+  sedi 's/let certKey = GeneralPrivateKey.decodeFromPem(keyPem)/var tlsConfig = buildTlsServerConfigFromPemWithCompat(certChain, keyPem)/' "$file"
+  sedi '/var tlsConfig = TlsServerConfig(certChain, certKey)/d' "$file"
   sedi 's/X509Certificate.decodeFromPem、GeneralPrivateKey.decodeFromPem/X509Certificate.decodeFromPem、兼容私钥解码 helper/' "$file"
 }
 
@@ -83,7 +86,8 @@ patch_ignite_tls_api() {
   [ -f "$file" ] || return 0
 
   sedi '/import stdx.crypto.keys.GeneralPrivateKey/d' "$file"
-  sedi 's/GeneralPrivateKey.decodeFromPem(keyPem)/decodeTlsPrivateKeyFromPem(keyPem)/' "$file"
+  sedi 's/let certKey = GeneralPrivateKey.decodeFromPem(keyPem)/var tlsConfig = buildTlsServerConfigFromPemWithCompat(certChain, keyPem)/' "$file"
+  sedi '/var tlsConfig = TlsServerConfig(certChain, certKey)/d' "$file"
   sedi 's/X509Certificate.decodeFromPem, GeneralPrivateKey.decodeFromPem/X509Certificate.decodeFromPem and a compatibility private-key helper/' "$file"
 }
 
