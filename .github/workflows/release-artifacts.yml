@@ -332,13 +332,25 @@ jobs:
           ${{ steps.bundle.outputs.bundle_paths }}
           EOF
 
+      - name: Show staged bundle files
+        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage_dir="${GITHUB_WORKSPACE}/bundle-artifacts/${{ matrix.artifact_platform }}"
+          echo "artifact stage dir: ${stage_dir}"
+          find "${stage_dir}" -maxdepth 1 -type f -print | sort
+
       - name: Upload staged bundle artifact
         if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' }}
+        id: artifact_upload
         uses: actions/upload-artifact@v4
         with:
-          name: soonlink-core-${{ matrix.artifact_platform }}
+          name: soonlink-core-${{ matrix.artifact_platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ github.workspace }}/bundle-artifacts/${{ matrix.artifact_platform }}/*
           if-no-files-found: error
+          overwrite: true
+          compression-level: 0
 
       - name: Verify bundle job result
         if: ${{ steps.availability.outputs.enabled == 'true' }}
@@ -353,6 +365,11 @@ jobs:
 
           if [[ "${{ steps.bundle.conclusion }}" != "success" ]]; then
             echo "Release bundle build failed for ${{ matrix.artifact_platform }}." >&2
+            exit 1
+          fi
+
+          if [[ "${{ steps.artifact_upload.conclusion }}" != "success" ]]; then
+            echo "Artifact upload failed for ${{ matrix.artifact_platform }}." >&2
             exit 1
           fi
 
@@ -376,6 +393,12 @@ jobs:
           pattern: soonlink-core-*
           path: dist/release-assets
           merge-multiple: true
+
+      - name: Show downloaded release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          find dist/release-assets -maxdepth 1 -type f -print | sort
 
       - name: Add compose deployment assets
         shell: bash

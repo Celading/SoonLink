@@ -13,6 +13,28 @@ jobs:
     steps:
       - uses: checkout-action@0.0.1
 
+      - name: Runner diagnostics
+        run: |
+          set -eu
+          echo "pwd=$(pwd)"
+          echo "user=$(id)"
+          uname -a || true
+          command -v bash || true
+          command -v curl || true
+          command -v git || true
+          command -v zip || true
+          command -v unzip || true
+          command -v python3 || true
+          command -v dnf || true
+          command -v yum || true
+          command -v sudo || true
+          ls -la
+
+      - name: Show checked out workspace
+        run: |
+          set -eu
+          ls -la repo_workspace
+
       - name: Install CI prerequisites
         run: |
           cd repo_workspace
@@ -110,3 +132,4 @@ jobs:
 
           echo "Prepared GitCode release files:"
           ls -lh "${RELEASE_ROOT}"
+          find "${RELEASE_ROOT}" -maxdepth 1 -type f -print | sort

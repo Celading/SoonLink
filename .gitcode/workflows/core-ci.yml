@@ -13,6 +13,28 @@ jobs:
     steps:
       - uses: checkout-action@0.0.1
 
+      - name: Runner diagnostics
+        run: |
+          set -eu
+          echo "pwd=$(pwd)"
+          echo "user=$(id)"
+          uname -a || true
+          command -v bash || true
+          command -v curl || true
+          command -v git || true
+          command -v zip || true
+          command -v unzip || true
+          command -v python3 || true
+          command -v dnf || true
+          command -v yum || true
+          command -v sudo || true
+          ls -la
+
+      - name: Show checked out workspace
+        run: |
+          set -eu
+          ls -la repo_workspace
+
       - name: Run public boundary audit
         run: |
           cd repo_workspace
@@ -72,6 +94,7 @@ jobs:
           cd "${WORKSPACE_ROOT}/SoonLink-Core"
           cjpm build
           cjpm test
+          echo "build and test completed in $(pwd)"
 
           if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
             docker compose -f compose.yaml config >/dev/null

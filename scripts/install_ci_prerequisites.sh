@@ -12,7 +12,8 @@ run_with_privilege() {
     return 0
   fi
 
-  "$@"
+  echo "missing root privileges and sudo is unavailable; cannot install CI prerequisites automatically" >&2
+  return 1
 }
 
 have_required_commands() {
