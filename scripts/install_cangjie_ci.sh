@@ -72,6 +72,37 @@ join_path_entries() {
   printf '%s\n' "$joined"
 }
 
+prepend_space_flags() {
+  value="$1"
+  current="${2:-}"
+
+  if [ -z "$value" ]; then
+    printf '%s\n' "$current"
+    return 0
+  fi
+
+  if [ -n "$current" ]; then
+    printf '%s %s\n' "$value" "$current"
+  else
+    printf '%s\n' "$value"
+  fi
+}
+
+resolve_brew_prefix() {
+  formula="$1"
+  if ! command -v brew >/dev/null 2>&1; then
+    return 1
+  fi
+
+  prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
+  if [ -n "$prefix" ] && [ -d "$prefix" ]; then
+    printf '%s\n' "$prefix"
+    return 0
+  fi
+
+  return 1
+}
+
 require_command_success() {
   log_file="$(mktemp "${TMPDIR:-/tmp}/soonlink-ci-command-XXXXXX.log")"
   label="$1"
@@ -608,6 +639,11 @@ done
 SDK_PARENT="$(dirname "$SDK_DIR")"
 DEVECO_PARENT="$(dirname "$DEVECO_DIR")"
 STDX_PARENT="$(dirname "$STDX_DIR")"
+MACOS_SDK_ROOT=""
+MACOS_OPENSSL_PREFIX=""
+MACOS_OPENSSL_LIB=""
+MACOS_OPENSSL_INCLUDE=""
+MACOS_OPENSSL_PKGCONFIG=""
 
 mkdir -p "$SDK_PARENT" "$DEVECO_PARENT" "$STDX_PARENT"
 
@@ -643,6 +679,39 @@ case "$(uname -s)" in
     fi
     ;;
   Darwin)
+    if command -v xcrun >/dev/null 2>&1; then
+      MACOS_SDK_ROOT="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
+      if [ -n "$MACOS_SDK_ROOT" ] && [ -d "$MACOS_SDK_ROOT" ]; then
+        export SDKROOT="$MACOS_SDK_ROOT"
+        export LIBRARY_PATH="$(join_path_entries "$MACOS_SDK_ROOT/usr/lib" "${LIBRARY_PATH:-}")"
+        export CPATH="$(join_path_entries "$MACOS_SDK_ROOT/usr/include" "${CPATH:-}")"
+        export CPPFLAGS="$(prepend_space_flags "-isysroot $MACOS_SDK_ROOT" "${CPPFLAGS:-}")"
+        export LDFLAGS="$(prepend_space_flags "-isysroot $MACOS_SDK_ROOT" "${LDFLAGS:-}")"
+      fi
+    fi
+
+    MACOS_OPENSSL_PREFIX="$(resolve_brew_prefix openssl@3 || true)"
+    if [ -n "$MACOS_OPENSSL_PREFIX" ]; then
+      MACOS_OPENSSL_LIB="$MACOS_OPENSSL_PREFIX/lib"
+      MACOS_OPENSSL_INCLUDE="$MACOS_OPENSSL_PREFIX/include"
+      MACOS_OPENSSL_PKGCONFIG="$MACOS_OPENSSL_LIB/pkgconfig"
+
+      if [ -d "$MACOS_OPENSSL_LIB" ]; then
+        export LIBRARY_PATH="$(join_path_entries "$MACOS_OPENSSL_LIB" "${LIBRARY_PATH:-}")"
+        export DYLD_LIBRARY_PATH="$(join_path_entries "$MACOS_OPENSSL_LIB" "${DYLD_LIBRARY_PATH:-}")"
+        export LDFLAGS="$(prepend_space_flags "-L$MACOS_OPENSSL_LIB" "${LDFLAGS:-}")"
+      fi
+
+      if [ -d "$MACOS_OPENSSL_INCLUDE" ]; then
+        export CPATH="$(join_path_entries "$MACOS_OPENSSL_INCLUDE" "${CPATH:-}")"
+        export CPPFLAGS="$(prepend_space_flags "-I$MACOS_OPENSSL_INCLUDE" "${CPPFLAGS:-}")"
+      fi
+
+      if [ -d "$MACOS_OPENSSL_PKGCONFIG" ]; then
+        export PKG_CONFIG_PATH="$(join_path_entries "$MACOS_OPENSSL_PKGCONFIG" "${PKG_CONFIG_PATH:-}")"
+      fi
+    fi
+
     if [ -n "$SDK_LIBRARY_PATH" ]; then
       export DYLD_LIBRARY_PATH="$(join_path_entries "$SDK_LIBRARY_PATH" "${DYLD_LIBRARY_PATH:-}")"
     fi
@@ -708,11 +777,29 @@ if [ -n "$EFFECTIVE_STDX_RELEASE_VERSION" ] && [ -n "$STDX_TARGETS" ]; then
       if [ -n "${DEVECO_CANGJIE_HOME:-}" ]; then
         echo "DEVECO_CANGJIE_HOME=$DEVECO_CANGJIE_HOME"
       fi
+      if [ -n "${SDKROOT:-}" ]; then
+        echo "SDKROOT=$SDKROOT"
+      fi
+      if [ -n "${LIBRARY_PATH:-}" ]; then
+        echo "LIBRARY_PATH=$LIBRARY_PATH"
+      fi
       if [ -n "${LD_LIBRARY_PATH:-}" ]; then
         echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
       fi
       if [ -n "${DYLD_LIBRARY_PATH:-}" ]; then
         echo "DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH"
+      fi
+      if [ -n "${CPATH:-}" ]; then
+        echo "CPATH=$CPATH"
+      fi
+      if [ -n "${PKG_CONFIG_PATH:-}" ]; then
+        echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
+      fi
+      if [ -n "${CPPFLAGS:-}" ]; then
+        echo "CPPFLAGS=$CPPFLAGS"
+      fi
+      if [ -n "${LDFLAGS:-}" ]; then
+        echo "LDFLAGS=$LDFLAGS"
       fi
     } >> "$GITHUB_ENV"
   fi
@@ -783,11 +870,29 @@ if [ -n "${GITHUB_ENV:-}" ]; then
     if [ -n "${DEVECO_CANGJIE_HOME:-}" ]; then
       echo "DEVECO_CANGJIE_HOME=$DEVECO_CANGJIE_HOME"
     fi
+    if [ -n "${SDKROOT:-}" ]; then
+      echo "SDKROOT=$SDKROOT"
+    fi
+    if [ -n "${LIBRARY_PATH:-}" ]; then
+      echo "LIBRARY_PATH=$LIBRARY_PATH"
+    fi
     if [ -n "${LD_LIBRARY_PATH:-}" ]; then
       echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
     fi
     if [ -n "${DYLD_LIBRARY_PATH:-}" ]; then
       echo "DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH"
+    fi
+    if [ -n "${CPATH:-}" ]; then
+      echo "CPATH=$CPATH"
+    fi
+    if [ -n "${PKG_CONFIG_PATH:-}" ]; then
+      echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
+    fi
+    if [ -n "${CPPFLAGS:-}" ]; then
+      echo "CPPFLAGS=$CPPFLAGS"
+    fi
+    if [ -n "${LDFLAGS:-}" ]; then
+      echo "LDFLAGS=$LDFLAGS"
     fi
   } >> "$GITHUB_ENV"
 fi

@@ -270,6 +270,12 @@ jobs:
           sudo apt-get update -o Acquire::Retries=5
           sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl file git tar unzip zip
 
+      - name: Install macOS prerequisites
+        if: ${{ steps.availability.outputs.enabled == 'true' && runner.os == 'macOS' }}
+        shell: bash
+        run: |
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+
       - name: Install Cangjie SDK and stdx
         id: sdk
         if: ${{ steps.availability.outputs.enabled == 'true' }}

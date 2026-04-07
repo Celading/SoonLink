@@ -12,6 +12,7 @@
   lisi = { git = "https://gitcode.com/cinyu/lisi" }
 
 [target.x86_64-w64-mingw32]
+  link-option = "-lcrypt32"
   [target.x86_64-w64-mingw32.bin-dependencies]
     path-option = ["${CANGJIE_STDX_PATH}/windows_x86_64_cjnative/static/stdx"]
   [target.x86_64-w64-mingw32-Deprecated.bin-dependencies]
