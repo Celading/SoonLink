@@ -41,6 +41,10 @@ public class DeviceMaster {
         server.setDeviceTrustState(deviceId, state)
     }
 
+    public func remember(deviceId: String): Device {
+        server.rememberDiscoveredDevice(deviceId)
+    }
+
     public func startPinPairing(deviceId: String): DevicePinPairingSession {
         server.startPinPairing(deviceId)
     }

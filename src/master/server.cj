@@ -13,21 +13,23 @@ import std.unicode.*
 
 public func getLocalIP(): String {
     if (let Some(explicitIP) <- getVariable("SOONLINK_LOCAL_IP")) {
-        if (explicitIP.size > 0) {
-            return explicitIP
+        let resolved = selectDiscoveryAdvertiseIp(explicitIP, Array<String>())
+        if (resolved.size > 0) {
+            return resolved
         }
     }
     try {
         let network = getNetworkInfo()
-        if (network.ips.size > 0) {
-            return network.ips[0]
+        let resolved = selectDiscoveryAdvertiseIp("", network.ips)
+        if (resolved.size > 0) {
+            return resolved
         }
     } catch (_: Exception) {}
     ""
 }
 
 public class CoreServer {
-    public let profile: ProductProfile
+    public let profile: RuntimeProfile
     public let config: AppConfig
     public let cryptoManager: CryptoManager
     public let fileManager: FileSystemManager
@@ -60,9 +62,9 @@ public class CoreServer {
     var runtimePrepared: Bool = false
     var consoleOutputEnabled: Bool = true
 
-    public init(config: AppConfig, profile!: ProductProfile = defaultProductProfile()) {
+    public init(config: AppConfig, profile!: RuntimeProfile = defaultRuntimeProfile()) {
         this.profile = profile
-        this.config = normalizeAppConfigForProfile(config, profile)
+        this.config = normalizeAppConfigForRuntime(config, profile)
         this.startTime = currentTimestamp()
 
         this.logger = LogManager(1000)
@@ -183,24 +185,17 @@ public class CoreServer {
     }
 
     func initLocalDevice(): Unit {
-        var hostname = getVariable("HOSTNAME") ?? getVariable("HOST") ?? ""
-        if (hostname.size == 0 || hostname == "unknown") {
-            hostname = "本机"
-        } else {
-            hostname = "${hostname}(本机)"
-        }
-
-        let localIP = getLocalIP()
-        let displayIP = if (localIP.size > 0) { localIP } else { "127.0.0.1" }
+        let displayIP = resolveDiscoveryAdvertiseIp()
 
         let localDevice = Device(
             id: "local",
-            name: hostname,
+            name: resolveLocalDeviceDisplayName(),
             deviceType: "local",
             ip: displayIP,
             port: Int64(config.webPort),
             online: true
         )
+        localDevice.remembered = true
         applyDefaultDeviceCapabilities(localDevice, profile)
         applyDefaultDeviceConnector(localDevice)
         applyDeviceTrustState(localDevice, Trusted, "runtime")
@@ -209,6 +204,51 @@ public class CoreServer {
         localRootDir = resolveLocalRootDir()
         fileManager.registerProvider("local", LocalFileSystem(localRootDir, consoleEnabled: consoleOutputEnabled))
         logger.logInfo("system", "本地设备已初始化", localDevice.name, "core/server")
+    }
+
+    func resolveNodeDisplayName(): String {
+        let explicit = (getVariable("SOONLINK_NODE_NAME") ?? "").trimAscii()
+        if (explicit.size > 0) {
+            return explicit
+        }
+
+        let hostname = (getVariable("HOSTNAME") ?? getVariable("HOST") ?? "").trimAscii()
+        if (hostname.size > 0 && hostname.toLower() != "unknown") {
+            return hostname
+        }
+
+        let fallback = config.nodeId.trimAscii()
+        if (fallback.size > 0) {
+            return fallback
+        }
+        "SoonLink Node"
+    }
+
+    func resolveLocalDeviceDisplayName(): String {
+        let base = resolveNodeDisplayName()
+        if (strContains(base, "(本机)")) {
+            return base
+        }
+        "${base}(本机)"
+    }
+
+    func buildDiscoverySelfRecord(): DeviceRegistryRecord {
+        let record = DeviceRegistryRecord()
+        record.id = config.nodeId
+        record.name = resolveNodeDisplayName()
+        record.deviceType = "node"
+        record.connectorType = "soonlink-http"
+        record.endpointScheme = "http"
+        record.endpointBasePath = ""
+        record.ip = resolveDiscoveryAdvertiseIp()
+        record.port = Int64(config.webPort)
+        record.online = true
+        record.remembered = true
+        record.lastSeen = currentTimestamp()
+        record.trustState = Trusted
+        record.trustSource = "runtime"
+        record.trustUpdatedAt = record.lastSeen
+        record
     }
 
     func resolveLocalRootDir(): String {
@@ -260,7 +300,7 @@ public class CoreServer {
         }
 
         if (enableBackgroundLoops) {
-            if (profile.supportsActiveDiscovery) {
+            if (profile.supportsActiveDiscovery && config.discoveryBroadcastEnabled) {
                 spawn { startHeartbeatLoop() }
             }
             if (profile.supportsRelay) {
@@ -288,7 +328,7 @@ public class CoreServer {
         discoveryFeature.setDeviceFoundCallback({ record: DeviceRegistryRecord =>
             upsertDiscoveredDevice(record, loadPersistedTrust: false)
         })
-        if (profile.supportsActiveDiscovery) {
+        if (profile.supportsPassiveDiscovery || profile.supportsActiveDiscovery) {
             discoveryFeature.start()
         }
 
@@ -303,15 +343,21 @@ public class CoreServer {
     }
 
     func startHeartbeatLoop(): Unit {
+        publishDiscoveryHeartbeat()
         while (true) {
             sleep(Duration.second * config.discoveryHeartbeatSeconds)
-            match (getDevice("local")) {
-                case Some(device) =>
-                    let record = deviceToRegistryRecord(device)
-                    discoveryFeature.publishHeartbeat(record)
-                case None => ()
-            }
+            publishDiscoveryHeartbeat()
         }
+    }
+
+    func publishDiscoveryHeartbeat(): Unit {
+        if (!profile.supportsActiveDiscovery || !config.discoveryBroadcastEnabled) {
+            return
+        }
+        if (config.nodeId.trimAscii().size == 0) {
+            return
+        }
+        discoveryFeature.publishHeartbeat(buildDiscoverySelfRecord())
     }
 
     func startCleanupTask(): Unit {
@@ -333,7 +379,7 @@ public class CoreServer {
     }
 
     func upsertDiscoveredDevice(record: DeviceRegistryRecord, loadPersistedTrust!: Bool = false): Unit {
-        if (record.id.size == 0 || record.id == "local") {
+        if (record.id.size == 0 || record.id == "local" || record.id == config.nodeId) {
             return
         }
 
@@ -342,7 +388,7 @@ public class CoreServer {
             device.name = record.id
         }
         if (device.deviceType.size == 0) {
-            device.deviceType = "remote"
+            device.deviceType = "node"
         }
         if (device.port == 0) {
             device.port = Int64(config.webPort)
@@ -350,13 +396,21 @@ public class CoreServer {
         device.online = true
         device.lastSeen = currentTimestamp()
         if (device.capability.size == 0) {
-            applyDefaultDeviceCapabilities(device, profile)
+            applyDiscoveredDeviceCapabilities(device)
         }
         applyDefaultDeviceEndpoint(device)
         applyDefaultDeviceConnector(device)
-        preserveDiscoveredTrust(device, loadPersistedTrust)
+        preserveDiscoveredState(device, loadPersistedTrust)
 
         registerDevice(device)
+    }
+
+    func applyDiscoveredDeviceCapabilities(device: Device): Unit {
+        if (device.capability.size > 0) {
+            return
+        }
+        device.capability.add("fs")
+        device.capability.add("transfer")
     }
 
     // CFM/P Master boundary: device domain
@@ -464,11 +518,31 @@ public class CoreServer {
                 device.online = true
                 device.lastSeen = currentTimestamp()
 
-                persistDeviceRecord(device)
+                if (device.remembered) {
+                    persistDeviceRecord(device)
+                }
                 return Some(device)
             }
         }
         None
+    }
+
+    public func rememberDiscoveredDevice(deviceId: String): Device {
+        let normalized = deviceId.trimAscii()
+        if (normalized.size == 0) {
+            throw Exception("设备ID不能为空")
+        }
+        if (normalized.toLower() == "local") {
+            throw Exception("local 设备由运行时保留，无需重复记住")
+        }
+
+        match (getDevice(normalized)) {
+            case Some(device) =>
+                persistDeviceRecord(device)
+                device
+            case None =>
+                throw Exception("设备不存在: ${normalized}")
+        }
     }
 
     public func getDevice(deviceId: String): ?Device {
@@ -574,6 +648,7 @@ public class CoreServer {
     }
 
     func persistDeviceRecord(device: Device): Unit {
+        device.remembered = true
         discoveryFeature.manualRegister(deviceToRegistryRecord(device))
     }
 
@@ -583,7 +658,7 @@ public class CoreServer {
         device.trustUpdatedAt = currentTimestamp()
     }
 
-    func preserveDiscoveredTrust(device: Device, loadPersistedTrust: Bool): Unit {
+    func preserveDiscoveredState(device: Device, loadPersistedTrust: Bool): Unit {
         var existing: ?Device = None
         synchronized(devicesMutex) {
             existing = devices.get(device.id)
@@ -591,10 +666,16 @@ public class CoreServer {
 
         match (existing) {
             case Some(current) =>
+                device.remembered = current.remembered
                 device.trustState = current.trustState
                 device.trustSource = current.trustSource
                 device.trustUpdatedAt = current.trustUpdatedAt
             case None =>
+                if (loadPersistedTrust || device.remembered) {
+                    device.remembered = true
+                } else {
+                    device.remembered = false
+                }
                 if (!loadPersistedTrust) {
                     device.trustState = Unknown
                     device.trustSource = "discovery"
@@ -643,8 +724,7 @@ public class CoreServer {
     }
 
     public func refreshLocalDeviceAddress(): String {
-        let current = getLocalIP()
-        let displayIP = if (current.size > 0) { current } else { "127.0.0.1" }
+        let displayIP = resolveDiscoveryAdvertiseIp()
         var changed = false
         var deviceSnapshot: ?Device = None
 
@@ -668,6 +748,17 @@ public class CoreServer {
         }
 
         displayIP
+    }
+
+    func resolveDiscoveryAdvertiseIp(): String {
+        let candidates = Array<String>(2, repeat: "")
+        candidates[0] = currentPrimaryIp()
+        candidates[1] = getLocalIP()
+        let resolved = selectDiscoveryAdvertiseIp(config.discoveryAdvertiseIp, candidates)
+        if (resolved.size > 0) {
+            return resolved
+        }
+        "127.0.0.1"
     }
 
     // CFM/P Master boundary: task domain
@@ -864,7 +955,7 @@ public class CoreServer {
         if (!profile.supportsPeerTransfer) {
             let result = PeerTransferResult()
             result.success = false
-            result.message = "peer transfer disabled in current edition"
+            result.message = "peer transfer unavailable in current runtime"
             return result
         }
         peerTransferFeature.acceptUpload(targetPath, peerId, token, payload)
@@ -874,7 +965,7 @@ public class CoreServer {
         if (!profile.supportsPeerTransfer) {
             let result = PeerDownloadPayload()
             result.result.success = false
-            result.result.message = "peer transfer disabled in current edition"
+            result.result.message = "peer transfer unavailable in current runtime"
             return result
         }
         peerTransferFeature.provideDownload(sourcePath, peerId, token)
@@ -884,7 +975,7 @@ public class CoreServer {
         if (!profile.supportsPeerTransfer) {
             let result = PeerTransferResult()
             result.success = false
-            result.message = "peer transfer disabled in current edition"
+            result.message = "peer transfer unavailable in current runtime"
             return result
         }
         peerTransferFeature.pullLocalToPath(sourcePath, targetPath)
@@ -1003,7 +1094,7 @@ public class CoreServer {
         if (!profile.supportsRelay) {
             let job = RelayJob()
             job.status = "disabled"
-            job.message = "relay disabled in current edition"
+            job.message = "relay unavailable in current runtime"
             job.targetDevice = targetDevice
             job.targetPath = targetPath
             job.fileName = fileName
@@ -1206,6 +1297,7 @@ public class CoreServer {
             case Some(device) =>
                 record.online = device.online
                 record.lastSeen = if (device.lastSeen > 0) { device.lastSeen } else { currentTimestamp() }
+                record.remembered = true
                 record.trustState = device.trustState
                 record.trustSource = device.trustSource
                 record.trustUpdatedAt = device.trustUpdatedAt
@@ -1214,6 +1306,7 @@ public class CoreServer {
                 }
             case None =>
                 record.online = false
+                record.remembered = true
                 record.lastSeen = if (record.lastSeen > 0) { record.lastSeen } else { currentTimestamp() }
                 record.trustState = Unknown
                 record.trustSource = "manual"

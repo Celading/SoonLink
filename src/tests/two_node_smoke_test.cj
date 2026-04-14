@@ -26,8 +26,10 @@ public class TwoNodeSmoke_test {
         let portB = UInt16(portSeed + 1)
 
         var cfgA = AppConfig()
+        cfgA.nodeId = "node-a-self"
         cfgA.listenAddr = "127.0.0.1:${portA}"
         cfgA.webPort = portA
+        cfgA.discoveryUdpPort = portSeed + 100
         cfgA.localRootDir = rootA
         cfgA.tempDir = "/tmp/${scope}_temp_a"
         cfgA.logDir = "/tmp/${scope}_logs_a"
@@ -35,16 +37,18 @@ public class TwoNodeSmoke_test {
         cfgA.enableMdns = false
 
         var cfgB = AppConfig()
+        cfgB.nodeId = "node-b-self"
         cfgB.listenAddr = "127.0.0.1:${portB}"
         cfgB.webPort = portB
+        cfgB.discoveryUdpPort = portSeed + 101
         cfgB.localRootDir = rootB
         cfgB.tempDir = "/tmp/${scope}_temp_b"
         cfgB.logDir = "/tmp/${scope}_logs_b"
         cfgB.deviceRegistryFile = "/tmp/${scope}_registry_b.json"
         cfgB.enableMdns = false
 
-        let serverA = CoreServer(cfgA, profile: coreProductProfile())
-        let serverB = CoreServer(cfgB, profile: coreProductProfile())
+        let serverA = CoreServer(cfgA, profile: defaultRuntimeProfile())
+        let serverB = CoreServer(cfgB, profile: defaultRuntimeProfile())
         serverA.setConsoleOutputEnabled(false)
         serverB.setConsoleOutputEnabled(false)
         let webA = WebServer(serverA, portA)

@@ -25,7 +25,7 @@ public class TransferDirectory_test {
         cfg.logDir = "/tmp/${scope}_logs"
         cfg.deviceRegistryFile = "/tmp/${scope}_registry.json"
 
-        let server = CoreServer(cfg, profile: coreProductProfile())
+        let server = CoreServer(cfg, profile: defaultRuntimeProfile())
         try {
             server.start()
             let task = server.createTransferTask("local", "local", "/source", "/copies")
@@ -56,7 +56,7 @@ public class TransferDirectory_test {
         cfg.logDir = "/tmp/${scope}_logs"
         cfg.deviceRegistryFile = "/tmp/${scope}_registry.json"
 
-        let server = CoreServer(cfg, profile: coreProductProfile())
+        let server = CoreServer(cfg, profile: defaultRuntimeProfile())
         try {
             server.start()
             let task = server.createTransferTask("local", "local", "/src/demo.txt", "/dest/demo.txt")
@@ -88,7 +88,7 @@ public class TransferDirectory_test {
         cfg.logDir = "/tmp/${scope}_logs"
         cfg.deviceRegistryFile = "/tmp/${scope}_registry.json"
 
-        let server = CoreServer(cfg, profile: coreProductProfile())
+        let server = CoreServer(cfg, profile: defaultRuntimeProfile())
         try {
             server.start()
             let task = server.createTransferTask("local", "local", "/source", "/copies")

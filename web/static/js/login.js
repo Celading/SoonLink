@@ -22,7 +22,7 @@ async function loadLoginContext() {
         console.error('加载登录上下文失败:', error);
         setText('login-mode-pill', '上下文读取失败');
         setText('login-summary', '当前无法读取访问上下文，请稍后重试。');
-        setText('login-detail', 'Core 版不会通过此入口为远程访问授予管理员权限。');
+        setText('login-detail', '当前版本不会通过此入口为远程访问授予管理员权限。');
     }
 }
 
@@ -36,13 +36,13 @@ function applyLoginContext(context) {
         : '当前访问来自远程设备，本期仅展示登录预留能力，不会提权。');
     setText('login-detail', isLocalAdmin
         ? '你可以直接返回主页或进入管理台，无需额外密码。'
-        : '后续可在这里接入密码、外部 Provider 或 Pro 版加密认证。');
+        : '后续可在这里接入密码或外部 Provider，但不会自动获得管理权限。');
 
     setText('login-access-mode', context.accessMode || '-');
     setText('login-is-local-admin', isLocalAdmin ? '是' : '否');
     setText('login-auth-policy', context.auth?.policy || '-');
     setText('login-auth-provider', context.auth?.provider || '-');
-    setText('login-auth-edition', context.auth?.edition || '-');
+    setText('login-runtime-label', context.product?.runtimeLabel || context.product?.displayName || context.product?.productName || 'SoonLink');
     setText(
         'login-network-origin',
         `${context.network?.resolvedIp || '-'} (client ${context.network?.clientIp || '-'})`

@@ -301,7 +301,7 @@ public class WebServer {
                 let html = renderTemplate("./web/views/login.html", [("Title", "SoonLink 登录入口")])
                 ctx.html(html)
             } catch (_: Exception) {
-                ctx.html("<h1>SoonLink 登录入口</h1><p>Core 版本仅提供能力占位，不启用远程提权。</p>")
+                ctx.html("<h1>SoonLink 登录入口</h1><p>当前运行态仅提供能力占位，不启用远程提权。</p>")
             }
         }, option: RouteOption()
             .withSummary("登录入口（能力预留）")
@@ -425,7 +425,7 @@ public class WebServer {
                     updated.securityMode = s.setSecurityMode(v)
                 }
             }
-            if (s.profile.supportsActiveDiscovery) {
+            if (s.profile.supportsMdnsDiscovery) {
                 if (let Some(v) <- parseJsonString(body, "enableMdns")) {
                     updated.enableMdns = v == "true"
                 }
@@ -433,6 +433,16 @@ public class WebServer {
             if (s.profile.supportsActiveDiscovery) {
                 if (let Some(v) <- parseJsonString(body, "discoveryUdpPort")) {
                     try { updated.discoveryUdpPort = Int64.parse(v) } catch (_: Exception) {}
+                }
+            }
+            if (s.profile.supportsActiveDiscovery) {
+                if (let Some(v) <- parseJsonString(body, "discoveryAdvertiseIp")) {
+                    updated.discoveryAdvertiseIp = v.trimAscii()
+                }
+            }
+            if (s.profile.supportsActiveDiscovery) {
+                if (let Some(v) <- parseJsonString(body, "discoveryBroadcastEnabled")) {
+                    updated.discoveryBroadcastEnabled = v == "true"
                 }
             }
             if (let Some(v) <- parseJsonString(body, "localAuthTrustProxyHeaders")) {
@@ -484,7 +494,7 @@ public class WebServer {
                 }
             }
 
-            updated = normalizeAppConfigForProfile(updated, s.profile)
+            updated = normalizeAppConfigForRuntime(updated, s.profile)
             saveAppConfig(updated)
 
             ctx.json(JsonObject()
@@ -834,6 +844,39 @@ public class WebServer {
             }
         }, option: RouteOption()
             .withSummary("更新设备授信状态")
+            .withTag("设备")
+            .withParam(ParamSpec("id", Path, description: "设备ID", required: true))
+        )
+
+        devices.post("/:id/remember", { ctx: Ctx =>
+            if (!requireLocalApiAdmin(ctx, s.config)) {
+                return
+            }
+
+            let deviceId = ctx.params("id").trimAscii()
+            if (deviceId.size == 0) {
+                ctx.status(400).json(JsonObject()
+                    .putBool("success", false)
+                    .put("error", "设备ID不能为空")
+                    .toString())
+                return
+            }
+
+            try {
+                let device = m.devices.remember(deviceId)
+                ctx.json(JsonObject()
+                    .putBool("success", true)
+                    .putObj("device", device.toJson())
+                    .put("message", "设备已记住")
+                    .toString())
+            } catch (e: Exception) {
+                ctx.status(400).json(JsonObject()
+                    .putBool("success", false)
+                    .put("error", e.message)
+                    .toString())
+            }
+        }, option: RouteOption()
+            .withSummary("记住已发现设备")
             .withTag("设备")
             .withParam(ParamSpec("id", Path, description: "设备ID", required: true))
         )
@@ -2205,11 +2248,10 @@ func buildSessionContextPayload(server: CoreServer, access: WebAccessContext): J
         .putBool("isLocalAdmin", access.isLocalAdmin)
         .put("accessMode", access.accessMode)
         .put("themeVariant", access.themeVariant)
-        .putObj("product", productProfileToJson(server.profile))
+        .putObj("product", runtimeProfileToJson(server.profile))
         .putObj("auth", JsonObject()
             .put("policy", "local_trust")
             .put("provider", auth.provider)
-            .put("edition", auth.edition)
             .putBool("supportsPassword", auth.supportsPassword)
             .putBool("passwordConfigured", auth.passwordConfigured)
             .putArr("capabilities", authCaps))
@@ -2219,18 +2261,18 @@ func buildSessionContextPayload(server: CoreServer, access: WebAccessContext): J
             .putBool("trustedProxyHeaders", server.config.localAuthTrustProxyHeaders))
 }
 
-func productProfileToJson(profile: ProductProfile): JsonObject {
+func runtimeProfileToJson(profile: RuntimeProfile): JsonObject {
     JsonObject()
-        .put("edition", profile.edition)
         .put("productName", profile.productName)
         .put("displayName", resolveRuntimeDisplayName(profile))
         .put("version", currentProductVersion())
-        .putObj("capabilities", productCapabilitiesToJson(profile))
-        .putArr("capabilityTags", productCapabilityTags(profile))
+        .putObj("capabilities", runtimeCapabilitiesToJson(profile))
+        .putArr("capabilityTags", runtimeCapabilityTags(profile))
 }
 
-func appConfigToJson(config: AppConfig, profile: ProductProfile): JsonObject {
+func appConfigToJson(config: AppConfig, profile: RuntimeProfile): JsonObject {
     let out = JsonObject()
+    out.put("nodeId", config.nodeId)
     out.put("listenAddr", config.listenAddr)
     out.putInt("webPort", Int64(config.webPort))
     out.put("tempDir", config.tempDir)
@@ -2240,11 +2282,10 @@ func appConfigToJson(config: AppConfig, profile: ProductProfile): JsonObject {
     out.put("logDir", config.logDir)
     out.put("localRootDir", config.localRootDir)
     out.putBool("localAuthTrustProxyHeaders", config.localAuthTrustProxyHeaders)
-    out.put("edition", profile.edition)
     out.put("productName", profile.productName)
     out.put("displayName", resolveRuntimeDisplayName(profile))
     out.put("version", currentProductVersion())
-    out.putObj("capabilities", productCapabilitiesToJson(profile))
+    out.putObj("capabilities", runtimeCapabilitiesToJson(profile))
     if (profile.supportsPeerTransfer) {
         out.put("securityMode", config.securityMode)
     }
@@ -2252,6 +2293,8 @@ func appConfigToJson(config: AppConfig, profile: ProductProfile): JsonObject {
         out.putInt("discoveryUdpPort", config.discoveryUdpPort)
         out.putBool("enableMdns", config.enableMdns)
         out.putInt("discoveryHeartbeatSeconds", config.discoveryHeartbeatSeconds)
+        out.put("discoveryAdvertiseIp", config.discoveryAdvertiseIp)
+        out.putBool("discoveryBroadcastEnabled", config.discoveryBroadcastEnabled)
     }
     if (profile.supportsRelay) {
         out.putBool("relayEnabled", config.relayEnabled)
@@ -2292,16 +2335,18 @@ func buildAdminSystemPayload(server: CoreServer, masters: MasterBundle): JsonObj
     let diskTotal = jsonObjectInt(disk, "total")
     let hostname = parseJsonString(system.toString(), "hostname") ?? "localhost"
     let primaryIp = parseJsonString(network.toString(), "primaryIp") ?? ""
+    let discovery = buildAdminDiscoveryPayload(server, primaryIp)
 
     JsonObject()
         .putBool("success", true)
-        .put("edition", server.profile.edition)
         .put("productName", server.profile.productName)
         .put("displayName", resolveRuntimeDisplayName(server.profile))
         .put("version", currentProductVersion())
-        .putObj("capabilities", productCapabilitiesToJson(server.profile))
+        .putObj("capabilities", runtimeCapabilitiesToJson(server.profile))
         .put("hostname", hostname)
         .put("primaryIp", primaryIp)
+        .put("nodeId", server.config.nodeId)
+        .putObj("discovery", discovery)
         .put("uptime", formatDurationHuman(server.uptimeSeconds()))
         .putInt("uptimeSeconds", server.uptimeSeconds())
         .put("cpu", "${roundPercent(cpuUsage)}%")
@@ -2315,6 +2360,93 @@ func buildAdminSystemPayload(server: CoreServer, masters: MasterBundle): JsonObj
         .putInt("devices", devices.size)
         .putInt("onlineDevices", onlineDevices)
         .putInt("logTotal", jsonObjectInt(logStats, "total"))
+}
+
+func buildAdminDiscoveryPayload(server: CoreServer, primaryIp: String): JsonObject {
+    let localDevice = server.getDevice("local")
+    let effectiveAdvertiseIp = resolveAdminDiscoveryEffectiveIp(server, primaryIp, localDevice)
+    let endpointHost = resolveAdminDiscoveryLocalEndpointHost(localDevice, effectiveAdvertiseIp, primaryIp)
+    let endpointPort = resolveAdminDiscoveryLocalEndpointPort(server, localDevice)
+    let mode = if (server.profile.supportsActiveDiscovery) { "active" } else { "passive" }
+    let endpointText = if (endpointHost.size > 0) { "${endpointHost}:${endpointPort}" } else { "-" }
+
+    let out = JsonObject()
+        .put("mode", mode)
+        .put("nodeId", server.config.nodeId)
+        .putBool("supportsActiveDiscovery", server.profile.supportsActiveDiscovery)
+        .putBool("supportsMdnsDiscovery", server.profile.supportsMdnsDiscovery)
+        .putBool("udpBroadcastEnabled", server.config.discoveryBroadcastEnabled)
+        .putBool("mdnsEnabled", server.config.enableMdns)
+        .putInt("udpPort", server.config.discoveryUdpPort)
+        .putInt("heartbeatSeconds", server.config.discoveryHeartbeatSeconds)
+        .put("configuredAdvertiseIp", server.config.discoveryAdvertiseIp)
+        .put("effectiveAdvertiseIp", effectiveAdvertiseIp)
+        .put("primaryIp", primaryIp)
+        .put("localEndpoint", endpointText)
+        .putBool("rememberRequiresConfirmation", true)
+        .put("registerDeviceCommand", buildAdminRegisterDeviceCommand(server.config.nodeId, endpointHost, endpointPort))
+        .putBool("discoverable", server.profile.supportsActiveDiscovery &&
+            (server.config.discoveryBroadcastEnabled || server.config.enableMdns))
+    match (localDevice) {
+        case Some(device) => out.putObj("localDevice", device.toJson())
+        case None => ()
+    }
+    out
+}
+
+func resolveAdminDiscoveryEffectiveIp(server: CoreServer, primaryIp: String, localDevice: ?Device): String {
+    match (localDevice) {
+        case Some(device) =>
+            let ip = device.ip.trimAscii()
+            if (ip.size > 0) {
+                return ip
+            }
+        case None => ()
+    }
+    let configured = server.config.discoveryAdvertiseIp.trimAscii()
+    if (configured.size > 0) {
+        return configured
+    }
+    let primary = primaryIp.trimAscii()
+    if (primary.size > 0) {
+        return primary
+    }
+    "127.0.0.1"
+}
+
+func resolveAdminDiscoveryLocalEndpointHost(localDevice: ?Device, effectiveAdvertiseIp: String, primaryIp: String): String {
+    match (localDevice) {
+        case Some(device) =>
+            let ip = device.ip.trimAscii()
+            if (ip.size > 0) {
+                return ip
+            }
+        case None => ()
+    }
+    if (effectiveAdvertiseIp.trimAscii().size > 0) {
+        return effectiveAdvertiseIp.trimAscii()
+    }
+    primaryIp.trimAscii()
+}
+
+func resolveAdminDiscoveryLocalEndpointPort(server: CoreServer, localDevice: ?Device): Int64 {
+    match (localDevice) {
+        case Some(device) =>
+            if (device.port > 0) {
+                return device.port
+            }
+        case None => ()
+    }
+    Int64(server.config.webPort)
+}
+
+func buildAdminRegisterDeviceCommand(nodeId: String, endpointHost: String, endpointPort: Int64): String {
+    let normalizedId = nodeId.trimAscii()
+    let normalizedHost = endpointHost.trimAscii()
+    if (normalizedId.size == 0 || normalizedHost.size == 0 || endpointPort <= 0) {
+        return ""
+    }
+    "soonlnk register-device --id ${normalizedId} --ip ${normalizedHost} --port ${endpointPort} --connector soonlink-http --scheme http"
 }
 
 func buildAdminDrivesPayload(server: CoreServer): JsonObject {

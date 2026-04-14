@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
 </head>
-<body class="soonlink-app" data-role-variant="remote" data-product-edition="core" data-time-mode="light">
+<body class="soonlink-app" data-role-variant="remote" data-product-line="soonlink" data-time-mode="light">
     <div class="app-shell">
         <header class="app-header" id="main-app-header">
             <div class="app-header-brand">
@@ -20,7 +20,7 @@
             <div class="app-header-actions">
                 <div class="app-header-context" id="app-header-context">
                     <span class="pill" id="mode-pill">普通访问</span>
-                    <span class="pill" id="edition-pill">CORE</span>
+                    <span class="pill" id="runtime-pill">SoonLink</span>
                 </div>
                 <div class="app-header-controls">
                     <button type="button" class="btn btn-sm btn-outline-secondary theme-switch-btn pd-fl-cc pd-asr1" id="theme-toggle-btn" title="切换主题模式">
@@ -122,6 +122,15 @@
                                 <label for="manual-device-base-path" class="form-label">端点基础路径</label>
                                 <input class="form-control" id="manual-device-base-path" placeholder="/soonlink / gateway/node">
                                 <div class="form-text">用于反向代理或子路径部署，例如 `https://node.example.com/soonlink`。</div>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <label for="manual-device-import-command" class="form-label">从登记命令快速导入</label>
+                            <textarea class="form-control form-control-sm" id="manual-device-import-command" rows="2" spellcheck="false" placeholder="soonlnk register-device --id office-node --ip 10.0.0.24 --port 19090 --connector soonlink-http --scheme http"></textarea>
+                            <div class="form-text">把另一台设备管理页给出的手动登记命令粘贴到这里，自动解析到下方表单。</div>
+                            <div class="d-flex flex-wrap gap-2 mt-2">
+                                <button class="btn btn-sm btn-outline-primary" type="button" id="manual-device-import-apply-btn">解析到表单</button>
+                                <button class="btn btn-sm btn-outline-secondary" type="button" id="manual-device-import-paste-btn">读取剪贴板并解析</button>
                             </div>
                         </div>
                         <div class="manual-device-status mt-3" id="manual-device-status">
@@ -435,6 +444,11 @@
                                 <label for="admin-max-connections" class="form-label">最大连接数</label>
                                 <input type="number" class="form-control" id="admin-max-connections">
                             </div>
+                            <div class="col-md-4">
+                                <label for="admin-node-id" class="form-label">节点ID</label>
+                                <input type="text" class="form-control" id="admin-node-id" readonly>
+                                <div class="form-text">用于稳定标识当前节点，便于去重与手动登记。</div>
+                            </div>
                             <div class="col-md-4" data-capability="peerTransfer">
                                 <label for="admin-security-mode" class="form-label">安全模式</label>
                                 <select class="form-select" id="admin-security-mode">
@@ -445,6 +459,47 @@
                             <div class="col-md-4" data-capability="activeDiscovery">
                                 <label for="admin-discovery-udp-port" class="form-label">UDP发现端口</label>
                                 <input type="number" class="form-control" id="admin-discovery-udp-port">
+                            </div>
+                            <div class="col-md-8" data-capability="activeDiscovery">
+                                <label for="admin-discovery-advertise-ip" class="form-label">发现通告IP</label>
+                                <input type="text" class="form-control" id="admin-discovery-advertise-ip" placeholder="留空时自动优先选择局域网 IPv4">
+                                <div class="form-text">留空时按环境自动选择地址；Core 默认通过 UDP 广播做简易互发现。</div>
+                            </div>
+                            <div class="col-12">
+                                <div class="form-text" id="admin-discovery-mode-hint">Core 默认走 UDP 广播简易互发现，发现到的设备需手动记住后才会登记。</div>
+                            </div>
+                            <div class="col-12" id="admin-active-discovery-disabled-panel" style="display: none;">
+                                <div class="border rounded-3 p-3 bg-body-tertiary">
+                                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+                                        <div>
+                                            <div class="fw-semibold">主动发现配置</div>
+                                            <div class="form-text mt-1">当前运行态未开放主动发现配置项时，请在上方发现状态卡复制本机端点或登记命令，发给其他设备手动接入。</div>
+                                        </div>
+                                        <span class="badge text-bg-secondary">当前运行态固定关闭</span>
+                                    </div>
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-md-4">
+                                            <label class="form-label">UDP发现端口</label>
+                                            <input type="number" class="form-control" value="19090" disabled>
+                                            <div class="form-text">当前运行态未开放主动发现端口配置。</div>
+                                        </div>
+                                        <div class="col-md-8">
+                                            <label class="form-label">发现通告IP</label>
+                                            <input type="text" class="form-control" value="通过本机端点与登记命令对外提供" disabled>
+                                            <div class="form-text">系统仍会自动整理本机端点，供其他设备手动登记。</div>
+                                        </div>
+                                        <div class="col-12 d-flex flex-wrap gap-3">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" disabled>
+                                                <label class="form-check-label">启用 mDNS</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" disabled>
+                                                <label class="form-check-label">允许 UDP 广播被发现</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="col-md-4" data-capability="relay">
                                 <label for="admin-relay-retention-hours" class="form-label">中继保留时长（小时）</label>
@@ -486,9 +541,13 @@
                             </div>
                         </div>
                         <div class="mt-3 d-flex flex-wrap gap-3">
-                            <div class="form-check" data-capability="activeDiscovery">
+                            <div class="form-check" data-capability="mdnsDiscovery">
                                 <input class="form-check-input" type="checkbox" id="admin-enable-mdns">
                                 <label class="form-check-label" for="admin-enable-mdns">启用 mDNS</label>
+                            </div>
+                            <div class="form-check" data-capability="activeDiscovery">
+                                <input class="form-check-input" type="checkbox" id="admin-discovery-broadcast-enabled">
+                                <label class="form-check-label" for="admin-discovery-broadcast-enabled">允许 UDP 广播被发现</label>
                             </div>
                             <div class="form-check">
                                 <input class="form-check-input" type="checkbox" id="admin-local-auth-trust-proxy-headers">
@@ -503,6 +562,62 @@
                             <button type="submit" class="btn btn-primary">保存管理配置</button>
                         </div>
                     </form>
+                </div>
+                <div class="app-card mt-3">
+                    <div class="card-head">
+                        <h2>发现状态</h2>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" id="admin-refresh-system">
+                            刷新状态
+                        </button>
+                    </div>
+                    <div class="mt-3 d-flex flex-wrap gap-2">
+                        <span class="stat-chip" id="admin-discovery-mode-chip">简易互发现</span>
+                        <span class="stat-chip" id="admin-discovery-broadcast-chip">UDP广播关闭</span>
+                        <span class="stat-chip" id="admin-discovery-mdns-chip">mDNS关闭</span>
+                    </div>
+                    <div class="row g-3 mt-1">
+                        <div class="col-md-4">
+                            <div class="small text-muted">节点ID</div>
+                            <div class="fw-semibold" id="admin-status-node-id">-</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="small text-muted">实际通告IP</div>
+                            <div class="fw-semibold" id="admin-status-advertise-ip">-</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="small text-muted">本机主IP</div>
+                            <div class="fw-semibold" id="admin-status-primary-ip">-</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="small text-muted">本机发现端点</div>
+                            <div class="fw-semibold" id="admin-status-local-endpoint">-</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="small text-muted">手动通告IP</div>
+                            <div class="fw-semibold" id="admin-status-configured-advertise-ip">自动</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="small text-muted">发现心跳</div>
+                            <div class="fw-semibold" id="admin-status-heartbeat">-</div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <div class="small text-muted">手动登记样板</div>
+                        <textarea class="form-control form-control-sm mt-2" id="admin-status-register-template" rows="3" readonly spellcheck="false">等待状态加载后生成手动登记命令...</textarea>
+                        <div class="d-flex flex-wrap gap-2 mt-2">
+                            <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="admin-copy-local-endpoint">
+                                <i class="bi bi-copy me-1"></i>复制本机端点
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="admin-copy-node-id">
+                                <i class="bi bi-upc-scan me-1"></i>复制节点ID
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary pd-fl-cc" type="button" id="admin-copy-register-template">
+                                <i class="bi bi-terminal me-1"></i>复制登记命令
+                            </button>
+                        </div>
+                        <div class="form-text mt-2" id="admin-status-register-note">在另一台设备执行模板命令即可手动登记当前节点。</div>
+                    </div>
+                    <div class="form-text mt-3" id="admin-status-discovery-note">Core 默认通过 UDP 广播对外可发现，但发现结果仍需手动记住后才会登记。</div>
                 </div>
                 <div class="app-card mt-3">
                     <div class="card-head">

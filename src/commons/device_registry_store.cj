@@ -13,6 +13,7 @@ public class DeviceRegistryRecord {
     public var ip: String = ""
     public var port: Int64 = 0
     public var online: Bool = false
+    public var remembered: Bool = true
     public var lastSeen: Int64 = 0
     public var trustState: DeviceTrustState = Unknown
     public var trustSource: String = ""
@@ -33,6 +34,7 @@ public class DeviceRegistryRecord {
             .put("ip", ip)
             .putInt("port", port)
             .putBool("online", online)
+            .putBool("remembered", remembered)
             .putInt("lastSeen", lastSeen)
             .putObj("endpoint", endpoint.toJson())
             .put("trustState", deviceTrustStateToString(trustState))
@@ -96,6 +98,8 @@ public class JsonDeviceRegistryStore <: DeviceRegistryStore {
 
             let onlineStr = parseJsonString(objRaw, "online") ?? "false"
             record.online = onlineStr == "true"
+            let rememberedStr = parseJsonString(objRaw, "remembered") ?? "true"
+            record.remembered = rememberedStr == "true"
 
             let lastSeenStr = parseJsonString(objRaw, "lastSeen") ?? "0"
             try {
@@ -192,6 +196,7 @@ public func deviceToRegistryRecord(device: Device): DeviceRegistryRecord {
     record.ip = device.ip
     record.port = device.port
     record.online = device.online
+    record.remembered = device.remembered
     record.lastSeen = device.lastSeen
     record.trustState = device.trustState
     record.trustSource = device.trustSource
@@ -210,6 +215,7 @@ public func registryRecordToDevice(record: DeviceRegistryRecord): Device {
     device.ip = record.ip
     device.port = record.port
     device.online = record.online
+    device.remembered = record.remembered
     device.lastSeen = record.lastSeen
     device.trustState = record.trustState
     device.trustSource = record.trustSource

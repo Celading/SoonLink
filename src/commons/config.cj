@@ -6,6 +6,7 @@ import std.env.{getVariable, getHomeDirectory}
 import std.unicode.*
 
 public struct AppConfig {
+    public var nodeId: String = ""
     public var listenAddr: String = ":8080"
     public var webPort: UInt16 = 8081
     public var tempDir: String = "/tmp/soonlink"
@@ -21,8 +22,10 @@ public struct AppConfig {
 
     public var securityMode: String = "plain"
     public var discoveryUdpPort: Int64 = 19090
-    public var enableMdns: Bool = true
+    public var enableMdns: Bool = false
     public var discoveryHeartbeatSeconds: Int64 = 30
+    public var discoveryAdvertiseIp: String = ""
+    public var discoveryBroadcastEnabled: Bool = true
     public var localAuthTrustProxyHeaders: Bool = false
     public var relayEnabled: Bool = true
     public var relayCacheDir: String = "./cache/relay"
@@ -35,6 +38,7 @@ public struct AppConfig {
     public var whitelistTomlFile: String = "./config/whitelist.toml"
 
     public init(
+        nodeId!: String = "",
         listenAddr!: String = ":8080",
         webPort!: UInt16 = 8081,
         tempDir!: String = "/tmp/soonlink",
@@ -48,8 +52,10 @@ public struct AppConfig {
         localRootDir!: String = "",
         securityMode!: String = "plain",
         discoveryUdpPort!: Int64 = 19090,
-        enableMdns!: Bool = true,
+        enableMdns!: Bool = false,
         discoveryHeartbeatSeconds!: Int64 = 30,
+        discoveryAdvertiseIp!: String = "",
+        discoveryBroadcastEnabled!: Bool = true,
         localAuthTrustProxyHeaders!: Bool = false,
         relayEnabled!: Bool = true,
         relayCacheDir!: String = "./cache/relay",
@@ -61,6 +67,7 @@ public struct AppConfig {
         favoritesTomlFile!: String = "./config/favorites.toml",
         whitelistTomlFile!: String = "./config/whitelist.toml"
     ) {
+        this.nodeId = nodeId
         this.listenAddr = listenAddr
         this.webPort = webPort
         this.tempDir = tempDir
@@ -76,6 +83,8 @@ public struct AppConfig {
         this.discoveryUdpPort = discoveryUdpPort
         this.enableMdns = enableMdns
         this.discoveryHeartbeatSeconds = discoveryHeartbeatSeconds
+        this.discoveryAdvertiseIp = discoveryAdvertiseIp
+        this.discoveryBroadcastEnabled = discoveryBroadcastEnabled
         this.localAuthTrustProxyHeaders = localAuthTrustProxyHeaders
         this.relayEnabled = relayEnabled
         this.relayCacheDir = relayCacheDir
@@ -123,7 +132,7 @@ public func loadAppConfigWithConsole(commandLine: Array<String>, consoleEnabled!
     if (consoleEnabled) {
         println(
             "配置加载完成 - Web端口: ${config.webPort}, 临时目录: ${config.tempDir}, 最大连接数: ${config.maxConnections}, " +
-            "安全模式: ${config.securityMode}, 自动发现端口: ${config.discoveryUdpPort}, 根目录: ${config.localRootDir}, 配置文件: ${config.configFile}"
+            "安全模式: ${config.securityMode}, 节点ID: ${config.nodeId}, 通告IP: ${config.discoveryAdvertiseIp}, 自动发现端口: ${config.discoveryUdpPort}, 根目录: ${config.localRootDir}, 配置文件: ${config.configFile}"
         )
     }
 
@@ -132,6 +141,7 @@ public func loadAppConfigWithConsole(commandLine: Array<String>, consoleEnabled!
 
 public func saveAppConfig(config: AppConfig): Unit {
     let values = HashMap<String, String>()
+    values.add("node_id", config.nodeId)
     values.add("listen_addr", config.listenAddr)
     values.add("web_port", "${config.webPort}")
     values.add("temp_dir", config.tempDir)
@@ -146,6 +156,8 @@ public func saveAppConfig(config: AppConfig): Unit {
     values.add("discovery_udp_port", "${config.discoveryUdpPort}")
     values.add("enable_mdns", if (config.enableMdns) { "true" } else { "false" })
     values.add("discovery_heartbeat_seconds", "${config.discoveryHeartbeatSeconds}")
+    values.add("discovery_advertise_ip", config.discoveryAdvertiseIp)
+    values.add("discovery_broadcast_enabled", if (config.discoveryBroadcastEnabled) { "true" } else { "false" })
     values.add("local_auth_trust_proxy_headers", if (config.localAuthTrustProxyHeaders) { "true" } else { "false" })
     values.add("relay_enabled", if (config.relayEnabled) { "true" } else { "false" })
     values.add("relay_cache_dir", config.relayCacheDir)
@@ -163,6 +175,7 @@ public func saveAppConfig(config: AppConfig): Unit {
 func applyTomlConfig(config: AppConfig, values: HashMap<String, String>): AppConfig {
     var out = config
 
+    out.nodeId = values.get("node_id") ?? out.nodeId
     out.listenAddr = values.get("listen_addr") ?? out.listenAddr
     out.tempDir = values.get("temp_dir") ?? out.tempDir
     out.encryptionKey = values.get("encryption_key") ?? out.encryptionKey
@@ -172,6 +185,7 @@ func applyTomlConfig(config: AppConfig, values: HashMap<String, String>): AppCon
     out.logDir = values.get("log_dir") ?? out.logDir
     out.localRootDir = values.get("local_root_dir") ?? out.localRootDir
     out.securityMode = values.get("security_mode") ?? out.securityMode
+    out.discoveryAdvertiseIp = values.get("discovery_advertise_ip") ?? out.discoveryAdvertiseIp
     out.relayCacheDir = values.get("relay_cache_dir") ?? out.relayCacheDir
     out.relayLimitMode = values.get("relay_limit_mode") ?? out.relayLimitMode
     out.favoritesStoreMode = values.get("favorites_store_mode") ?? out.favoritesStoreMode
@@ -192,6 +206,9 @@ func applyTomlConfig(config: AppConfig, values: HashMap<String, String>): AppCon
     }
     if (let Some(v) <- values.get("discovery_heartbeat_seconds")) {
         out.discoveryHeartbeatSeconds = parseIntOrDefault(v, out.discoveryHeartbeatSeconds)
+    }
+    if (let Some(v) <- values.get("discovery_broadcast_enabled")) {
+        out.discoveryBroadcastEnabled = parseBoolOrDefault(v, out.discoveryBroadcastEnabled)
     }
     if (let Some(v) <- values.get("local_auth_trust_proxy_headers")) {
         out.localAuthTrustProxyHeaders = parseBoolOrDefault(v, out.localAuthTrustProxyHeaders)
@@ -215,6 +232,7 @@ func applyTomlConfig(config: AppConfig, values: HashMap<String, String>): AppCon
 func applyEnvOverrides(config: AppConfig): AppConfig {
     var out = config
 
+    out.nodeId = getEnvStr("SOONLINK_NODE_ID", out.nodeId)
     out.listenAddr = getEnvStr("SOONLINK_LISTEN_ADDR", out.listenAddr)
     out.webPort = UInt16(getEnvInt("SOONLINK_WEB_PORT", Int64(out.webPort)))
     out.tempDir = getEnvStr("SOONLINK_TEMP_DIR", out.tempDir)
@@ -229,6 +247,8 @@ func applyEnvOverrides(config: AppConfig): AppConfig {
     out.discoveryUdpPort = getEnvInt("SOONLINK_DISCOVERY_UDP_PORT", out.discoveryUdpPort)
     out.enableMdns = getEnvBool("SOONLINK_ENABLE_MDNS", out.enableMdns)
     out.discoveryHeartbeatSeconds = getEnvInt("SOONLINK_DISCOVERY_HEARTBEAT_SECONDS", out.discoveryHeartbeatSeconds)
+    out.discoveryAdvertiseIp = getEnvStr("SOONLINK_DISCOVERY_ADVERTISE_IP", out.discoveryAdvertiseIp)
+    out.discoveryBroadcastEnabled = getEnvBool("SOONLINK_DISCOVERY_BROADCAST_ENABLED", out.discoveryBroadcastEnabled)
     out.localAuthTrustProxyHeaders = getEnvBool("SOONLINK_LOCAL_AUTH_TRUST_PROXY_HEADERS", out.localAuthTrustProxyHeaders)
     out.relayEnabled = getEnvBool("SOONLINK_RELAY_ENABLED", out.relayEnabled)
     out.relayCacheDir = getEnvStr("SOONLINK_RELAY_CACHE_DIR", out.relayCacheDir)
@@ -246,6 +266,9 @@ func applyEnvOverrides(config: AppConfig): AppConfig {
 func applyArgOverrides(config: AppConfig, args: Array<String>): AppConfig {
     var out = config
 
+    if (let Some(v) <- findArgValue(args, "--node-id", "")) {
+        out.nodeId = v
+    }
     if (let Some(v) <- findArgValue(args, "--listen", "-l")) {
         out.listenAddr = v
     }
@@ -267,6 +290,12 @@ func applyArgOverrides(config: AppConfig, args: Array<String>): AppConfig {
     if (let Some(v) <- findArgValue(args, "--security-mode", "")) {
         out.securityMode = v
     }
+    if (let Some(v) <- findArgValue(args, "--discovery-port", "--discovery-udp-port")) {
+        out.discoveryUdpPort = parseIntOrDefault(v, out.discoveryUdpPort)
+    }
+    if (let Some(v) <- findArgValue(args, "--advertise-ip", "")) {
+        out.discoveryAdvertiseIp = v
+    }
     if (let Some(v) <- findArgValue(args, "--max-connections", "")) {
         out.maxConnections = parseIntOrDefault(v, out.maxConnections)
     }
@@ -278,6 +307,12 @@ func applyArgOverrides(config: AppConfig, args: Array<String>): AppConfig {
     }
     if (containsExactArg(args, "--disable-mdns")) {
         out.enableMdns = false
+    }
+    if (containsExactArg(args, "--enable-discovery-broadcast")) {
+        out.discoveryBroadcastEnabled = true
+    }
+    if (containsExactArg(args, "--disable-discovery-broadcast")) {
+        out.discoveryBroadcastEnabled = false
     }
     if (containsExactArg(args, "--trust-proxy-headers")) {
         out.localAuthTrustProxyHeaders = true
@@ -298,7 +333,68 @@ func finalizeAppConfig(config: AppConfig): AppConfig {
             out.localRootDir = getEnvStr("HOME", "/tmp")
         }
     }
+    if (out.nodeId.trimAscii().size == 0) {
+        out.nodeId = generateNodeId(out)
+    }
     out
+}
+
+func generateNodeId(config: AppConfig): String {
+    let rawHost = getEnvStr("HOSTNAME", getEnvStr("HOST", "soonlink"))
+    let host = normalizeNodeToken(rawHost)
+    let fingerprint = stableNodeFingerprint("${config.configFile}|${config.localRootDir}|${config.webPort}")
+    "node-${host}-${config.webPort}-${fingerprint}"
+}
+
+func normalizeNodeToken(raw: String): String {
+    let normalized = raw.trimAscii().toLower()
+    if (normalized.size == 0 || normalized == "unknown") {
+        return "soonlink"
+    }
+
+    var out = ""
+    var pendingDash = false
+    for (ch in normalized.toRuneArray()) {
+        if ((ch >= r'a' && ch <= r'z') || (ch >= r'0' && ch <= r'9')) {
+            if (pendingDash && out.size > 0) {
+                out += "-"
+            }
+            out += ch.toString()
+            pendingDash = false
+        } else {
+            pendingDash = out.size > 0
+        }
+    }
+    if (out.size == 0) {
+        return "soonlink"
+    }
+    out
+}
+
+func stableNodeFingerprint(raw: String): String {
+    let digits = "0123456789abcdef".toRuneArray()
+    var acc: Int64 = 17
+    for (ch in raw.toRuneArray()) {
+        acc = (acc * 131 + Int64(UInt32(ch))) % 16777215
+    }
+    if (acc < 0) {
+        acc = -acc
+    }
+
+    let out = Array<String>(6, repeat: "0")
+    var value = acc
+    var i: Int64 = 5
+    while (i >= 0) {
+        out[i] = digits[value % 16].toString()
+        value /= 16
+        i -= 1
+    }
+
+    var result = ""
+    for (part in out) {
+        result += part
+    }
+    result
 }
 
 func normalizeCommandLine(commandLine: Array<String>): Array<String> {

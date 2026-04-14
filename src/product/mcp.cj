@@ -6,7 +6,7 @@ import std.fs.{File, OpenMode}
 import std.convert.*
 import std.unicode.*
 
-public func runMcpServer(config: AppConfig, profile!: ProductProfile = resolveProductProfile()): Int64 {
+public func runMcpServer(config: AppConfig, profile!: RuntimeProfile = currentRuntimeProfile()): Int64 {
     let runtime = AutomationRuntime(config, profile: profile)
     let stdinFile = File("/dev/stdin", OpenMode.Read)
     let stdoutFile = File("/dev/stdout", OpenMode.Write)
@@ -107,7 +107,7 @@ func buildJsonRpcError(rawId: String, code: Int64, message: String): String {
         .toString()
 }
 
-func buildMcpInitializeResult(profile: ProductProfile): String {
+func buildMcpInitializeResult(profile: RuntimeProfile): String {
     let version = resolveProductVersion(GetData.GetDataClass.ModuleVer())
     JsonObject()
         .put("protocolVersion", "2024-11-05")
@@ -123,7 +123,7 @@ func buildMcpInitializeResult(profile: ProductProfile): String {
         .toString()
 }
 
-func buildMcpToolsListResult(profile: ProductProfile): String {
+func buildMcpToolsListResult(profile: RuntimeProfile): String {
     let tools = JsonArray()
     tools.addObj(buildMcpToolSpec(
         "soonlink_status",
@@ -132,7 +132,7 @@ func buildMcpToolsListResult(profile: ProductProfile): String {
     ))
     tools.addObj(buildMcpToolSpec(
         "soonlink_capabilities",
-        "${profile.productName} edition capability map and tags",
+        "${profile.productName} runtime capability map and tags",
         "{\"type\":\"object\",\"additionalProperties\":false}"
     ))
     tools.addObj(buildMcpToolSpec(
@@ -158,6 +158,11 @@ func buildMcpToolsListResult(profile: ProductProfile): String {
     tools.addObj(buildMcpToolSpec(
         "soonlink_remove_device",
         "Remove one manual SoonLink device endpoint by id",
+        "{\"type\":\"object\",\"properties\":{\"deviceId\":{\"type\":\"string\"}},\"required\":[\"deviceId\"],\"additionalProperties\":false}"
+    ))
+    tools.addObj(buildMcpToolSpec(
+        "soonlink_remember_device",
+        "Remember one discovered SoonLink device so it stays registered after restart",
         "{\"type\":\"object\",\"properties\":{\"deviceId\":{\"type\":\"string\"}},\"required\":[\"deviceId\"],\"additionalProperties\":false}"
     ))
     tools.addObj(buildMcpToolSpec(
@@ -219,9 +224,8 @@ func buildMcpToolCallResult(runtime: AutomationRuntime, requestBody: String): St
         case "soonlink_capabilities" =>
             JsonObject()
                 .putBool("success", true)
-                .put("edition", runtime.profile.edition)
-                .putObj("capabilities", productCapabilitiesToJson(runtime.profile))
-                .putArr("capabilityTags", productCapabilityTags(runtime.profile))
+                .putObj("capabilities", runtimeCapabilitiesToJson(runtime.profile))
+                .putArr("capabilityTags", runtimeCapabilityTags(runtime.profile))
                 .toString()
         case "soonlink_list_devices" =>
             buildDevicesPayload(runtime, parseJsonString(requestBody, "deviceId") ?? "")
@@ -233,6 +237,8 @@ func buildMcpToolCallResult(runtime: AutomationRuntime, requestBody: String): St
             buildUpsertDevicePayload(runtime, buildMcpDeviceRecord(requestBody, Int64(runtime.config.webPort)))
         case "soonlink_remove_device" =>
             buildRemoveDevicePayload(runtime, parseJsonString(requestBody, "deviceId") ?? "")
+        case "soonlink_remember_device" =>
+            buildRememberDevicePayload(runtime, parseJsonString(requestBody, "deviceId") ?? "")
         case "soonlink_set_device_trust" =>
             buildDeviceTrustPayload(
                 runtime,

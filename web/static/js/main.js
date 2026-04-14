@@ -5,11 +5,12 @@ const APP_STATE = {
         themeVariant: 'remote',
     },
     productContext: {
-        edition: 'core',
+        runtimeLabel: 'SoonLink',
         productName: 'SoonLink',
         capabilities: {
             passiveDiscovery: true,
-            activeDiscovery: false,
+            activeDiscovery: true,
+            mdnsDiscovery: false,
             peerTransfer: false,
             relay: false,
             whitelist: false,
@@ -44,6 +45,7 @@ const APP_STATE = {
     relayUiTimer: null,
     transferSource: null,
     transferPreview: null,
+    adminSystemSummary: null,
     manualDeviceEditingId: '',
     fileListMeta: {
         loaded: 0,
@@ -168,11 +170,12 @@ function parseInitialUrlState() {
 
 function defaultProductContext() {
     return {
-        edition: 'core',
+        runtimeLabel: 'SoonLink',
         productName: 'SoonLink',
         capabilities: {
             passiveDiscovery: true,
-            activeDiscovery: false,
+            activeDiscovery: true,
+            mdnsDiscovery: false,
             peerTransfer: false,
             relay: false,
             whitelist: false,
@@ -190,8 +193,8 @@ function normalizeProductContext(product) {
     };
 
     return {
-        edition: product?.edition || defaults.edition,
-        productName: product?.productName || defaults.productName,
+        runtimeLabel: product?.runtimeLabel || product?.displayName || product?.productName || defaults.runtimeLabel,
+        productName: product?.productName || product?.displayName || defaults.productName,
         capabilities,
     };
 }
@@ -296,7 +299,7 @@ function buildEndpointOrigin(scheme, host, port, basePath) {
 function buildEndpointInfo(source = {}, connectorType = guessConnectorType(source)) {
     const endpoint = source?.endpoint || {};
     const host = String(endpoint.host ?? source?.ip ?? '').trim();
-    const port = Number(endpoint.port ?? source?.port || 0);
+    const port = Number(endpoint.port ?? source?.port ?? 0);
     const basePath = normalizeEndpointBasePathValue(endpoint.basePath ?? source?.endpointBasePath ?? '');
     const scheme = normalizeEndpointSchemeValue(endpoint.scheme ?? source?.endpointScheme ?? '', connectorType);
     const origin = String(endpoint.origin || '').trim() || buildEndpointOrigin(scheme, host, port, basePath);
@@ -460,6 +463,10 @@ function getDeviceById(deviceId) {
     return APP_STATE.allDevices.find((item) => item.id === deviceId) || null;
 }
 
+function isRememberedDevice(device) {
+    return device?.remembered !== false;
+}
+
 function getDeviceTrustGuardMessage(deviceId, actionLabel) {
     const device = getDeviceById(deviceId);
     if (!device || !isTrustManagedDevice(device)) {
@@ -500,6 +507,30 @@ async function updateDeviceTrustState(deviceId, state) {
     } catch (error) {
         console.error('更新设备授信状态失败:', error);
         showAlert('更新设备授信状态失败', 'danger');
+        return false;
+    }
+}
+
+async function rememberDiscoveredDevice(deviceId) {
+    if (!APP_STATE.accessContext.isLocalAdmin) {
+        showAlert('仅本机管理员可记住已发现设备', 'warning');
+        return false;
+    }
+    try {
+        const response = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/remember`, {
+            method: 'POST',
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.success === false) {
+            showAlert(result.error || '记住设备失败', 'danger');
+            return false;
+        }
+        showAlert(result.message || '设备已记住', 'success');
+        await loadDevices();
+        return true;
+    } catch (error) {
+        console.error('记住设备失败:', error);
+        showAlert('记住设备失败', 'danger');
         return false;
     }
 }
@@ -1018,14 +1049,14 @@ async function loadSessionContext() {
 function applyAccessContext() {
     const body = document.body;
     const modePill = document.getElementById('mode-pill');
-    const editionPill = document.getElementById('edition-pill');
+    const runtimePill = document.getElementById('runtime-pill');
     const isAdmin = !!APP_STATE.accessContext.isLocalAdmin;
 
     body.dataset.roleVariant = isAdmin ? 'admin' : 'remote';
-    body.dataset.productEdition = APP_STATE.productContext.edition || 'core';
+    body.dataset.productLine = 'soonlink';
     modePill.textContent = isAdmin ? '本机管理模式' : '普通访问';
-    if (editionPill) {
-        editionPill.textContent = (APP_STATE.productContext.edition || 'core').toUpperCase();
+    if (runtimePill) {
+        runtimePill.textContent = APP_STATE.productContext.runtimeLabel || APP_STATE.productContext.productName || 'SoonLink';
     }
 
     document.querySelectorAll('.admin-only').forEach((node) => {
@@ -1040,6 +1071,7 @@ function applyAccessContext() {
 
     if (isAdmin) {
         loadAdminConfig();
+        loadAdminSystemSummary();
         loadAdminLogs();
     }
 
@@ -1053,6 +1085,11 @@ function applyCapabilityContext() {
         const canShow = hasCapability(capability) && (!requiresAdmin || !!APP_STATE.accessContext.isLocalAdmin);
         node.style.display = canShow ? '' : 'none';
     });
+
+    const activeDiscoveryDisabledPanel = document.getElementById('admin-active-discovery-disabled-panel');
+    if (activeDiscoveryDisabledPanel) {
+        activeDiscoveryDisabledPanel.style.display = hasCapability('activeDiscovery') ? 'none' : '';
+    }
 
     const discoverBtn = document.getElementById('discover-btn');
     if (discoverBtn) {
@@ -1080,6 +1117,7 @@ function applyCapabilityContext() {
     }
 
     renderRelayRestoreHint();
+    refreshAdminDiscoveryHint();
 }
 
 function initThemeAutomation() {
@@ -1336,6 +1374,7 @@ function initRefreshAction() {
                 break;
             case 'admin-page':
                 loadAdminConfig();
+                loadAdminSystemSummary();
                 loadAdminLogs();
                 break;
             default:
@@ -1593,6 +1632,9 @@ function renderDeviceList() {
         const trustLabel = getDeviceTrustLabel(device);
         const trustClass = getDeviceTrustClass(device);
         const trustState = normalizeDeviceTrustState(device.trustState);
+        const remembered = isRememberedDevice(device);
+        const memoryLabel = remembered ? '已记住' : '临时发现';
+        const memoryClass = remembered ? 'is-ready' : 'is-warning';
         const canBrowse = isDeviceTrustedForRemoteActions(device);
         const capabilityText = Array.isArray(device.capability) && device.capability.length > 0
             ? device.capability.join(' · ')
@@ -1600,8 +1642,12 @@ function renderDeviceList() {
         const manageButton = APP_STATE.accessContext.isLocalAdmin && device.id !== 'local'
             ? `<button class="btn btn-sm btn-outline-primary device-manage" data-device-id="${escapeAttr(device.id)}">维护端点</button>`
             : '';
+        const rememberButton = APP_STATE.accessContext.isLocalAdmin && device.id !== 'local' && !remembered
+            ? `<button class="btn btn-sm btn-outline-primary device-remember-action" data-device-id="${escapeAttr(device.id)}">记住设备</button>`
+            : '';
         const trustActions = APP_STATE.accessContext.isLocalAdmin && device.id !== 'local'
             ? `
+                ${rememberButton}
                 <button class="btn btn-sm btn-outline-success device-trust-action" data-state="trusted" data-device-id="${escapeAttr(device.id)}">授信</button>
                 <button class="btn btn-sm btn-outline-secondary device-pin-action" data-device-id="${escapeAttr(device.id)}">PIN</button>
                 <button class="btn btn-sm btn-outline-danger device-trust-action" data-state="${trustState === 'blocked' ? 'unknown' : 'blocked'}" data-device-id="${escapeAttr(device.id)}">
@@ -1624,6 +1670,7 @@ function renderDeviceList() {
                 <div class="device-card-meta">
                     <span class="device-chip">${escapeHtml(connectorName)}</span>
                     <span class="device-chip ${escapeAttr(getConnectorDriverStateClass(binding))}">${escapeHtml(connectorState)}</span>
+                    <span class="device-chip ${escapeAttr(memoryClass)}">${escapeHtml(memoryLabel)}</span>
                     <span class="device-chip ${escapeAttr(trustClass)}">${escapeHtml(trustLabel)}</span>
                 </div>
                 <p class="mb-1 small"><strong>能力:</strong> ${escapeHtml(capabilityText)}</p>
@@ -1654,7 +1701,10 @@ function renderDeviceList() {
             const device = APP_STATE.allDevices.find((d) => d.id === id);
             if (device) {
                 const binding = getConnectorBinding(id);
-                showAlert(`${device.name} · ${getConnectorDisplayName(binding)} · ${getConnectorDriverStateText(binding)} · ${getEndpointDisplayText(binding)}`, 'info');
+                showAlert(
+                    `${device.name} · ${isRememberedDevice(device) ? '已记住' : '临时发现'} · ${getConnectorDisplayName(binding)} · ${getConnectorDriverStateText(binding)} · ${getEndpointDisplayText(binding)}`,
+                    'info',
+                );
             }
         });
     });
@@ -1671,6 +1721,13 @@ function renderDeviceList() {
             const id = this.getAttribute('data-device-id');
             const state = this.getAttribute('data-state') || 'unknown';
             await updateDeviceTrustState(id, state);
+        });
+    });
+
+    document.querySelectorAll('.device-remember-action').forEach((btn) => {
+        btn.addEventListener('click', async function() {
+            const id = this.getAttribute('data-device-id');
+            await rememberDiscoveredDevice(id);
         });
     });
 
@@ -1723,6 +1780,16 @@ function initManualDeviceManager() {
         resetBtn.addEventListener('click', () => resetManualDeviceForm());
     }
 
+    const importApplyBtn = document.getElementById('manual-device-import-apply-btn');
+    if (importApplyBtn) {
+        importApplyBtn.addEventListener('click', importManualDeviceCommand);
+    }
+
+    const importPasteBtn = document.getElementById('manual-device-import-paste-btn');
+    if (importPasteBtn) {
+        importPasteBtn.addEventListener('click', pasteManualDeviceCommandFromClipboard);
+    }
+
     ['manual-device-id', 'manual-device-name', 'manual-device-type', 'manual-device-connector-type', 'manual-device-endpoint-scheme', 'manual-device-ip', 'manual-device-port', 'manual-device-base-path']
         .forEach((id) => {
             const input = document.getElementById(id);
@@ -1763,6 +1830,176 @@ function syncManualDeviceConnectorOptions() {
         options.push('<option value="manual" label="manual · 未声明"></option>');
     }
     datalist.innerHTML = options.join('');
+}
+
+function deriveManualDeviceDisplayName(rawId) {
+    const normalized = String(rawId || '').trim().replace(/[_-]+/g, ' ');
+    if (!normalized) {
+        return '';
+    }
+    return normalized.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
+function tokenizeShellLikeCommand(text) {
+    const source = String(text || '').replace(/\\\r?\n/g, ' ');
+    const tokens = [];
+    let current = '';
+    let quote = '';
+    let escaping = false;
+
+    for (const char of source) {
+        if (escaping) {
+            current += char;
+            escaping = false;
+            continue;
+        }
+        if (char === '\\' && quote !== "'") {
+            escaping = true;
+            continue;
+        }
+        if (quote) {
+            if (char === quote) {
+                quote = '';
+            } else {
+                current += char;
+            }
+            continue;
+        }
+        if (char === '"' || char === "'") {
+            quote = char;
+            continue;
+        }
+        if (/\s/.test(char)) {
+            if (current) {
+                tokens.push(current);
+                current = '';
+            }
+            continue;
+        }
+        current += char;
+    }
+
+    if (current) {
+        tokens.push(current);
+    }
+    return tokens;
+}
+
+function parseManualDeviceImportCommand(commandText) {
+    const source = String(commandText || '').trim();
+    if (!source) {
+        return { error: '请先粘贴登记命令' };
+    }
+
+    const tokens = tokenizeShellLikeCommand(source);
+    if (!tokens.length) {
+        return { error: '未识别到可解析的命令内容' };
+    }
+
+    const options = {};
+    for (let i = 0; i < tokens.length; i += 1) {
+        const token = tokens[i];
+        if (!token.startsWith('--')) {
+            continue;
+        }
+        const key = token.slice(2);
+        if (!key) {
+            continue;
+        }
+        const next = tokens[i + 1];
+        if (next && !next.startsWith('--')) {
+            options[key] = next;
+            i += 1;
+        } else {
+            options[key] = 'true';
+        }
+    }
+
+    const id = String(options.id || '').trim();
+    const ip = String(options.ip || options.host || '').trim();
+    const portText = String(options.port || '').trim();
+    const port = portText ? Number(portText) : 0;
+    const connectorType = String(options.connector || options.connectorType || '').trim() || 'soonlink-http';
+    const endpointScheme = normalizeEndpointSchemeValue(options.scheme || options.endpointScheme || '', connectorType);
+    const endpointBasePath = normalizeEndpointBasePathValue(options['base-path'] || options.basePath || options.endpointBasePath || '');
+    const deviceType = String(options['device-type'] || options.deviceType || '').trim() || 'remote';
+    const name = String(options.name || '').trim() || deriveManualDeviceDisplayName(id);
+
+    if (!id) {
+        return { error: '命令里缺少 --id' };
+    }
+    if (!ip) {
+        return { error: '命令里缺少 --ip' };
+    }
+    if (portText && (!Number.isFinite(port) || port <= 0)) {
+        return { error: '命令里的 --port 无效' };
+    }
+
+    return {
+        payload: {
+            id,
+            name,
+            deviceType,
+            connectorType,
+            endpointScheme,
+            endpointBasePath,
+            ip,
+            port: Number.isFinite(port) && port > 0 ? port : '',
+        },
+    };
+}
+
+function applyManualDeviceImportPayload(payload) {
+    APP_STATE.manualDeviceEditingId = '';
+    setInputValue('manual-device-id', payload.id || '');
+    setInputValue('manual-device-name', payload.name || '');
+    setInputValue('manual-device-type', payload.deviceType || 'remote');
+    setInputValue('manual-device-connector-type', payload.connectorType || 'soonlink-http');
+    setInputValue('manual-device-endpoint-scheme', payload.endpointScheme || 'http');
+    setInputValue('manual-device-ip', payload.ip || '');
+    setInputValue('manual-device-port', payload.port || '');
+    setInputValue('manual-device-base-path', payload.endpointBasePath || '');
+    updateManualDeviceFormState();
+}
+
+function importManualDeviceCommand() {
+    const input = document.getElementById('manual-device-import-command');
+    if (!input) {
+        return;
+    }
+
+    const parsed = parseManualDeviceImportCommand(input.value);
+    if (parsed.error) {
+        showAlert(parsed.error, 'warning');
+        return;
+    }
+
+    applyManualDeviceImportPayload(parsed.payload);
+    showAlert(`已将 ${parsed.payload.id} 的登记命令解析到表单`, 'success');
+}
+
+async function pasteManualDeviceCommandFromClipboard() {
+    const input = document.getElementById('manual-device-import-command');
+    if (!input) {
+        return;
+    }
+    if (!(navigator.clipboard && typeof navigator.clipboard.readText === 'function')) {
+        showAlert('当前环境不支持直接读取剪贴板，请手动粘贴命令', 'warning');
+        return;
+    }
+
+    try {
+        const text = await navigator.clipboard.readText();
+        if (!String(text || '').trim()) {
+            showAlert('剪贴板里没有可解析的登记命令', 'warning');
+            return;
+        }
+        input.value = text;
+        importManualDeviceCommand();
+    } catch (error) {
+        console.error('读取剪贴板失败:', error);
+        showAlert('读取剪贴板失败，请手动粘贴命令', 'warning');
+    }
 }
 
 function updateManualDeviceFormState() {
@@ -4074,9 +4311,294 @@ function initAdminPanel() {
         configForm.addEventListener('submit', saveAdminConfig);
     }
 
+    [
+        'admin-discovery-advertise-ip',
+        'admin-discovery-udp-port',
+        'admin-enable-mdns',
+        'admin-discovery-broadcast-enabled',
+    ].forEach((id) => {
+        const node = document.getElementById(id);
+        if (!node) {
+            return;
+        }
+        const eventName = node.type === 'checkbox' ? 'change' : 'input';
+        node.addEventListener(eventName, refreshAdminDiscoveryHint);
+    });
+
     const refreshLogsBtn = document.getElementById('admin-refresh-logs');
     if (refreshLogsBtn) {
         refreshLogsBtn.addEventListener('click', loadAdminLogs);
+    }
+
+    const refreshSystemBtn = document.getElementById('admin-refresh-system');
+    if (refreshSystemBtn) {
+        refreshSystemBtn.addEventListener('click', loadAdminSystemSummary);
+    }
+
+    [
+        ['admin-copy-local-endpoint', 'endpoint'],
+        ['admin-copy-node-id', 'node'],
+        ['admin-copy-register-template', 'register'],
+    ].forEach(([id, target]) => {
+        const node = document.getElementById(id);
+        if (!node) {
+            return;
+        }
+        node.addEventListener('click', () => {
+            handleAdminDiscoveryCopy(target);
+        });
+    });
+}
+
+function refreshAdminDiscoveryHint() {
+    const hint = document.getElementById('admin-discovery-mode-hint');
+    if (!hint) {
+        return;
+    }
+    if (!hasCapability('activeDiscovery')) {
+        hint.textContent = '当前运行态未启用主动发现，mDNS 与 UDP 广播会保持关闭；请在上方复制本机端点或登记命令发给其他设备手动接入。';
+        return;
+    }
+
+    const advertiseIp = getInputValue('admin-discovery-advertise-ip').trim();
+    const udpPort = getInputValue('admin-discovery-udp-port') || '19090';
+    const mdnsSupported = hasCapability('mdnsDiscovery');
+    const mdnsEnabled = mdnsSupported && isChecked('admin-enable-mdns');
+    const broadcastEnabled = isChecked('admin-discovery-broadcast-enabled');
+    const advertiseText = advertiseIp
+        ? `通告IP固定为 ${advertiseIp}`
+        : '通告IP留空时自动优先选择局域网 IPv4';
+    const modeText = broadcastEnabled ? '允许 UDP 广播被发现' : '已关闭 UDP 广播被发现';
+    const mdnsText = mdnsSupported
+        ? (mdnsEnabled ? 'mDNS 已启用' : 'mDNS 已关闭')
+        : 'mDNS 当前未接入';
+    hint.textContent = `${advertiseText}，发现端口 ${udpPort}；${modeText}；${mdnsText}；发现到的设备需手动记住后才会登记。`;
+}
+
+function setAdminStatusText(id, value, fallback = '-') {
+    const node = document.getElementById(id);
+    if (!node) {
+        return;
+    }
+    const text = String(value ?? '').trim();
+    node.textContent = text || fallback;
+}
+
+async function copyTextToClipboard(text) {
+    const content = String(text ?? '');
+    if (!content.trim()) {
+        return false;
+    }
+
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        try {
+            await navigator.clipboard.writeText(content);
+            return true;
+        } catch (error) {
+            console.warn('Clipboard API 写入失败，尝试降级复制:', error);
+        }
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = content;
+    textarea.setAttribute('readonly', 'readonly');
+    textarea.style.cssText = 'position: fixed; top: -9999px; left: -9999px; opacity: 0;';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+
+    let copied = false;
+    try {
+        copied = document.execCommand('copy');
+    } catch (error) {
+        console.warn('execCommand(copy) 失败:', error);
+    }
+
+    document.body.removeChild(textarea);
+    return copied;
+}
+
+function getAdminDiscoveryNodeId(summary = APP_STATE.adminSystemSummary) {
+    const value = String(summary?.discovery?.nodeId || summary?.nodeId || '').trim();
+    return value && value !== '-' ? value : '';
+}
+
+function getAdminDiscoveryLocalEndpoint(summary = APP_STATE.adminSystemSummary) {
+    const value = String(summary?.discovery?.localEndpoint || '').trim();
+    return value && value !== '-' ? value : '';
+}
+
+function getAdminDiscoveryRegisterTemplate(summary = APP_STATE.adminSystemSummary) {
+    const template = String(summary?.discovery?.registerDeviceCommand || '').trim();
+    if (template) {
+        return template;
+    }
+
+    const nodeId = getAdminDiscoveryNodeId(summary);
+    const endpoint = getAdminDiscoveryLocalEndpoint(summary);
+    if (!nodeId || !endpoint) {
+        return '';
+    }
+
+    const lastColon = endpoint.lastIndexOf(':');
+    if (lastColon <= 0 || lastColon >= endpoint.length - 1) {
+        return '';
+    }
+
+    const host = endpoint.slice(0, lastColon).trim();
+    const port = Number(endpoint.slice(lastColon + 1).trim());
+    if (!host || !Number.isFinite(port) || port <= 0) {
+        return '';
+    }
+
+    return `soonlnk register-device --id ${nodeId} --ip ${host} --port ${port} --connector soonlink-http --scheme http`;
+}
+
+function renderAdminDiscoveryActions(summary = APP_STATE.adminSystemSummary) {
+    const templateNode = document.getElementById('admin-status-register-template');
+    const noteNode = document.getElementById('admin-status-register-note');
+    const template = getAdminDiscoveryRegisterTemplate(summary);
+
+    if (templateNode) {
+        templateNode.value = template || '等待状态加载后生成手动登记命令...';
+    }
+
+    if (noteNode) {
+        noteNode.textContent = template
+            ? '在另一台设备执行这条命令即可手动登记当前节点。'
+            : '当前端点信息不足，暂无法生成手动登记命令。';
+    }
+}
+
+async function handleAdminDiscoveryCopy(target) {
+    let value = '';
+    let successMessage = '';
+    let emptyMessage = '';
+
+    if (target === 'endpoint') {
+        value = getAdminDiscoveryLocalEndpoint();
+        successMessage = '本机端点已复制';
+        emptyMessage = '当前没有可复制的本机端点';
+    } else if (target === 'node') {
+        value = getAdminDiscoveryNodeId();
+        successMessage = '节点ID已复制';
+        emptyMessage = '当前没有可复制的节点ID';
+    } else if (target === 'register') {
+        value = getAdminDiscoveryRegisterTemplate();
+        successMessage = '手动登记命令已复制';
+        emptyMessage = '当前还无法生成手动登记命令';
+    }
+
+    if (!value) {
+        showAlert(emptyMessage, 'warning');
+        return;
+    }
+
+    const copied = await copyTextToClipboard(value);
+    if (copied) {
+        showAlert(successMessage, 'success');
+        return;
+    }
+
+    showAlert('复制失败，请手动选择文本复制', 'warning');
+}
+
+function renderAdminSystemSummary(data) {
+    const discovery = data?.discovery || {};
+    const supportsActiveDiscovery = !!discovery.supportsActiveDiscovery;
+    const broadcastEnabled = supportsActiveDiscovery && !!discovery.udpBroadcastEnabled;
+    const mdnsEnabled = supportsActiveDiscovery && !!discovery.mdnsEnabled;
+    const noActiveChannels = supportsActiveDiscovery && !broadcastEnabled && !mdnsEnabled;
+    const channelLabels = [];
+    if (broadcastEnabled) {
+        channelLabels.push('UDP广播');
+    }
+    if (mdnsEnabled) {
+        channelLabels.push('mDNS');
+    }
+    const configuredAdvertiseIp = String(discovery.configuredAdvertiseIp || '').trim();
+    const effectiveAdvertiseIp = String(discovery.effectiveAdvertiseIp || data?.primaryIp || '').trim();
+    const localEndpoint = String(discovery.localEndpoint || '').trim();
+    const heartbeatSeconds = Number(discovery.heartbeatSeconds || 0);
+    const udpPort = Number(discovery.udpPort || 19090);
+
+    setAdminStatusText('admin-status-node-id', discovery.nodeId || data?.nodeId || '-');
+    setAdminStatusText('admin-status-advertise-ip', effectiveAdvertiseIp || '-');
+    setAdminStatusText('admin-status-primary-ip', discovery.primaryIp || data?.primaryIp || '-');
+    setAdminStatusText('admin-status-local-endpoint', localEndpoint || '-');
+    setAdminStatusText('admin-status-configured-advertise-ip', configuredAdvertiseIp || '自动', '自动');
+    setAdminStatusText(
+        'admin-status-heartbeat',
+        heartbeatSeconds > 0 ? `${heartbeatSeconds}s · UDP ${udpPort}` : `UDP ${udpPort}`,
+    );
+
+    setAdminStatusText('admin-discovery-mode-chip', supportsActiveDiscovery ? '简易互发现' : '被动发现');
+    setAdminStatusText('admin-discovery-broadcast-chip', broadcastEnabled ? 'UDP广播开启' : 'UDP广播关闭');
+    setAdminStatusText('admin-discovery-mdns-chip', mdnsEnabled ? 'mDNS开启' : 'mDNS关闭');
+
+    ['admin-discovery-mode-chip', 'admin-discovery-broadcast-chip', 'admin-discovery-mdns-chip'].forEach((id) => {
+        const node = document.getElementById(id);
+        if (node) {
+            node.classList.toggle('is-warning', noActiveChannels);
+        }
+    });
+
+    renderAdminDiscoveryActions(data);
+
+    const note = document.getElementById('admin-status-discovery-note');
+    if (!note) {
+        return;
+    }
+    note.classList.toggle('text-danger', noActiveChannels);
+    if (!supportsActiveDiscovery) {
+        note.textContent = '当前运行于被动发现模式，仅支持收到其他节点的发现信息和手动登记。';
+        return;
+    }
+    if (channelLabels.length === 0) {
+        note.textContent = `当前未开启主动发现通道，其他节点需要通过手动登记连接 ${localEndpoint || '本机端点'}；发现到的设备不会自动记住。`;
+        return;
+    }
+    const advertiseModeText = configuredAdvertiseIp
+        ? `按手动通告IP ${configuredAdvertiseIp} 对外公布`
+        : '按自动选择的局域网地址对外公布';
+    note.textContent = `当前通过 ${channelLabels.join(' + ')} 对外可发现，${advertiseModeText} ${effectiveAdvertiseIp || '本机地址'}；发现结果需手动记住后才会登记。`;
+}
+
+async function loadAdminSystemSummary() {
+    if (!APP_STATE.accessContext.isLocalAdmin) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/admin/api/system');
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error('admin system payload invalid');
+        }
+        APP_STATE.adminSystemSummary = data;
+        renderAdminSystemSummary(data);
+    } catch (error) {
+        console.error('加载发现状态失败:', error);
+        APP_STATE.adminSystemSummary = null;
+        setAdminStatusText('admin-status-node-id', '-', '-');
+        setAdminStatusText('admin-status-advertise-ip', '-', '-');
+        setAdminStatusText('admin-status-primary-ip', '-', '-');
+        setAdminStatusText('admin-status-local-endpoint', '-', '-');
+        setAdminStatusText('admin-status-configured-advertise-ip', '自动', '自动');
+        setAdminStatusText('admin-status-heartbeat', '-', '-');
+        setAdminStatusText('admin-discovery-mode-chip', '状态未知');
+        setAdminStatusText('admin-discovery-broadcast-chip', '状态未知');
+        setAdminStatusText('admin-discovery-mdns-chip', '状态未知');
+        ['admin-discovery-mode-chip', 'admin-discovery-broadcast-chip', 'admin-discovery-mdns-chip'].forEach((id) => {
+            document.getElementById(id)?.classList.remove('is-warning');
+        });
+        renderAdminDiscoveryActions(null);
+        const note = document.getElementById('admin-status-discovery-note');
+        if (note) {
+            note.classList.remove('text-danger');
+            note.textContent = '发现状态加载失败，请稍后重试。';
+        }
     }
 }
 
@@ -4100,12 +4622,19 @@ async function loadAdminConfig() {
         setInputValue('admin-log-dir', cfg.logDir || './logs');
         setInputValue('admin-local-root-dir', cfg.localRootDir || '');
         setInputValue('admin-max-connections', cfg.maxConnections || 100);
+        setInputValue('admin-node-id', cfg.nodeId || '');
         if (hasCapability('peerTransfer')) {
             setInputValue('admin-security-mode', cfg.securityMode || 'plain');
         }
         if (hasCapability('activeDiscovery')) {
             setInputValue('admin-discovery-udp-port', cfg.discoveryUdpPort || 19090);
+            setInputValue('admin-discovery-advertise-ip', cfg.discoveryAdvertiseIp || '');
             setChecked('admin-enable-mdns', !!cfg.enableMdns);
+            setChecked('admin-discovery-broadcast-enabled', !!cfg.discoveryBroadcastEnabled);
+            const mdnsCheckbox = document.getElementById('admin-enable-mdns');
+            if (mdnsCheckbox) {
+                mdnsCheckbox.disabled = !hasCapability('mdnsDiscovery');
+            }
         }
         if (hasCapability('relay')) {
             setInputValue('admin-relay-retention-hours', cfg.relayRetentionHours || 24);
@@ -4127,6 +4656,7 @@ async function loadAdminConfig() {
         setInputValue('temp-dir', cfg.tempDir || '/tmp/soonlink');
         setInputValue('max-connections', cfg.maxConnections || 100);
         setChecked('enable-encryption', hasCapability('peerTransfer') && (cfg.securityMode || 'plain') === 'encrypted');
+        refreshAdminDiscoveryHint();
     } catch (error) {
         console.error('加载管理配置失败:', error);
         showAlert('加载管理配置失败', 'danger');
@@ -4153,7 +4683,9 @@ async function saveAdminConfig(event) {
     }
     if (hasCapability('activeDiscovery')) {
         payload.discoveryUdpPort = Number(getInputValue('admin-discovery-udp-port') || '19090');
-        payload.enableMdns = isChecked('admin-enable-mdns');
+        payload.discoveryAdvertiseIp = getInputValue('admin-discovery-advertise-ip').trim();
+        payload.enableMdns = hasCapability('mdnsDiscovery') && isChecked('admin-enable-mdns');
+        payload.discoveryBroadcastEnabled = isChecked('admin-discovery-broadcast-enabled');
     }
     if (hasCapability('relay')) {
         payload.relayEnabled = isChecked('admin-relay-enabled');
@@ -4184,6 +4716,7 @@ async function saveAdminConfig(event) {
         if (result.success) {
             showAlert('管理配置已保存（重启后生效）', 'success');
             loadAdminConfig();
+            loadAdminSystemSummary();
         } else {
             showAlert(result.error || '保存失败', 'danger');
         }
