@@ -4,13 +4,13 @@
 
 Use this guide when you want to:
 
-- drive a SoonLink Core node directly through the `soonlnk` CLI,
+- drive a SoonLink node directly through the `soonlnk` CLI,
 - connect SoonLink to an agent host over MCP,
 - reduce a bug report into the smallest reproducible workflow.
 
 ## Recommended bootstrap order
 
-When you first touch a SoonLink Core node, start in this order:
+When you first touch a SoonLink node, start in this order:
 
 1. `soonlnk version`
 2. `soonlnk capabilities`
@@ -18,7 +18,7 @@ When you first touch a SoonLink Core node, start in this order:
 4. `soonlnk status --config ./config/config.toml`
 5. `soonlnk connectors --config ./config/config.toml`
 
-That gives you the edition, version, effective config, runtime state, and available connector bindings before you try anything destructive.
+That gives you the node identity, version, effective config, runtime state, and available connector bindings before you try anything destructive.
 
 ## CLI quick recipes
 
@@ -31,7 +31,7 @@ soonlnk capabilities
 
 These are the fastest way to confirm:
 
-- whether you are really on the `core` edition,
+- whether you are really on the expected SoonLink node,
 - whether the runtime version matches your docs and release page,
 - whether the expected capability tags are present.
 
@@ -127,7 +127,7 @@ That confirms path existence, source type, expected entry count, and estimated s
 
 ## MCP patterns
 
-SoonLink Core currently exposes these MCP tools for agents:
+SoonLink currently exposes these MCP tools for agents:
 
 - `soonlink_status`
 - `soonlink_capabilities`
@@ -163,15 +163,15 @@ That keeps the agent from blindly creating transfer tasks before the node, trust
 Before filing an issue, capture:
 
 - current version,
-- current edition,
+- current node identity,
 - exact command line,
 - source device, target device, and path,
 - `status` output,
 - `summary` output,
 - final task status.
 
-That is usually enough to localize most SoonLink Core issues quickly.
+That is usually enough to localize most SoonLink issues quickly.
 
 ## One-line takeaway
 
-SoonLink Core CLI and MCP work best when you treat them as “inspect the real state first, automate second.”
+SoonLink CLI and MCP work best when you treat them as “inspect the real state first, automate second.”

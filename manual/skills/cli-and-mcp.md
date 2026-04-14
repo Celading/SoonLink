@@ -10,7 +10,7 @@
 
 ## 一条最稳的使用顺序
 
-如果你刚接手一个 SoonLink Core 节点，推荐按这个顺序确认：
+如果你刚接手一个 SoonLink 节点，推荐按这个顺序确认：
 
 1. `soonlnk version`
 2. `soonlnk capabilities`
@@ -18,7 +18,7 @@
 4. `soonlnk status --config ./config/config.toml`
 5. `soonlnk connectors --config ./config/config.toml`
 
-这样可以先确认版本、版本形态、配置是否生效、运行时状态是否正常，以及当前有哪些连接器已经可用。
+这样可以先确认版本、节点标识、配置是否生效、运行时状态是否正常，以及当前有哪些连接器已经可用。
 
 ## CLI 快速片段
 
@@ -31,7 +31,7 @@ soonlnk capabilities
 
 这两个命令适合先确认：
 
-- 当前是不是 `core` edition
+- 当前是不是你预期的 SoonLink 节点
 - 当前版本号是否和 README / release 一致
 - 节点是否暴露了你预期的能力标签
 
@@ -127,7 +127,7 @@ soonlnk transfer \
 
 ## MCP 使用方式
 
-SoonLink Core 当前比较适合 agent 用的 MCP 工具有：
+SoonLink 当前比较适合 agent 用的 MCP 工具有：
 
 - `soonlink_status`
 - `soonlink_capabilities`
@@ -163,15 +163,15 @@ SoonLink Core 当前比较适合 agent 用的 MCP 工具有：
 如果你要给自己或别人提单，建议先带上这几项：
 
 - 当前版本号
-- 当前 edition
+- 当前节点标识
 - 当前命令行
 - 源设备 / 目标设备 / 路径
 - `status` 输出
 - `summary` 输出
 - 任务最终状态
 
-只要这几项齐，大多数 SoonLink Core 问题都能更快落位。
+只要这几项齐，大多数 SoonLink 问题都能更快落位。
 
 ## 一句话经验
 
-SoonLink Core 的 CLI 和 MCP 最适合做“先确认真实状态，再做自动化动作”的工作，不适合跳过状态确认直接盲打。
+SoonLink 的 CLI 和 MCP 最适合做“先确认真实状态，再做自动化动作”的工作，不适合跳过状态确认直接盲打。

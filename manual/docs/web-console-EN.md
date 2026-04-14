@@ -1,6 +1,6 @@
 # Web Console
 
-The SoonLink Web console in the open-source edition mainly serves three kinds of work.
+The SoonLink Web console mainly serves three kinds of work.
 
 ## 1. File Browsing
 
