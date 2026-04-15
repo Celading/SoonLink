@@ -1125,11 +1125,30 @@ public class CoreServer {
         relayFeature.cacheDescriptor(jobId)
     }
 
+    public func createRelayTextRecord(sourceDevice: String, fileName: String, content: String): RelayJob {
+        if (!profile.supportsRelay) {
+            let job = RelayJob()
+            job.status = "disabled"
+            job.message = "relay unavailable in current runtime"
+            job.fileName = fileName
+            job.recordKind = "text"
+            return job
+        }
+        relayFeature.createTextRecord(sourceDevice, fileName, content)
+    }
+
     public func retryRelayJob(jobId: String): ?RelayJob {
         if (!profile.supportsRelay) {
             return None
         }
         relayFeature.retryJob(jobId)
+    }
+
+    public func deleteRelayRecord(jobId: String): Bool {
+        if (!profile.supportsRelay) {
+            return false
+        }
+        relayFeature.deleteJob(jobId)
     }
 
     public func cancelRelayJob(jobId: String): Bool {

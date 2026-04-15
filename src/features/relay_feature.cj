@@ -8,6 +8,8 @@ import std.fs.{Directory, FileInfo, remove}
 import std.sync.Mutex
 import std.unicode.*
 
+let relayTextRecordMaxBytes: Int64 = 256 * 1024
+
 public class RelayFeature {
     let cacheDir: String
     let retentionHours: Int64
@@ -65,12 +67,36 @@ public class RelayFeature {
         fileName: String,
         payload: Array<UInt8>
     ): RelayJob {
+        createRelayRecord("file", sourceDevice, targetDevice, targetPath, fileName, payload, true)
+    }
+
+    public func createTextRecord(sourceDevice: String, fileName: String, content: String): RelayJob {
+        let payload = stringToBytes(content)
+        if (payload.size == 0) {
+            throw Exception("文本内容不能为空")
+        }
+        if (payload.size > relayTextRecordMaxBytes) {
+            throw Exception("临时文本缓存最多支持 256 KiB，请改走文件中转")
+        }
+        createRelayRecord("text", sourceDevice, "", "/", normalizeRelayTextRecordName(fileName), payload, false)
+    }
+
+    func createRelayRecord(
+        recordKind: String,
+        sourceDevice: String,
+        targetDevice: String,
+        targetPath: String,
+        fileName: String,
+        payload: Array<UInt8>,
+        attemptDispatch: Bool
+    ): RelayJob {
         let job = RelayJob()
         job.id = "relay-" + generateId()
+        job.recordKind = recordKind
         job.sourceDevice = if (sourceDevice.size > 0) { sourceDevice } else { "unknown" }
-        job.targetDevice = targetDevice
-        job.targetPath = normalizeRelayPath(targetPath)
-        job.fileName = normalizeFileName(fileName)
+        job.targetDevice = if (attemptDispatch) { targetDevice } else { "" }
+        job.targetPath = if (attemptDispatch) { normalizeRelayPath(targetPath) } else { "/" }
+        job.fileName = if (recordKind == "text") { normalizeRelayTextRecordName(fileName) } else { normalizeFileName(fileName) }
         job.createdAt = currentTimestamp()
         job.updatedAt = job.createdAt
         job.expiresAt = job.createdAt + retentionHours * 3600
@@ -82,7 +108,7 @@ public class RelayFeature {
             job.bytes = payload.size
             job.status = "cached"
             job.cacheAvailable = true
-            job.message = "cached on relay"
+            job.message = if (recordKind == "text") { "text record cached" } else { "cached on relay" }
         } catch (e: Exception) {
             job.status = "failed"
             job.cacheAvailable = false
@@ -94,7 +120,9 @@ public class RelayFeature {
         }
 
         enforceCapacity()
-        tryDispatch(job.id)
+        if (attemptDispatch) {
+            tryDispatch(job.id)
+        }
         job
     }
 
@@ -123,6 +151,13 @@ public class RelayFeature {
     public func retryJob(jobId: String): ?RelayJob {
         synchronized(mutex) {
             if (let Some(job) <- jobs.get(jobId)) {
+                if (job.recordKind == "text") {
+                    refreshCacheState(job)
+                    job.status = if (job.cacheAvailable) { "cached" } else { "failed" }
+                    job.message = if (job.cacheAvailable) { "text record retained" } else { "text record missing" }
+                    job.updatedAt = currentTimestamp()
+                    return Some(job)
+                }
                 if (job.status == "expired") {
                     refreshCacheState(job)
                     return Some(job)
@@ -135,6 +170,20 @@ public class RelayFeature {
         }
         tryDispatch(jobId)
         getJob(jobId)
+    }
+
+    public func deleteJob(jobId: String): Bool {
+        synchronized(mutex) {
+            match (jobs.get(jobId)) {
+                case Some(job) =>
+                    try {
+                        remove(job.cachePath)
+                    } catch (_: Exception) {}
+                    jobs.remove(jobId)
+                    true
+                case None => false
+            }
+        }
     }
 
     public func cancelJob(jobId: String): Bool {
@@ -230,6 +279,9 @@ public class RelayFeature {
         let ids = ArrayList<String>()
         synchronized(mutex) {
             for ((id, job) in jobs) {
+                if (job.recordKind != "file") {
+                    continue
+                }
                 if (job.status == "cached" || job.status == "dispatching") {
                     ids.add(id)
                 }
@@ -626,6 +678,16 @@ func normalizeRelayPath(path: String): String {
         out = strReplace(out, "//", "/")
     }
     out
+}
+
+func normalizeRelayTextRecordName(raw: String): String {
+    let trimmed = raw.trimAscii()
+    var base = if (trimmed.size > 0) { normalizeFileName(trimmed) } else { "text-${currentTimestamp()}.txt" }
+    let lower = base.toLower()
+    if (!strEndsWith(lower, ".txt")) {
+        base += ".txt"
+    }
+    base
 }
 
 func normalizeFileName(name: String): String {

@@ -281,9 +281,18 @@
                             <label for="relay-target-path" class="form-label">目标目录</label>
                             <input class="form-control form-control-sm" id="relay-target-path" value="/" placeholder="/downloads">
                         </div>
-                        <div class="col-md-2">
+                        <div class="col-md-4">
                             <label for="relay-file-input" class="form-label">文件</label>
                             <input class="form-control form-control-sm" type="file" id="relay-file-input">
+                        </div>
+                        <div class="col-md-4">
+                            <label for="relay-text-name" class="form-label">文本记录名</label>
+                            <input class="form-control form-control-sm" id="relay-text-name" placeholder="meeting-note.txt">
+                        </div>
+                        <div class="col-12">
+                            <label for="relay-text-content" class="form-label">临时文本</label>
+                            <textarea class="form-control form-control-sm" id="relay-text-content" rows="4" placeholder="直接粘贴临时文本，系统会按 UTF-8 保存为 .txt 记录"></textarea>
+                            <div class="form-text" id="relay-text-meta">0 字符 · 0 行。超过预览阈值时自动改为下载查看，避免浏览器卡住。</div>
                         </div>
                     </div>
                     <div class="d-flex gap-2 mt-2">
@@ -296,8 +305,12 @@
                         <button class="btn btn-sm btn-outline-danger pd-fl-cc" type="button" id="relay-cancel-selected-btn">
                             <i class="bi bi-x-octagon me-1"></i>取消选中
                         </button>
+                        <button class="btn btn-sm btn-outline-danger pd-fl-cc" type="button" id="relay-delete-selected-btn">
+                            <i class="bi bi-trash3 me-1"></i>删除选中记录
+                        </button>
                     </div>
                     <p class="section-note mt-2 mb-0" id="relay-restore-hint">回流默认复用当前文件页的设备与目录</p>
+                    <p class="section-note mb-0">删除记录只会移除中继记录与临时缓存，不会删除设备上的实际文件；直接删文件仍然只留给管理权限。</p>
                     <div class="row g-2 mt-1">
 
                         <div class="col-6">
@@ -331,7 +344,7 @@
                             <span class="stat-chip" id="relay-failed-chip">失败 0</span>
                         </div>
                         <div class="filter-group">
-                            <input class="form-control form-control-sm" id="relay-search-input" placeholder="搜索任务ID / 源 / 目标 / 文件">
+                            <input class="form-control form-control-sm" id="relay-search-input" placeholder="搜索任务ID / 源 / 目标 / 名称">
                             <select class="form-select form-select-sm" id="relay-status-filter">
                                 <option value="all">全部状态</option>
                                 <option value="cached">cached</option>
@@ -365,6 +378,22 @@
                             </thead>
                             <tbody id="relay-job-list"></tbody>
                         </table>
+                    </div>
+                    <div class="file-preview-wrap relay-preview-wrap mt-3" id="relay-preview-wrap">
+                        <div class="preview-head">
+                            <span>文本预览</span>
+                            <span class="text-muted small" id="relay-preview-meta">选择一条 `.txt` 记录后在这里查看</span>
+                        </div>
+                        <div class="transfer-preview-empty" id="relay-preview-empty">临时文本和 `.txt` 缓存会在这里显示；超过预览阈值时会建议直接下载。</div>
+                        <pre class="file-preview relay-preview-text" id="relay-preview-text" hidden></pre>
+                        <div class="d-flex gap-2 mt-2">
+                            <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-preview-download-btn" hidden>
+                                <i class="bi bi-download me-1"></i>下载缓存
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-preview-clear-btn" hidden>
+                                <i class="bi bi-x-lg me-1"></i>清空预览
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="app-card mt-3 admin-only" style="display: none;" data-capability="whitelist">

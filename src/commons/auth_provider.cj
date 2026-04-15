@@ -36,6 +36,8 @@ public class CorePlaceholderAuthProvider <: AuthProvider {
         out.passwordConfigured = false
         if (profile.supportsPeerTransfer) {
             out.capabilities = ["login-entry", "local-trust-admin", "peer-transfer", "relay", "favorites"]
+        } else if (profile.supportsRelay) {
+            out.capabilities = ["login-entry", "local-trust-admin", "udp-discovery", "manual-remember", "relay-cache", "text-record-cache"]
         } else if (profile.supportsActiveDiscovery) {
             out.capabilities = ["login-entry", "local-trust-admin", "udp-discovery", "manual-remember"]
         } else {

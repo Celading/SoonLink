@@ -24,7 +24,7 @@ public func defaultRuntimeProfile(): RuntimeProfile {
     out.supportsActiveDiscovery = true
     out.supportsMdnsDiscovery = false
     out.supportsPeerTransfer = false
-    out.supportsRelay = false
+    out.supportsRelay = true
     out.supportsWhitelist = false
     out.supportsFavorites = false
     out.supportsAdvancedSecurity = false
@@ -95,6 +95,7 @@ public func runtimeCapabilityTags(profile: RuntimeProfile): JsonArray {
     }
     if (profile.supportsRelay) {
         arr.addStr("relay-cache")
+        arr.addStr("text-cache-records")
     }
     if (profile.supportsWhitelist) {
         arr.addStr("whitelist")

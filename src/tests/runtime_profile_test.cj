@@ -13,7 +13,7 @@ public class RuntimeProfile_test {
         @Assert(profile.supportsActiveDiscovery)
         @Assert(!profile.supportsMdnsDiscovery)
         @Assert(!profile.supportsPeerTransfer)
-        @Assert(!profile.supportsRelay)
+        @Assert(profile.supportsRelay)
         @Assert(!profile.supportsWhitelist)
         @Assert(!profile.supportsFavorites)
         @Assert(profile.supportsMcp)
@@ -31,7 +31,7 @@ public class RuntimeProfile_test {
         @Assert(normalized.securityMode, "plain")
         @Assert(!normalized.enableMdns)
         @Assert(normalized.discoveryBroadcastEnabled)
-        @Assert(!normalized.relayEnabled)
+        @Assert(normalized.relayEnabled)
     }
 
     @TestCase

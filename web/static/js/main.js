@@ -12,7 +12,7 @@ const APP_STATE = {
             activeDiscovery: true,
             mdnsDiscovery: false,
             peerTransfer: false,
-            relay: false,
+            relay: true,
             whitelist: false,
             favorites: false,
             advancedSecurity: false,
@@ -34,6 +34,7 @@ const APP_STATE = {
     allTasks: [],
     allRelayJobs: [],
     relaySelectedIds: [],
+    relayPreview: null,
     allFiles: [],
     fileSortBy: 'name',
     fileSortOrder: 'asc',
@@ -177,7 +178,7 @@ function defaultProductContext() {
             activeDiscovery: true,
             mdnsDiscovery: false,
             peerTransfer: false,
-            relay: false,
+            relay: true,
             whitelist: false,
             favorites: false,
             advancedSecurity: false,
@@ -3312,6 +3313,15 @@ function initRelayPanel() {
         submitBtn.addEventListener('click', submitRelayJob);
     }
 
+    const textInput = document.getElementById('relay-text-content');
+    if (textInput) {
+        textInput.addEventListener('input', updateRelayTextMeta);
+    }
+    const textNameInput = document.getElementById('relay-text-name');
+    if (textNameInput) {
+        textNameInput.addEventListener('input', updateRelayTextMeta);
+    }
+
     const statusFilter = document.getElementById('relay-status-filter');
     const searchInput = document.getElementById('relay-search-input');
     if (statusFilter) {
@@ -3346,9 +3356,27 @@ function initRelayPanel() {
     if (cancelSelectedBtn) {
         cancelSelectedBtn.addEventListener('click', cancelSelectedRelayJobs);
     }
+    const deleteSelectedBtn = document.getElementById('relay-delete-selected-btn');
+    if (deleteSelectedBtn) {
+        deleteSelectedBtn.addEventListener('click', deleteSelectedRelayJobs);
+    }
     const cleanupBtn = document.getElementById('relay-cleanup-btn');
     if (cleanupBtn) {
         cleanupBtn.addEventListener('click', cleanupRelayJobs);
+    }
+
+    const previewDownloadBtn = document.getElementById('relay-preview-download-btn');
+    if (previewDownloadBtn) {
+        previewDownloadBtn.addEventListener('click', () => {
+            const url = APP_STATE.relayPreview?.downloadUrl || '';
+            if (url) {
+                window.open(url, '_blank', 'noopener');
+            }
+        });
+    }
+    const previewClearBtn = document.getElementById('relay-preview-clear-btn');
+    if (previewClearBtn) {
+        previewClearBtn.addEventListener('click', clearRelayPreview);
     }
 
     const whitelistBtn = document.getElementById('whitelist-save-btn');
@@ -3368,6 +3396,7 @@ function initRelayPanel() {
         clearInterval(APP_STATE.relayUiTimer);
     }
     APP_STATE.relayUiTimer = setInterval(updateRelayCountdownLabels, 1000);
+    updateRelayTextMeta();
 }
 
 async function submitRelayJob() {
@@ -3380,6 +3409,20 @@ async function submitRelayJob() {
     const targetPath = document.getElementById('relay-target-path')?.value || '/';
     const input = document.getElementById('relay-file-input');
     const file = input?.files?.[0];
+    const textName = (document.getElementById('relay-text-name')?.value || '').trim();
+    const textContent = document.getElementById('relay-text-content')?.value || '';
+    const hasText = textContent.length > 0;
+    const hasFile = !!file;
+
+    if (hasText && hasFile) {
+        showAlert('一次只能提交文件或文本，请先清掉其中一项。', 'warning');
+        return;
+    }
+
+    if (hasText) {
+        await submitRelayTextRecord(sourceDevice, textName, textContent);
+        return;
+    }
 
     if (!targetDevice) {
         showAlert('请选择中继目标设备', 'warning');
@@ -3423,11 +3466,78 @@ async function submitRelayJob() {
     }
 }
 
+async function submitRelayTextRecord(sourceDevice, fileName, content) {
+    const formData = new FormData();
+    formData.append('sourceDevice', sourceDevice || 'web-client');
+    formData.append('fileName', fileName || '');
+    formData.append('content', content);
+
+    try {
+        const resp = await fetch('/api/relay/jobs/text', {
+            method: 'POST',
+            body: formData,
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showAlert(data.error || '临时文本提交失败', 'danger');
+            return;
+        }
+        showAlert('临时文本已缓存到中继站', 'success');
+        resetRelayTextDraft();
+        loadRelayJobs();
+    } catch (error) {
+        console.error('提交临时文本失败:', error);
+        showAlert('临时文本提交失败', 'danger');
+    }
+}
+
+function updateRelayTextMeta() {
+    const content = document.getElementById('relay-text-content')?.value || '';
+    const name = (document.getElementById('relay-text-name')?.value || '').trim();
+    const metaNode = document.getElementById('relay-text-meta');
+    if (!metaNode) {
+        return;
+    }
+    const chars = content.length;
+    const lines = countTextLines(content);
+    const displayName = name ? normalizeRelayTextRecordName(name) : '自动生成 .txt 记录名';
+    metaNode.textContent = `${chars} 字符 · ${lines} 行 · ${displayName}。超过预览阈值时自动改为下载查看，避免浏览器卡住。`;
+}
+
+function resetRelayTextDraft() {
+    const nameInput = document.getElementById('relay-text-name');
+    const contentInput = document.getElementById('relay-text-content');
+    if (nameInput) {
+        nameInput.value = '';
+    }
+    if (contentInput) {
+        contentInput.value = '';
+    }
+    updateRelayTextMeta();
+}
+
+function countTextLines(text) {
+    if (!text) {
+        return 0;
+    }
+    return text.split('\n').length;
+}
+
+function normalizeRelayTextRecordName(name) {
+    const raw = String(name || '').trim();
+    if (!raw) {
+        return '自动生成 .txt 记录名';
+    }
+    return /\.txt$/i.test(raw) ? raw : `${raw}.txt`;
+}
+
 async function loadRelayJobs() {
     if (!hasCapability('relay')) {
         APP_STATE.allRelayJobs = [];
+        APP_STATE.relaySelectedIds = [];
         updateRelayStats([]);
         renderRelayJobs();
+        clearRelayPreview();
         return;
     }
     const list = document.getElementById('relay-job-list');
@@ -3439,6 +3549,7 @@ async function loadRelayJobs() {
         const data = await resp.json();
         APP_STATE.allRelayJobs = (data && Array.isArray(data.jobs)) ? data.jobs : [];
         syncRelaySelectionSet();
+        syncRelayPreviewState();
         updateRelayStats(APP_STATE.allRelayJobs);
         renderRelayJobs();
     } catch (error) {
@@ -3480,17 +3591,24 @@ function renderRelayJobs() {
         .forEach((job) => {
             const row = document.createElement('tr');
             const jobId = String(job.id || '');
+            const recordKind = String(job.recordKind || 'file');
             const selected = APP_STATE.relaySelectedIds.includes(jobId);
             const cacheActionReady = isRelayCacheActionAvailable(job);
-            const allowRetry = !['delivered', 'expired'].includes(String(job.status || ''));
-            const allowCancel = !['delivered', 'expired'].includes(String(job.status || ''));
-            const cacheState = job.cacheAvailable ? '缓存可用' : '缓存缺失';
+            const allowRetry = recordKind === 'file' && !['delivered', 'expired'].includes(String(job.status || ''));
+            const allowCancel = recordKind === 'file' && !['delivered', 'expired'].includes(String(job.status || ''));
+            const allowPreview = isRelayTextPreviewAvailable(job);
+            const cacheState = job.cacheAvailable
+                ? (recordKind === 'text' ? '文本记录缓存可用' : '缓存可用')
+                : '缓存缺失';
             row.innerHTML = `
                 <td><input class="relay-row-select" type="checkbox" data-id="${escapeAttr(jobId)}" ${selected ? 'checked' : ''}></td>
                 <td>${escapeHtml(jobId.slice(0, 12))}</td>
                 <td>${escapeHtml(job.sourceDevice || '-')}</td>
                 <td>${escapeHtml(job.targetDevice || '-')}</td>
-                <td>${escapeHtml(job.fileName || '-')}</td>
+                <td>
+                    <div>${escapeHtml(job.fileName || '-')}</div>
+                    <div class="section-note">${escapeHtml(recordKind === 'text' ? 'text record' : 'file relay')}</div>
+                </td>
                 <td><span class="badge status-${escapeAttr(job.status || 'pending')}">${escapeHtml(job.status || '-')}</span></td>
                 <td>${formatSize(Number(job.bytes || 0))}</td>
                 <td>${escapeHtml(String(job.attempts || 0))}</td>
@@ -3502,10 +3620,12 @@ function renderRelayJobs() {
                 </td>
                 <td>
                     <div class="btn-group btn-group-sm relay-action-group">
+                        <button class="btn btn-outline-secondary relay-preview-cache" data-id="${escapeAttr(jobId)}" ${allowPreview && cacheActionReady ? '' : 'disabled'}>查看文本</button>
                         <button class="btn btn-outline-secondary relay-download-cache" data-id="${escapeAttr(jobId)}" ${cacheActionReady ? '' : 'disabled'}>下载缓存</button>
                         <button class="btn btn-outline-primary relay-restore-cache" data-id="${escapeAttr(jobId)}" ${cacheActionReady ? '' : 'disabled'}>回流到当前目录</button>
                         <button class="btn btn-outline-secondary relay-retry" data-id="${escapeAttr(jobId)}" ${allowRetry ? '' : 'disabled'}>重试</button>
                         <button class="btn btn-outline-danger relay-cancel" data-id="${escapeAttr(jobId)}" ${allowCancel ? '' : 'disabled'}>取消</button>
+                        <button class="btn btn-outline-danger relay-delete-record" data-id="${escapeAttr(jobId)}">删除记录</button>
                     </div>
                 </td>
             `;
@@ -3544,6 +3664,12 @@ function renderRelayJobs() {
             window.open(`/api/relay/jobs/${encodeURIComponent(id)}/cache`, '_blank', 'noopener');
         });
     });
+    document.querySelectorAll('.relay-preview-cache').forEach((btn) => {
+        btn.addEventListener('click', async function() {
+            const id = this.getAttribute('data-id');
+            await loadRelayPreview(id);
+        });
+    });
     document.querySelectorAll('.relay-restore-cache').forEach((btn) => {
         btn.addEventListener('click', async function() {
             const id = this.getAttribute('data-id');
@@ -3555,6 +3681,12 @@ function renderRelayJobs() {
             const id = this.getAttribute('data-id');
             await fetch(`/api/relay/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
             loadRelayJobs();
+        });
+    });
+    document.querySelectorAll('.relay-delete-record').forEach((btn) => {
+        btn.addEventListener('click', async function() {
+            const id = this.getAttribute('data-id');
+            await deleteRelayRecord(id);
         });
     });
 }
@@ -3605,6 +3737,14 @@ function syncRelaySelectionSet() {
 function isRelayCacheActionAvailable(job) {
     const status = String(job.status || '');
     return !!job.cacheAvailable && ['cached', 'dispatching', 'pending_approval', 'failed'].includes(status);
+}
+
+function isRelayTextPreviewAvailable(job) {
+    const recordKind = String(job?.recordKind || 'file');
+    if (recordKind === 'text') {
+        return true;
+    }
+    return /\.txt$/i.test(String(job?.fileName || ''));
 }
 
 async function restoreRelayCacheToCurrentDirectory(jobId) {
@@ -3722,6 +3862,65 @@ async function cancelSelectedRelayJobs() {
     }
 }
 
+async function deleteSelectedRelayJobs() {
+    if (!hasCapability('relay')) {
+        return;
+    }
+    if (!APP_STATE.relaySelectedIds.length) {
+        showAlert('请先选择中继记录', 'warning');
+        return;
+    }
+    if (!window.confirm('删除记录只会移除中继记录与临时缓存，不会删除设备上的实际文件。确定继续吗？')) {
+        return;
+    }
+    try {
+        const response = await fetch('/api/relay/jobs/batch-delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                ids: APP_STATE.relaySelectedIds,
+            }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showAlert(data.error || '批量删除记录失败', 'danger');
+            return;
+        }
+        APP_STATE.relaySelectedIds = [];
+        showAlert(`已删除 ${data.updated || 0} 条中继记录`, 'success');
+        loadRelayJobs();
+    } catch (error) {
+        console.error('批量删除记录失败:', error);
+        showAlert('批量删除记录失败', 'danger');
+    }
+}
+
+async function deleteRelayRecord(jobId) {
+    if (!jobId) {
+        return;
+    }
+    if (!window.confirm('删除记录只会移除中继记录与临时缓存，不会删除设备上的实际文件。确定删除吗？')) {
+        return;
+    }
+    try {
+        const response = await fetch(`/api/relay/jobs/${encodeURIComponent(jobId)}`, {
+            method: 'DELETE',
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showAlert(data.error || data.message || '删除记录失败', 'danger');
+            return;
+        }
+        showAlert(data.message || '记录已删除', 'success');
+        loadRelayJobs();
+    } catch (error) {
+        console.error('删除中继记录失败:', error);
+        showAlert('删除记录失败', 'danger');
+    }
+}
+
 async function cleanupRelayJobs() {
     if (!hasCapability('relay')) {
         return;
@@ -3761,6 +3960,95 @@ function updateRelayCountdownLabels() {
         const expire = Number(cell.dataset.expire || '0');
         cell.textContent = formatTtlCountdown(expire);
     });
+}
+
+function syncRelayPreviewState() {
+    const previewId = APP_STATE.relayPreview?.jobId || '';
+    if (!previewId) {
+        return;
+    }
+    const current = APP_STATE.allRelayJobs.find((job) => String(job.id || '') === previewId);
+    if (!current || !current.cacheAvailable) {
+        clearRelayPreview();
+    }
+}
+
+async function loadRelayPreview(jobId) {
+    if (!jobId) {
+        clearRelayPreview();
+        return;
+    }
+    try {
+        const response = await fetch(`/api/relay/jobs/${encodeURIComponent(jobId)}/preview`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showAlert(data.error || '文本预览加载失败', 'danger');
+            return;
+        }
+        APP_STATE.relayPreview = data;
+        renderRelayPreview(data);
+    } catch (error) {
+        console.error('加载中继文本预览失败:', error);
+        showAlert('文本预览加载失败', 'danger');
+    }
+}
+
+function clearRelayPreview() {
+    APP_STATE.relayPreview = null;
+    renderRelayPreview(null);
+}
+
+function renderRelayPreview(preview) {
+    const wrap = document.getElementById('relay-preview-wrap');
+    const metaNode = document.getElementById('relay-preview-meta');
+    const emptyNode = document.getElementById('relay-preview-empty');
+    const textNode = document.getElementById('relay-preview-text');
+    const downloadBtn = document.getElementById('relay-preview-download-btn');
+    const clearBtn = document.getElementById('relay-preview-clear-btn');
+    if (!wrap || !metaNode || !emptyNode || !textNode || !downloadBtn || !clearBtn) {
+        return;
+    }
+
+    textNode.hidden = true;
+    textNode.textContent = '';
+    emptyNode.hidden = false;
+    downloadBtn.hidden = true;
+    clearBtn.hidden = true;
+
+    if (!preview) {
+        metaNode.textContent = '选择一条 `.txt` 记录后在这里查看';
+        emptyNode.textContent = '临时文本和 `.txt` 缓存会在这里显示；超过预览阈值时会建议直接下载。';
+        return;
+    }
+
+    const lineCount = Number(preview.lineCount || 0);
+    const metaParts = [
+        preview.name || 'relay.txt',
+        `${formatSize(Number(preview.size || 0))}`,
+    ];
+    if (lineCount > 0) {
+        metaParts.push(`${lineCount} 行`);
+    }
+    if (preview.encoding) {
+        metaParts.push(String(preview.encoding));
+    }
+    metaNode.textContent = metaParts.join(' · ');
+    downloadBtn.hidden = !preview.downloadUrl;
+    clearBtn.hidden = false;
+
+    if (!preview.canPreview) {
+        emptyNode.textContent = preview.message || '当前缓存仅支持文本预览，请直接下载查看。';
+        return;
+    }
+
+    if (!preview.inlineAllowed) {
+        emptyNode.textContent = preview.message || '文本超过预览阈值，请直接下载查看。';
+        return;
+    }
+
+    textNode.hidden = false;
+    emptyNode.hidden = true;
+    textNode.textContent = preview.content || '';
 }
 
 function formatTtlCountdown(expiresAtSec) {

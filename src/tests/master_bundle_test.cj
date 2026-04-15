@@ -22,6 +22,7 @@ public class MasterBundle_test {
         let system = masters.monitor.system().toString()
         @Assert(parseJsonString(system, "os") ?? "", "cangjie")
         @Assert(!server.profile.supportsPeerTransfer)
+        @Assert(server.profile.supportsRelay)
         @Assert(server.getSecurityMode(), "plain")
     }
 
