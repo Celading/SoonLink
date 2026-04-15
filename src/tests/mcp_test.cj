@@ -16,7 +16,7 @@ public class Mcp_test {
         cfg.logDir = "/tmp/${scope}_logs"
         cfg.deviceRegistryFile = "/tmp/${scope}_registry.json"
 
-        let runtime = AutomationRuntime(cfg, profile: coreProductProfile())
+        let runtime = AutomationRuntime(cfg, profile: defaultRuntimeProfile())
         try {
             runtime.start()
             let response = dispatchMcpRequest(
@@ -39,7 +39,7 @@ public class Mcp_test {
         cfg.logDir = "/tmp/${scope}_logs"
         cfg.deviceRegistryFile = "/tmp/${scope}_registry.json"
 
-        let runtime = AutomationRuntime(cfg, profile: coreProductProfile())
+        let runtime = AutomationRuntime(cfg, profile: defaultRuntimeProfile())
         try {
             runtime.start()
             let response = dispatchMcpRequest(
@@ -51,9 +51,48 @@ public class Mcp_test {
             @Assert(response.contains("\"soonlink_list_connectors\""))
             @Assert(response.contains("\"soonlink_register_device\""))
             @Assert(response.contains("\"soonlink_remove_device\""))
+            @Assert(response.contains("\"soonlink_remember_device\""))
             @Assert(response.contains("\"soonlink_set_device_trust\""))
             @Assert(response.contains("\"soonlink_start_device_pin_pairing\""))
             @Assert(response.contains("\"soonlink_confirm_device_pin_pairing\""))
+        } finally {
+            runtime.stop()
+        }
+    }
+
+    @TestCase
+    public func statusToolCallReturnsRuntimeIdentityConfig(): Unit {
+        let scope = testTempToken("soonlink_mcp_status")
+        var cfg = AppConfig()
+        cfg.nodeId = "mcp-public-node"
+        cfg.localRootDir = "/tmp/${scope}"
+        cfg.tempDir = "/tmp/${scope}_temp"
+        cfg.logDir = "/tmp/${scope}_logs"
+        cfg.deviceRegistryFile = "/tmp/${scope}_registry.json"
+        cfg.discoveryUdpPort = 19190
+        cfg.discoveryHeartbeatSeconds = 45
+        cfg.discoveryAdvertiseIp = "192.168.1.40"
+        cfg.discoveryBroadcastEnabled = true
+        cfg.localAuthTrustProxyHeaders = true
+
+        let runtime = AutomationRuntime(cfg, profile: defaultRuntimeProfile())
+        try {
+            runtime.start()
+            let response = dispatchMcpRequest(
+                runtime,
+                "{\"jsonrpc\":\"2.0\",\"id\":\"status-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"soonlink_status\",\"arguments\":{}}}"
+            ) ?? ""
+            @Assert(response.contains("\"success\":true"))
+            @Assert(response.contains("\"nodeId\":\"mcp-public-node\""))
+            @Assert(response.contains("\"discoveryUdpPort\":19190"))
+            @Assert(response.contains("\"discoveryHeartbeatSeconds\":45"))
+            @Assert(response.contains("\"discoveryAdvertiseIp\":\"192.168.1.40\""))
+            @Assert(response.contains("\"discoveryBroadcastEnabled\":true"))
+            @Assert(response.contains("\"supportsMdnsDiscovery\":false"))
+            @Assert(response.contains("\"discoverable\":true"))
+            @Assert(response.contains("\"localEndpoint\":\"192.168.1.40:8081\""))
+            @Assert(response.contains("\"registerDeviceCommand\":\"soonlnk register-device --id mcp-public-node --ip 192.168.1.40 --port 8081 --connector soonlink-http --scheme http\""))
+            @Assert(response.contains("\"trustProxyHeaders\":true"))
         } finally {
             runtime.stop()
         }
@@ -73,7 +112,7 @@ public class Mcp_test {
         cfg.logDir = "/tmp/${scope}_logs"
         cfg.deviceRegistryFile = "/tmp/${scope}_registry.json"
 
-        let runtime = AutomationRuntime(cfg, profile: coreProductProfile())
+        let runtime = AutomationRuntime(cfg, profile: defaultRuntimeProfile())
         try {
             runtime.start()
             let response = dispatchMcpRequest(
@@ -96,7 +135,7 @@ public class Mcp_test {
         cfg.logDir = "/tmp/${scope}_logs"
         cfg.deviceRegistryFile = "/tmp/${scope}_registry.json"
 
-        let runtime = AutomationRuntime(cfg, profile: coreProductProfile())
+        let runtime = AutomationRuntime(cfg, profile: defaultRuntimeProfile())
         try {
             runtime.start()
             let response = dispatchMcpRequest(
@@ -120,7 +159,7 @@ public class Mcp_test {
         cfg.logDir = "/tmp/${scope}_logs"
         cfg.deviceRegistryFile = "/tmp/${scope}_registry.json"
 
-        let runtime = AutomationRuntime(cfg, profile: coreProductProfile())
+        let runtime = AutomationRuntime(cfg, profile: defaultRuntimeProfile())
         try {
             runtime.start()
             let registerResponse = dispatchMcpRequest(
@@ -152,7 +191,7 @@ public class Mcp_test {
         cfg.logDir = "/tmp/${scope}_logs"
         cfg.deviceRegistryFile = "/tmp/${scope}_registry.json"
 
-        let runtime = AutomationRuntime(cfg, profile: coreProductProfile())
+        let runtime = AutomationRuntime(cfg, profile: defaultRuntimeProfile())
         try {
             runtime.start()
             let registerResponse = dispatchMcpRequest(
@@ -175,6 +214,39 @@ public class Mcp_test {
             ) ?? ""
             @Assert(confirmResponse.contains("\"success\":true"))
             @Assert(confirmResponse.contains("\"trustState\":\"trusted\""))
+        } finally {
+            runtime.stop()
+        }
+    }
+
+    @TestCase
+    public func rememberDeviceToolMarksDiscoveredEntryRemembered(): Unit {
+        let scope = testTempToken("soonlink_mcp_remember")
+        var cfg = AppConfig()
+        cfg.localRootDir = "/tmp/${scope}"
+        cfg.tempDir = "/tmp/${scope}_temp"
+        cfg.logDir = "/tmp/${scope}_logs"
+        cfg.deviceRegistryFile = "/tmp/${scope}_registry.json"
+
+        let runtime = AutomationRuntime(cfg, profile: defaultRuntimeProfile())
+        try {
+            runtime.start()
+
+            let device = Device(id: "mcp-peer")
+            device.name = "MCP Peer"
+            device.deviceType = "node"
+            device.ip = "10.0.0.99"
+            device.port = 19103
+            device.online = true
+            device.remembered = false
+            runtime.server.registerDevice(device)
+
+            let response = dispatchMcpRequest(
+                runtime,
+                "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"soonlink_remember_device\",\"arguments\":{\"deviceId\":\"mcp-peer\"}}}"
+            ) ?? ""
+            @Assert(response.contains("\"success\":true"))
+            @Assert(response.contains("\"remembered\":true"))
         } finally {
             runtime.stop()
         }

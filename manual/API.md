@@ -1,6 +1,6 @@
 # SoonLink API
 
-SoonLink 开源版当前公开的核心接口可按下面四组理解。
+SoonLink 当前核心接口可按下面四组理解。
 
 ## 1. 运行态与会话
 
@@ -8,7 +8,7 @@ SoonLink 开源版当前公开的核心接口可按下面四组理解。
 - `GET /api/ready`
 - `GET /api/session/context`
 
-用于检查服务状态、获取当前 edition / capability / auth 描述，以及让前端或自动化端决定能力呈现。
+用于检查服务状态、获取当前能力 / auth 描述，以及让前端或自动化端决定能力呈现。
 
 ## 2. 文件系统
 

@@ -7,13 +7,13 @@ import std.collection.ArrayList
 import std.unicode.*
 
 public class AutomationRuntime {
-    public let profile: ProductProfile
+    public let profile: RuntimeProfile
     public let config: AppConfig
     public let server: CoreServer
     var started: Bool = false
 
-    public init(config: AppConfig, profile!: ProductProfile = resolveProductProfile()) {
-        let normalized = normalizeAppConfigForProfile(config, profile)
+    public init(config: AppConfig, profile!: RuntimeProfile = currentRuntimeProfile()) {
+        let normalized = normalizeAppConfigForRuntime(config, profile)
         this.profile = profile
         this.config = normalized
         this.server = CoreServer(normalized, profile: profile)
@@ -51,9 +51,9 @@ public func buildStatusPayload(runtime: AutomationRuntime): String {
     let out = JsonObject()
         .putBool("success", true)
         .put("name", runtime.profile.productName)
-        .put("edition", runtime.profile.edition)
-        .putObj("capabilities", productCapabilitiesToJson(runtime.profile))
+        .putObj("capabilities", runtimeCapabilitiesToJson(runtime.profile))
         .putObj("config", buildAutomationConfigObject(runtime.config))
+        .putObj("discovery", buildAutomationDiscoveryObject(runtime))
         .putObj("system", runtime.server.monitorSystem())
         .putInt("deviceCount", devices.size)
         .putInt("taskCount", tasks.size)
@@ -66,13 +66,44 @@ public func buildStatusPayload(runtime: AutomationRuntime): String {
     out.toString()
 }
 
+func buildAutomationDiscoveryObject(runtime: AutomationRuntime): JsonObject {
+    let localDevice = runtime.server.getDevice("local")
+    let effectiveAdvertiseIp = resolveAutomationDiscoveryEffectiveIp(runtime, localDevice)
+    let endpointHost = resolveAutomationDiscoveryLocalEndpointHost(localDevice, effectiveAdvertiseIp)
+    let endpointPort = resolveAutomationDiscoveryLocalEndpointPort(runtime, localDevice)
+
+    let out = JsonObject()
+        .put("mode", if (runtime.profile.supportsActiveDiscovery) { "active" } else { "passive" })
+        .put("nodeId", runtime.config.nodeId)
+        .putBool("supportsActiveDiscovery", runtime.profile.supportsActiveDiscovery)
+        .putBool("supportsMdnsDiscovery", runtime.profile.supportsMdnsDiscovery)
+        .putBool("udpBroadcastEnabled", runtime.config.discoveryBroadcastEnabled)
+        .putBool("mdnsEnabled", runtime.config.enableMdns)
+        .putInt("udpPort", runtime.config.discoveryUdpPort)
+        .putInt("heartbeatSeconds", runtime.config.discoveryHeartbeatSeconds)
+        .put("configuredAdvertiseIp", runtime.config.discoveryAdvertiseIp)
+        .put("effectiveAdvertiseIp", effectiveAdvertiseIp)
+        .put("localEndpoint", buildAutomationDiscoveryEndpointText(endpointHost, endpointPort))
+        .put("localEndpointHost", endpointHost)
+        .putInt("localEndpointPort", endpointPort)
+        .putArr("channels", buildAutomationDiscoveryChannels(runtime))
+        .putBool("rememberRequiresConfirmation", true)
+        .putBool("discoverable", runtime.profile.supportsActiveDiscovery &&
+            (runtime.config.discoveryBroadcastEnabled || runtime.config.enableMdns))
+        .put("registerDeviceCommand", buildAutomationRegisterDeviceCommand(runtime.config.nodeId, endpointHost, endpointPort))
+    match (localDevice) {
+        case Some(device) => out.putObj("localDevice", device.toJson())
+        case None => ()
+    }
+    out
+}
+
 public func buildDevicesPayload(runtime: AutomationRuntime, deviceId: String): String {
     if (deviceId.size > 0) {
         match (runtime.server.getDevice(deviceId)) {
             case Some(device) =>
                 return JsonObject()
                     .putBool("success", true)
-                    .put("edition", runtime.profile.edition)
                     .putObj("device", device.toJson())
                     .toString()
             case None =>
@@ -83,7 +114,6 @@ public func buildDevicesPayload(runtime: AutomationRuntime, deviceId: String): S
     let devices = runtime.server.listDevices()
     JsonObject()
         .putBool("success", true)
-        .put("edition", runtime.profile.edition)
         .putArr("devices", devicesToJsonArray(devices))
         .toString()
 }
@@ -98,7 +128,6 @@ public func buildUpsertDevicePayload(runtime: AutomationRuntime, record: DeviceR
         let device = runtime.server.upsertManagedDeviceRecord(record)
         JsonObject()
             .putBool("success", true)
-            .put("edition", runtime.profile.edition)
             .putObj("device", device.toJson())
             .put("message", "设备端点已保存")
             .toString()
@@ -122,10 +151,27 @@ public func buildRemoveDevicePayload(runtime: AutomationRuntime, deviceId: Strin
 
     JsonObject()
         .putBool("success", true)
-        .put("edition", runtime.profile.edition)
         .put("deviceId", normalizedId)
         .put("message", "设备端点已删除")
         .toString()
+}
+
+public func buildRememberDevicePayload(runtime: AutomationRuntime, deviceId: String): String {
+    let normalizedId = deviceId.trimAscii()
+    if (normalizedId.size == 0) {
+        return buildMachineErrorPayload("MISSING_DEVICE_ID", "deviceId 不能为空")
+    }
+
+    try {
+        let device = runtime.server.rememberDiscoveredDevice(normalizedId)
+        JsonObject()
+            .putBool("success", true)
+            .putObj("device", device.toJson())
+            .put("message", "设备已记住")
+            .toString()
+    } catch (e: Exception) {
+        buildMachineErrorPayload("DEVICE_REMEMBER_FAILED", e.message)
+    }
 }
 
 public func buildDeviceTrustPayload(runtime: AutomationRuntime, deviceId: String, state: String): String {
@@ -142,7 +188,6 @@ public func buildDeviceTrustPayload(runtime: AutomationRuntime, deviceId: String
         let device = runtime.server.setDeviceTrustState(normalizedId, normalizedState)
         JsonObject()
             .putBool("success", true)
-            .put("edition", runtime.profile.edition)
             .putObj("device", device.toJson())
             .put("message", "设备授信状态已更新")
             .toString()
@@ -161,7 +206,6 @@ public func buildDevicePinStartPayload(runtime: AutomationRuntime, deviceId: Str
         let session = runtime.server.startPinPairing(normalizedId)
         JsonObject()
             .putBool("success", true)
-            .put("edition", runtime.profile.edition)
             .putObj("pairing", session.toJson())
             .put("message", "PIN 配对口令已生成")
             .toString()
@@ -181,7 +225,6 @@ public func buildDevicePinConfirmPayload(runtime: AutomationRuntime, deviceId: S
         let device = runtime.server.confirmPinPairing(normalizedId, normalizedPin)
         JsonObject()
             .putBool("success", true)
-            .put("edition", runtime.profile.edition)
             .putObj("device", device.toJson())
             .put("message", "PIN 配对成功，设备已授信")
             .toString()
@@ -196,7 +239,6 @@ public func buildTasksPayload(runtime: AutomationRuntime, taskId: String): Strin
             case Some(task) =>
                 return JsonObject()
                     .putBool("success", true)
-                    .put("edition", runtime.profile.edition)
                     .putObj("task", task.toJson())
                     .toString()
             case None =>
@@ -207,7 +249,6 @@ public func buildTasksPayload(runtime: AutomationRuntime, taskId: String): Strin
     let tasks = runtime.server.listTasks()
     JsonObject()
         .putBool("success", true)
-        .put("edition", runtime.profile.edition)
         .putArr("tasks", tasksToJsonArray(tasks))
         .toString()
 }
@@ -215,7 +256,6 @@ public func buildTasksPayload(runtime: AutomationRuntime, taskId: String): Strin
 public func buildConnectorsPayload(runtime: AutomationRuntime, deviceId: String): String {
     let out = JsonObject()
         .putBool("success", true)
-        .put("edition", runtime.profile.edition)
         .putArr("connectors", connectorDescriptorsToJsonArray(runtime.server.listConnectors()))
 
     if (deviceId.size > 0) {
@@ -243,7 +283,6 @@ public func buildFsListPayload(runtime: AutomationRuntime, deviceId: String, pat
         let files = runtime.server.listDir(resolvedDevice, resolvedPath)
         JsonObject()
             .putBool("success", true)
-            .put("edition", runtime.profile.edition)
             .put("device", resolvedDevice)
             .put("path", resolvedPath)
             .putArr("files", fileEntriesToJsonArray(files))
@@ -261,7 +300,6 @@ public func buildFsInfoPayload(runtime: AutomationRuntime, deviceId: String, pat
             case Some(info) =>
                 JsonObject()
                     .putBool("success", true)
-                    .put("edition", runtime.profile.edition)
                     .put("device", resolvedDevice)
                     .putObj("info", info.toJson())
                     .toString()
@@ -279,7 +317,6 @@ public func buildSummaryPayload(runtime: AutomationRuntime, deviceId: String, pa
     try {
         JsonObject()
             .putBool("success", true)
-            .put("edition", runtime.profile.edition)
             .put("device", resolvedDevice)
             .putObj("summary", runtime.server.summarizeTransferSource(resolvedDevice, resolvedPath))
             .toString()
@@ -320,7 +357,6 @@ public func buildTransferTaskPayload(
         let task = runtime.server.createTransferTask(resolvedSource, resolvedTarget, resolvedFilePath, targetPath)
         JsonObject()
             .putBool("success", true)
-            .put("edition", runtime.profile.edition)
             .putObj("task", task.toJson())
             .toString()
     } catch (e: Exception) {
@@ -330,6 +366,7 @@ public func buildTransferTaskPayload(
 
 func buildAutomationConfigObject(config: AppConfig): JsonObject {
     JsonObject()
+        .put("nodeId", config.nodeId)
         .put("listenAddr", config.listenAddr)
         .putInt("webPort", Int64(config.webPort))
         .put("tempDir", config.tempDir)
@@ -338,10 +375,85 @@ func buildAutomationConfigObject(config: AppConfig): JsonObject {
         .put("configFile", config.configFile)
         .put("deviceRegistryFile", config.deviceRegistryFile)
         .put("securityMode", config.securityMode)
+        .putInt("discoveryUdpPort", config.discoveryUdpPort)
+        .putInt("discoveryHeartbeatSeconds", config.discoveryHeartbeatSeconds)
+        .put("discoveryAdvertiseIp", config.discoveryAdvertiseIp)
         .putBool("enableMdns", config.enableMdns)
+        .putBool("discoveryBroadcastEnabled", config.discoveryBroadcastEnabled)
         .putBool("relayEnabled", config.relayEnabled)
+        .putBool("trustProxyHeaders", config.localAuthTrustProxyHeaders)
         .put("relayCacheDir", config.relayCacheDir)
         .put("favoritesStoreMode", config.favoritesStoreMode)
+}
+
+func resolveAutomationDiscoveryEffectiveIp(runtime: AutomationRuntime, localDevice: ?Device): String {
+    match (localDevice) {
+        case Some(device) =>
+            let ip = device.ip.trimAscii()
+            if (ip.size > 0) {
+                return ip
+            }
+        case None => ()
+    }
+    let configured = runtime.config.discoveryAdvertiseIp.trimAscii()
+    if (configured.size > 0) {
+        return configured
+    }
+    "127.0.0.1"
+}
+
+func resolveAutomationDiscoveryLocalEndpointHost(localDevice: ?Device, effectiveAdvertiseIp: String): String {
+    match (localDevice) {
+        case Some(device) =>
+            let ip = device.ip.trimAscii()
+            if (ip.size > 0) {
+                return ip
+            }
+        case None => ()
+    }
+    effectiveAdvertiseIp.trimAscii()
+}
+
+func resolveAutomationDiscoveryLocalEndpointPort(runtime: AutomationRuntime, localDevice: ?Device): Int64 {
+    match (localDevice) {
+        case Some(device) =>
+            if (device.port > 0) {
+                return device.port
+            }
+        case None => ()
+    }
+    Int64(runtime.config.webPort)
+}
+
+func buildAutomationDiscoveryChannels(runtime: AutomationRuntime): JsonArray {
+    let arr = JsonArray()
+    if (runtime.profile.supportsActiveDiscovery && runtime.config.discoveryBroadcastEnabled) {
+        arr.addStr("udp-broadcast")
+    }
+    if (runtime.profile.supportsActiveDiscovery && runtime.config.enableMdns) {
+        arr.addStr("mdns")
+    }
+    arr
+}
+
+func buildAutomationDiscoveryEndpointText(endpointHost: String, endpointPort: Int64): String {
+    let host = endpointHost.trimAscii()
+    if (host.size == 0) {
+        return ""
+    }
+    if (endpointPort > 0) {
+        return "${host}:${endpointPort}"
+    }
+    host
+}
+
+func buildAutomationRegisterDeviceCommand(nodeId: String, endpointHost: String, endpointPort: Int64): String {
+    let normalizedId = nodeId.trimAscii()
+    let normalizedHost = endpointHost.trimAscii()
+    if (normalizedId.size == 0 || normalizedHost.size == 0 || endpointPort <= 0) {
+        return ""
+    }
+    "soonlnk register-device --id ${normalizedId} --ip ${normalizedHost} --port ${endpointPort} --connector soonlink-http --scheme http"
 }
 
 func devicesToJsonArray(devices: ArrayList<Device>): JsonArray {

@@ -1,6 +1,6 @@
 # Deployment
 
-The open-source edition currently keeps three common delivery paths.
+The repository currently keeps three common delivery paths.
 
 ## 1. Build from Source
 

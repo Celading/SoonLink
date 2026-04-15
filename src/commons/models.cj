@@ -66,6 +66,7 @@ public class Device {
     public var lastSeen: Int64 = 0
     public var capability: ArrayList<String> = ArrayList<String>()
     public var online: Bool = false
+    public var remembered: Bool = false
     public var trustState: DeviceTrustState = Unknown
     public var trustSource: String = ""
     public var trustUpdatedAt: Int64 = 0
@@ -107,6 +108,7 @@ public class Device {
             .putInt("lastSeen", lastSeen)
             .putArr("capability", capArr)
             .putBool("online", online)
+            .putBool("remembered", remembered)
             .putObj("endpoint", endpoint.toJson())
             .put("trustState", deviceTrustStateToString(trustState))
             .put("trustSource", trustSource)

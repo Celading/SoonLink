@@ -7,7 +7,7 @@ import std.random.Random
 func testTempToken(label: String): String {
     let chars = "0123456789abcdef".toRuneArray()
     let random = Random()
-    let edition = resolveProductProfile().edition
+    let runtimeLabel = "runtime"
     var suffix = ""
     for (_ in 0..8) {
         var raw = random.nextInt64()
@@ -16,16 +16,17 @@ func testTempToken(label: String): String {
         }
         suffix += chars[raw % Int64(chars.size)].toString()
     }
-    "${label}_${edition}_${currentTimestamp()}_${suffix}"
+    "${label}_${runtimeLabel}_${currentTimestamp()}_${suffix}"
 }
 
 func testTempPath(label: String): String {
     "/tmp/" + testTempToken(label)
 }
 
-func capabilityCompleteTestProfile(): ProductProfile {
-    var profile = coreProductProfile()
+func featureRichTestRuntime(): RuntimeProfile {
+    var profile = defaultRuntimeProfile()
     profile.supportsActiveDiscovery = true
+    profile.supportsMdnsDiscovery = true
     profile.supportsPeerTransfer = true
     profile.supportsRelay = true
     profile.supportsWhitelist = true

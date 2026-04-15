@@ -17,7 +17,7 @@ SoonLink is an open-source file-management and cross-device transfer service bui
 - **Automation first**: ships CLI and `stdio` MCP entrypoints for agents, taskers, and scripts.
 - **Native to the current Cangjie ecosystem**: Ignite carries the Web surface, while lisi fills ecosystem gaps.
 - **No-code client included**: ships with the built-in [StaticWeb](./web) service, ready to use without separate frontend development.
-- **Community-driven and modular**: suitable for public collaboration, self-hosted deployment, and downstream customization, while exposing MCP (Model Context Protocol) Server and CLI surfaces for deep integration.
+- **Modular and extensible**: suitable for collaborative maintenance, self-hosted deployment, and downstream customization, while exposing MCP (Model Context Protocol) Server and CLI surfaces for deep integration.
 
 ## Quick Start
 
@@ -38,7 +38,7 @@ Default entrypoints:
 
 ### Dependency note
 
-> The public `cjpm.toml` is already aligned to cloud-hosted Ignite and lisi sources. If your environment relies on local mirrors, private registries, or offline dependencies, replace those dependency sources to match your build environment.
+> The repository `cjpm.toml` is already aligned to the default Ignite and lisi sources. If your environment relies on local mirrors, private registries, or offline dependencies, replace those dependency sources to match your build environment.
 
 - Cangjie SDK environment [`cangjie-sdk`](https://cangjie-lang.cn/download) v1.1.0+
 - Cangjie standard extension library [`cangjie-stdx`](https://gitcode.com/Cangjie/cangjie_stdx/releases/v1.1.0-beta.24.1)
@@ -67,7 +67,7 @@ SoonLink reads the following files by default and creates them if missing:
 - **Transfer pipeline**: chunk upload, merged writes, range download, and task tracking.
 - **Device and trust foundations**: manual registration, device state, trust state, and PIN pairing foundations.
 - **Automation surfaces**: CLI, MCP, Swagger, and HTTP APIs.
-- **Engineering shape**: source builds, CI checks, and an open repository layout that can keep evolving.
+- **Engineering shape**: source builds, CI checks, and a repository layout that can keep evolving.
 
 ## API Overview
 
@@ -112,7 +112,7 @@ SoonLink/
 | Linux | x86_64 / aarch64 | ✅ | General GNU/Linux |
 | EulerOS | Taishan / x86_64 | ✅ | Aligned with general Linux support |
 | Windows | x86_64 | ✅ | Default Windows compatibility line |
-| OpenHarmony | aarch64 / x86_64 | ✅ | Public OHOS adaptation line |
+| OpenHarmony | aarch64 / x86_64 | ✅ | OHOS adaptation line |
 | HarmonyOS | arm64 / Lingxi | ✅ | Terminal and device-side deployment line |
 | LoongArch | LoongArch64 | Planned | Reserved for later platform expansion |
 

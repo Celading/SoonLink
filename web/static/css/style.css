@@ -1666,7 +1666,7 @@ body.dashboard-page {
 }
 
 @media (max-width: 479.98px) {
-    #edition-pill {
+    #runtime-pill {
         display: none;
     }
 }

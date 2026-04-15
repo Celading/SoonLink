@@ -1,6 +1,6 @@
 # SoonLink API
 
-The public open-source surface of SoonLink is easiest to understand in four groups.
+The SoonLink API surface is easiest to understand in four groups.
 
 ## 1. Runtime and Session
 
@@ -8,7 +8,7 @@ The public open-source surface of SoonLink is easiest to understand in four grou
 - `GET /api/ready`
 - `GET /api/session/context`
 
-Use these for runtime checks and for retrieving the current edition, capabilities, and auth description used by Web or automation clients.
+Use these for runtime checks and for retrieving the current runtime identity, capabilities, and auth description used by Web or automation clients.
 
 ## 2. File System
 

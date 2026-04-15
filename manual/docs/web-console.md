@@ -1,6 +1,6 @@
 # Web Console
 
-SoonLink 开源版的 Web 控制台主要服务于三类操作：
+SoonLink 的 Web 控制台主要服务于三类操作：
 
 ## 1. 文件浏览
 

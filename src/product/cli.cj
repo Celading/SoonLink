@@ -31,16 +31,16 @@ public func runProductCli(commandLine: Array<String>): Int64 {
             println("服务已关闭")
             0
         case "version" =>
-            let profile = resolveProductProfile()
+            let profile = currentRuntimeProfile()
             println(buildVersionPayload(profile))
             0
         case "capabilities" =>
-            let profile = resolveProductProfile()
+            let profile = currentRuntimeProfile()
             println(buildCapabilitiesPayload(profile))
             0
         case "config" =>
             let config = loadAppConfigWithConsole(action.effectiveCommandLine, consoleEnabled: false)
-            let profile = resolveProductProfile()
+            let profile = currentRuntimeProfile()
             println(buildConfigPayload(config, profile))
             0
         case "status" =>
@@ -54,6 +54,8 @@ public func runProductCli(commandLine: Array<String>): Int64 {
         case "register-device" =>
             emitCliOutput(executeAutomationCommand(action))
         case "remove-device" =>
+            emitCliOutput(executeAutomationCommand(action))
+        case "remember-device" =>
             emitCliOutput(executeAutomationCommand(action))
         case "trust-device" =>
             emitCliOutput(executeAutomationCommand(action))
@@ -70,7 +72,7 @@ public func runProductCli(commandLine: Array<String>): Int64 {
         case "transfer" =>
             emitCliOutput(executeAutomationCommand(action))
         case "mcp" =>
-            let profile = resolveProductProfile()
+            let profile = currentRuntimeProfile()
             if (!profile.supportsMcp) {
                 println(buildMachineErrorPayload("MCP_DISABLED", "当前产品形态未启用 MCP"))
                 return 1
@@ -149,6 +151,9 @@ public func resolveCliAction(commandLine: Array<String>): CliAction {
         case "remove-device" =>
             action.command = "remove-device"
             action.effectiveCommandLine = stripSubcommand(commandLine)
+        case "remember-device" =>
+            action.command = "remember-device"
+            action.effectiveCommandLine = stripSubcommand(commandLine)
         case "trust-device" =>
             action.command = "trust-device"
             action.effectiveCommandLine = stripSubcommand(commandLine)
@@ -183,31 +188,29 @@ public func resolveCliAction(commandLine: Array<String>): CliAction {
     action
 }
 
-public func buildVersionPayload(profile: ProductProfile): String {
+public func buildVersionPayload(profile: RuntimeProfile): String {
     let moduleName = resolveTechnicalPackageName(GetData.GetDataClass.ModuleName())
     let moduleVersion = resolveProductVersion(GetData.GetDataClass.ModuleVer())
     JsonObject()
         .put("name", profile.productName)
-        .put("edition", profile.edition)
         .put("package", moduleName)
         .put("version", moduleVersion)
         .toString()
 }
 
-public func buildCapabilitiesPayload(profile: ProductProfile): String {
+public func buildCapabilitiesPayload(profile: RuntimeProfile): String {
     let out = JsonObject()
         .put("name", profile.productName)
-        .put("edition", profile.edition)
-        .putObj("capabilities", productCapabilitiesToJson(profile))
-        .putArr("capabilityTags", productCapabilityTags(profile))
+        .putObj("capabilities", runtimeCapabilitiesToJson(profile))
+        .putArr("capabilityTags", runtimeCapabilityTags(profile))
     out.toString()
 }
 
-public func buildConfigPayload(config: AppConfig, profile: ProductProfile): String {
-    let normalized = normalizeAppConfigForProfile(config, profile)
+public func buildConfigPayload(config: AppConfig, profile: RuntimeProfile): String {
+    let normalized = normalizeAppConfigForRuntime(config, profile)
     JsonObject()
         .put("name", profile.productName)
-        .put("edition", profile.edition)
+        .put("nodeId", normalized.nodeId)
         .put("listenAddr", normalized.listenAddr)
         .putInt("webPort", Int64(normalized.webPort))
         .put("tempDir", normalized.tempDir)
@@ -216,7 +219,11 @@ public func buildConfigPayload(config: AppConfig, profile: ProductProfile): Stri
         .put("configFile", normalized.configFile)
         .put("deviceRegistryFile", normalized.deviceRegistryFile)
         .put("securityMode", normalized.securityMode)
+        .putInt("discoveryUdpPort", normalized.discoveryUdpPort)
+        .putInt("discoveryHeartbeatSeconds", normalized.discoveryHeartbeatSeconds)
+        .put("discoveryAdvertiseIp", normalized.discoveryAdvertiseIp)
         .putBool("enableMdns", normalized.enableMdns)
+        .putBool("discoveryBroadcastEnabled", normalized.discoveryBroadcastEnabled)
         .putBool("relayEnabled", normalized.relayEnabled)
         .put("relayCacheDir", normalized.relayCacheDir)
         .put("favoritesStoreMode", normalized.favoritesStoreMode)
@@ -237,6 +244,7 @@ public func renderCliHelp(): String {
     "  soonlnk connectors [--id <deviceId>] [options]\n" +
     "  soonlnk register-device --id <deviceId> --ip <host> [--port <port>] [options]\n" +
     "  soonlnk remove-device --id <deviceId> [options]\n" +
+    "  soonlnk remember-device --id <deviceId> [options]\n" +
     "  soonlnk trust-device --id <deviceId> --state <trusted|blocked|unknown> [options]\n" +
     "  soonlnk pair-device-pin --id <deviceId> [options]\n" +
     "  soonlnk confirm-device-pin --id <deviceId> --pin <pin> [options]\n" +
@@ -253,8 +261,13 @@ public func renderCliHelp(): String {
     "  --root-dir <path>       override local root dir\n" +
     "  --temp-dir <path>       override temp dir\n" +
     "  --log-dir <path>        override log dir\n" +
-    "  --enable-mdns           enable active discovery\n" +
-    "  --disable-mdns          disable active discovery\n" +
+    "  --node-id <id>          override stable discovery node id\n" +
+    "  --discovery-port <port> override UDP discovery port\n" +
+    "  --advertise-ip <ip>     override discovery advertise IP\n" +
+    "  --enable-mdns           enable mDNS discovery when the current runtime supports it\n" +
+    "  --disable-mdns          disable mDNS discovery\n" +
+    "  --enable-discovery-broadcast  allow UDP broadcast discovery\n" +
+    "  --disable-discovery-broadcast disable UDP broadcast discovery\n" +
     "\n" +
     "Automation options:\n" +
     "  --device <deviceId>     target device for fs-list/fs-info/summary\n" +
@@ -277,7 +290,7 @@ public func renderCliHelp(): String {
 
 func executeAutomationCommand(action: CliAction): CliOutput {
     let output = CliOutput()
-    let profile = resolveProductProfile()
+    let profile = currentRuntimeProfile()
     let config = loadAppConfigWithConsole(action.effectiveCommandLine, consoleEnabled: false)
     let runtime = AutomationRuntime(config, profile: profile)
 
@@ -301,6 +314,9 @@ func executeAutomationCommand(action: CliAction): CliOutput {
             case "remove-device" =>
                 let id = firstNonEmptyCliArg(action.effectiveCommandLine, "--id", "--device-id")
                 output.body = buildRemoveDevicePayload(runtime, id)
+            case "remember-device" =>
+                let id = firstNonEmptyCliArg(action.effectiveCommandLine, "--id", "--device-id")
+                output.body = buildRememberDevicePayload(runtime, id)
             case "trust-device" =>
                 let id = firstNonEmptyCliArg(action.effectiveCommandLine, "--id", "--device-id")
                 let state = findCliArgValue(action.effectiveCommandLine, "--state")

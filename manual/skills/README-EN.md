@@ -1,20 +1,20 @@
 # SoonLink Skills Index
 
-This folder is meant for public-facing SoonLink usage patterns, not internal team-only governance.
+This folder is meant for reusable SoonLink usage patterns, not internal team-only governance.
 
 ## Start here
 
 - [CLI and MCP Skills](./cli-and-mcp-EN.md)
-  - Use this first when you are onboarding a SoonLink Core node or wiring it into an agent workflow.
+  - Use this first when you are onboarding a SoonLink node or wiring it into an agent workflow.
 
-## The most valuable Core skills
+## The most valuable skills
 
-- **verify edition and capability first**
+- **verify runtime and capability state first**
   - Start with `soonlnk version` and `soonlnk capabilities`.
 - **inspect state before acting**
   - Check `config`, `status`, and `connectors` before registration, trust, or transfer work.
 - **treat registration and trust as first-class workflows**
-  - Manual node registration plus PIN pairing is the safest Core onboarding path.
+  - Manual node registration plus PIN pairing is the safest onboarding path.
 - **summarize paths before transfer**
   - Use `summary` to confirm path semantics, entry count, and estimated size before creating a task.
 - **make MCP agents read before they write**
@@ -23,7 +23,7 @@ This folder is meant for public-facing SoonLink usage patterns, not internal tea
 ## Capture this before filing an issue
 
 - version
-- edition
+- capability tags
 - exact CLI or MCP input
 - source device, target device, and path
 - `status` output
@@ -34,12 +34,12 @@ This folder is meant for public-facing SoonLink usage patterns, not internal tea
 
 `skills/` is a good place for:
 
-- public reusable usage patterns
+- reusable usage patterns
 - repeatable integration sequences
 - CLI / MCP / agent-friendly task chains
 
 `skills/` is not a good place for:
 
 - internal execution notes
-- private commercial capability details
+- sensitive operational details
 - `_helper` risk logs or internal decision records

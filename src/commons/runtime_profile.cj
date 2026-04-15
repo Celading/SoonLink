@@ -2,11 +2,11 @@ package soonlnk.commons
 
 import std.unicode.*
 
-public struct ProductProfile {
-    public var edition: String = "core"
+public struct RuntimeProfile {
     public var productName: String = "SoonLink"
     public var supportsPassiveDiscovery: Bool = true
     public var supportsActiveDiscovery: Bool = false
+    public var supportsMdnsDiscovery: Bool = false
     public var supportsPeerTransfer: Bool = false
     public var supportsRelay: Bool = false
     public var supportsWhitelist: Bool = false
@@ -17,16 +17,12 @@ public struct ProductProfile {
     public init() {}
 }
 
-public func defaultProductProfile(): ProductProfile {
-    coreProductProfile()
-}
-
-public func coreProductProfile(): ProductProfile {
-    var out = ProductProfile()
-    out.edition = "core"
+public func defaultRuntimeProfile(): RuntimeProfile {
+    var out = RuntimeProfile()
     out.productName = "SoonLink"
     out.supportsPassiveDiscovery = true
-    out.supportsActiveDiscovery = false
+    out.supportsActiveDiscovery = true
+    out.supportsMdnsDiscovery = false
     out.supportsPeerTransfer = false
     out.supportsRelay = false
     out.supportsWhitelist = false
@@ -36,12 +32,15 @@ public func coreProductProfile(): ProductProfile {
     out
 }
 
-public func normalizeAppConfigForProfile(config: AppConfig, profile: ProductProfile): AppConfig {
+public func normalizeAppConfigForRuntime(config: AppConfig, profile: RuntimeProfile): AppConfig {
     var out = config
     if (!profile.supportsPeerTransfer) {
         out.securityMode = "plain"
     }
     if (!profile.supportsActiveDiscovery) {
+        out.enableMdns = false
+        out.discoveryBroadcastEnabled = false
+    } else if (!profile.supportsMdnsDiscovery) {
         out.enableMdns = false
     }
     if (!profile.supportsRelay) {
@@ -50,7 +49,7 @@ public func normalizeAppConfigForProfile(config: AppConfig, profile: ProductProf
     out
 }
 
-public func applyDefaultDeviceCapabilities(device: Device, profile: ProductProfile): Unit {
+public func applyDefaultDeviceCapabilities(device: Device, profile: RuntimeProfile): Unit {
     if (device.capability.size > 0) {
         return
     }
@@ -61,10 +60,11 @@ public func applyDefaultDeviceCapabilities(device: Device, profile: ProductProfi
     }
 }
 
-public func productCapabilitiesToJson(profile: ProductProfile): JsonObject {
+public func runtimeCapabilitiesToJson(profile: RuntimeProfile): JsonObject {
     JsonObject()
         .putBool("passiveDiscovery", profile.supportsPassiveDiscovery)
         .putBool("activeDiscovery", profile.supportsActiveDiscovery)
+        .putBool("mdnsDiscovery", profile.supportsMdnsDiscovery)
         .putBool("peerTransfer", profile.supportsPeerTransfer)
         .putBool("relay", profile.supportsRelay)
         .putBool("whitelist", profile.supportsWhitelist)
@@ -73,7 +73,7 @@ public func productCapabilitiesToJson(profile: ProductProfile): JsonObject {
         .putBool("mcp", profile.supportsMcp)
 }
 
-public func productCapabilityTags(profile: ProductProfile): JsonArray {
+public func runtimeCapabilityTags(profile: RuntimeProfile): JsonArray {
     let arr = JsonArray()
     arr.addStr("local-device")
     arr.addStr("register-heartbeat")
@@ -82,6 +82,11 @@ public func productCapabilityTags(profile: ProductProfile): JsonArray {
     arr.addStr("task-transfer")
     if (profile.supportsActiveDiscovery) {
         arr.addStr("active-discovery")
+        if (profile.supportsMdnsDiscovery) {
+            arr.addStr("mdns-discovery")
+        } else {
+            arr.addStr("udp-discovery-only")
+        }
     } else {
         arr.addStr("passive-discovery-only")
     }
@@ -124,7 +129,7 @@ public func resolveProductVersion(raw: String): String {
     "0.5.27"
 }
 
-public func resolveRuntimeDisplayName(profile: ProductProfile): String {
+public func resolveRuntimeDisplayName(profile: RuntimeProfile): String {
     let trimmed = profile.productName.trimAscii()
     if (trimmed.size > 0) {
         return trimmed
