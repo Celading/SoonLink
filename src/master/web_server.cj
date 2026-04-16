@@ -7,7 +7,7 @@ import std.collection.{ArrayList, HashMap}
 import std.convert.*
 import std.unicode.*
 import std.sync.Mutex
-import std.fs.{File, OpenMode}
+import std.fs.{File, FileInfo, OpenMode}
 import stdx.net.http.HttpResponseWriter
 import ignite.{App, Ctx, Config, FormFile, Handler, Group, RouteOption, ResponseSpec, ParamSpec, ParamLocation, SwaggerInfo}
 import ignite.middleware.{loggerMiddleware, corsMiddleware, recoverMiddleware, CorsConfig}
@@ -22,6 +22,8 @@ let listDirCacheMutex: Mutex = Mutex()
 var listDirCache: HashMap<String, ListDirCacheEntry> = HashMap<String, ListDirCacheEntry>()
 let listDirCacheTTLSeconds: Int64 = 2
 let previewTextMaxBytes: Int64 = 256 * 1024
+let relayPreviewTextMaxBytes: Int64 = 128 * 1024
+let relayPreviewInlineMaxLines: Int64 = 240
 
 public class ListDirCacheEntry {
     public let entries: ArrayList<FileEntry>
@@ -1019,6 +1021,40 @@ public class WebServer {
                 }
             }, option: RouteOption().withSummary("创建中继任务").withTag("中继"))
 
+            relayJobs.post("/text", { ctx: Ctx =>
+                if (!s.config.relayEnabled) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", "relay disabled")
+                        .toString())
+                    return
+                }
+
+                let sourceDevice = ctx.formValue("sourceDevice") ?? "unknown"
+                let fileName = ctx.formValue("fileName") ?? ""
+                let content = ctx.formValue("content") ?? ""
+                if (content.size == 0) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", "文本内容不能为空")
+                        .toString())
+                    return
+                }
+
+                try {
+                    let job = m.relay.createText(sourceDevice, fileName, content)
+                    ctx.status(200).json(JsonObject()
+                        .putBool("success", true)
+                        .putObj("job", job.toJson())
+                        .toString())
+                } catch (e: Exception) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", e.message)
+                        .toString())
+                }
+            }, option: RouteOption().withSummary("创建临时文本记录").withTag("中继"))
+
             relayJobs.get("/:id/cache", { ctx: Ctx =>
                 let id = ctx.params("id")
                 match (m.relay.cacheDescriptor(id)) {
@@ -1031,6 +1067,34 @@ public class WebServer {
                             .toString())
                 }
             }, option: RouteOption().withSummary("下载中继缓存文件").withTag("中继"))
+
+            relayJobs.get("/:id/preview", { ctx: Ctx =>
+                let id = ctx.params("id")
+                match (m.relay.get(id)) {
+                    case Some(job) =>
+                        match (m.relay.cacheDescriptor(id)) {
+                            case Some((cachePath, _fileName)) =>
+                                try {
+                                    ctx.json(buildRelayPreviewPayload(job, cachePath).toString())
+                                } catch (e: Exception) {
+                                    ctx.status(400).json(JsonObject()
+                                        .putBool("success", false)
+                                        .put("error", e.message)
+                                        .toString())
+                                }
+                            case None =>
+                                ctx.status(404).json(JsonObject()
+                                    .putBool("success", false)
+                                    .put("error", "cache file unavailable")
+                                    .toString())
+                        }
+                    case None =>
+                        ctx.status(404).json(JsonObject()
+                            .putBool("success", false)
+                            .put("error", "任务不存在")
+                            .toString())
+                }
+            }, option: RouteOption().withSummary("预览中继缓存文本").withTag("中继"))
 
             relayJobs.get("/:id", { ctx: Ctx =>
                 let id = ctx.params("id")
@@ -1093,6 +1157,15 @@ public class WebServer {
                     .toString())
             }, option: RouteOption().withSummary("取消中继任务").withTag("中继"))
 
+            relayJobs.delete("/:id", { ctx: Ctx =>
+                let id = ctx.params("id")
+                let ok = m.relay.delete(id)
+                ctx.status(if (ok) { 200 } else { 404 }).json(JsonObject()
+                    .putBool("success", ok)
+                    .put("message", if (ok) { "记录已删除，仅移除中继记录与临时缓存" } else { "任务不存在" })
+                    .toString())
+            }, option: RouteOption().withSummary("删除中继记录").withTag("中继"))
+
             relayJobs.post("/batch-retry", { ctx: Ctx =>
                 let body = ctx.bodyString()
                 let ids = parseJsonStringArray(body, "ids")
@@ -1130,6 +1203,24 @@ public class WebServer {
                     .putArr("ids", arr)
                     .toString())
             }, option: RouteOption().withSummary("批量取消中继任务").withTag("中继"))
+
+            relayJobs.post("/batch-delete", { ctx: Ctx =>
+                let body = ctx.bodyString()
+                let ids = parseJsonStringArray(body, "ids")
+                var updated: Int64 = 0
+                let arr = JsonArray()
+                for (id in ids) {
+                    if (m.relay.delete(id)) {
+                        updated += 1
+                        arr.addStr(id)
+                    }
+                }
+                ctx.json(JsonObject()
+                    .putBool("success", true)
+                    .putInt("updated", updated)
+                    .putArr("ids", arr)
+                    .toString())
+            }, option: RouteOption().withSummary("批量删除中继记录").withTag("中继"))
 
             relayJobs.post("/cleanup", { ctx: Ctx =>
                 let body = ctx.bodyString()
@@ -3065,6 +3156,89 @@ func buildTextPreviewSnippet(m: MasterBundle, deviceId: String, path: String, to
     }
     out.lineCount = countPreviewLines(out.content)
     out
+}
+
+func buildRelayPreviewPayload(job: RelayJob, cachePath: String): JsonObject {
+    let info = FileInfo(cachePath)
+    let mimeType = resolvePreviewMimeType("", job.fileName, false)
+    let kind = resolvePreviewKind(job.fileName, mimeType, false)
+    let canPreview = kind == "text"
+    let payload = JsonObject()
+        .putBool("success", true)
+        .put("jobId", job.id)
+        .put("recordKind", job.recordKind)
+        .put("name", job.fileName)
+        .putInt("size", info.size)
+        .put("mimeType", mimeType)
+        .put("kind", kind)
+        .put("downloadUrl", "/api/relay/jobs/${job.id}/cache")
+        .putBool("canPreview", canPreview)
+
+    if (!canPreview) {
+        payload.put("message", "当前缓存仅支持文本预览，请直接下载查看")
+        return payload
+    }
+
+    let snippet = buildLocalTextPreviewSnippet(cachePath, info.size)
+    let inlineAllowed = !snippet.truncated && snippet.lineCount <= relayPreviewInlineMaxLines
+    payload.put("encoding", snippet.encoding)
+        .putInt("lineCount", snippet.lineCount)
+        .putBool("truncated", snippet.truncated)
+        .putBool("inlineAllowed", inlineAllowed)
+
+    if (inlineAllowed) {
+        payload.put("content", snippet.content)
+    } else {
+        payload.put("message", "文本超过内联预览阈值，请直接下载查看")
+    }
+    payload
+}
+
+func buildLocalTextPreviewSnippet(path: String, totalSize: Int64): TextPreviewSnippet {
+    let out = TextPreviewSnippet()
+    if (totalSize <= 0) {
+        return out
+    }
+
+    let readSize = if (totalSize > relayPreviewTextMaxBytes) { relayPreviewTextMaxBytes } else { totalSize }
+    let bytes = readLocalPreviewBytes(path, readSize)
+    out.truncated = totalSize > readSize
+    if (bytes.size == 0) {
+        return out
+    }
+
+    out.encoding = detectTextEncoding(bytes)
+    try {
+        out.content = decodeTextBytes(bytes, out.encoding)
+    } catch (_ : Exception) {
+        out.encoding = "utf-8"
+        out.content = String.fromUtf8(bytes)
+    }
+    out.lineCount = countPreviewLines(out.content)
+    out
+}
+
+func readLocalPreviewBytes(path: String, maxBytes: Int64): Array<UInt8> {
+    if (maxBytes <= 0) {
+        return Array<UInt8>(0, repeat: 0)
+    }
+    let file = File(path, OpenMode.Read)
+    let data = ArrayList<UInt8>()
+    var remaining = maxBytes
+    while (remaining > 0) {
+        let chunk = if (remaining > 8192) { 8192 } else { remaining }
+        let readBuf = Array<UInt8>(chunk, repeat: 0)
+        let n = file.read(readBuf)
+        if (n <= 0) {
+            break
+        }
+        for (i in 0..n) {
+            data.add(readBuf[i])
+        }
+        remaining -= n
+    }
+    file.close()
+    data.toArray()
 }
 
 func countPreviewLines(text: String): Int64 {

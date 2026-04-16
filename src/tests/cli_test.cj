@@ -43,18 +43,19 @@ public class Cli_test {
     }
 
     @TestCase
-    public func capabilitiesPayloadReflectsPublicSlice(): Unit {
+    public func capabilitiesPayloadReflectsDefaultRuntime(): Unit {
         let payload = buildCapabilitiesPayload(defaultRuntimeProfile())
-        @Assert(parseJsonString(payload, "relay") ?? "", "false")
+        @Assert(parseJsonString(payload, "relay") ?? "", "true")
         @Assert(parseJsonString(payload, "activeDiscovery") ?? "", "true")
         @Assert(parseJsonString(payload, "mdnsDiscovery") ?? "", "false")
-        @Assert(payload.contains("\"relay\":false"))
+        @Assert(payload.contains("\"relay\":true"))
         @Assert(payload.contains("\"activeDiscovery\":true"))
         @Assert(payload.contains("\"udp-discovery-only\""))
+        @Assert(payload.contains("\"text-cache-records\""))
     }
 
     @TestCase
-    public func configPayloadNormalizesPublicRuntimeFlags(): Unit {
+    public func configPayloadNormalizesDefaultRuntimeFlags(): Unit {
         var cfg = AppConfig()
         cfg.nodeId = "public-node"
         cfg.securityMode = "encrypted"
@@ -74,7 +75,7 @@ public class Cli_test {
         @Assert(parseJsonString(payload, "discoveryAdvertiseIp") ?? "", "192.168.1.23")
         @Assert(payload.contains("\"enableMdns\":false"))
         @Assert(payload.contains("\"discoveryBroadcastEnabled\":true"))
-        @Assert(payload.contains("\"relayEnabled\":false"))
+        @Assert(payload.contains("\"relayEnabled\":true"))
         @Assert(parseJsonString(payload, "rootDir") ?? "", "/tmp/data")
     }
 

@@ -150,6 +150,42 @@ public class RelayChunk_test {
     }
 
     @TestCase
+    public func textRecordCachesAsTxtAndDeleteRemovesRecordOnly(): Unit {
+        let scope = testTempToken("soonlink_relay_text_record")
+        let cacheDir = "/tmp/${scope}_cache"
+        let whitelistFile = "/tmp/${scope}_whitelist.toml"
+        let relay = RelayFeature(cacheDir, 24, "fixed", 1024 * 1024, 10, DefaultDiskProbe(), whitelistFile)
+
+        let job = relay.createTextRecord("web-client", "meeting-note", "line1\nline2")
+        @Assert(job.recordKind, "text")
+        @Assert(job.status, "cached")
+        @Assert(job.targetDevice, "")
+        @Assert(strEndsWith(job.fileName, ".txt"))
+
+        match (relay.cacheDescriptor(job.id)) {
+            case Some((_cachePath, fileName)) =>
+                @Assert(fileName, "meeting-note.txt")
+            case None =>
+                @Assert(false)
+        }
+
+        match (relay.retryJob(job.id)) {
+            case Some(found) =>
+                @Assert(found.status, "cached")
+                @Assert(found.message, "text record retained")
+            case None =>
+                @Assert(false)
+        }
+
+        let deleted = relay.deleteJob(job.id)
+        @Assert(deleted, true)
+        match (relay.getJob(job.id)) {
+            case Some(_job) => @Assert(false)
+            case None => @Assert(true)
+        }
+    }
+
+    @TestCase
     public func chunkSessionCompleteWritesMergedFile(): Unit {
         let scope = testTempToken("soonlink_chunk")
         let tempDir = "/tmp/${scope}_temp"
