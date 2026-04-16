@@ -9,20 +9,20 @@ public interface ProductApp {
 }
 
 public class SoonLinkProduct <: ProductApp {
-    public let profile: ProductProfile
+    public let runtime: RuntimeProfile
     public let config: AppConfig
     public let coreServer: CoreServer
     public let webServer: WebServer
 
-    public init(config: AppConfig, profile!: ProductProfile = resolveProductProfile()) {
-        let normalized = normalizeAppConfigForProfile(config, profile)
-        this.profile = profile
+    public init(config: AppConfig, runtime!: RuntimeProfile = currentRuntimeProfile()) {
+        let normalized = normalizeAppConfigForRuntime(config, runtime)
+        this.runtime = runtime
         this.config = normalized
-        this.coreServer = CoreServer(normalized, profile: profile)
+        this.coreServer = CoreServer(normalized, profile: runtime)
         this.webServer = WebServer(coreServer, normalized.webPort)
     }
 
-    public func name(): String { profile.productName }
+    public func name(): String { runtime.productName }
 
     public func start(): Unit {
         coreServer.start()
@@ -36,9 +36,9 @@ public class SoonLinkProduct <: ProductApp {
 }
 
 public func buildCoreProduct(config: AppConfig): SoonLinkProduct {
-    SoonLinkProduct(config, profile: coreProductProfile())
+    SoonLinkProduct(config, runtime: defaultRuntimeProfile())
 }
 
 public func buildProduct(config: AppConfig): ProductApp {
-    SoonLinkProduct(config, profile: resolveProductProfile())
+    SoonLinkProduct(config, runtime: currentRuntimeProfile())
 }

@@ -1,6 +1,6 @@
 # SoonLink Manual
 
-SoonLink 手册面向开源基础版，聚焦三件事：
+SoonLink 手册聚焦三件事：
 
 1. 如何快速跑起来
 2. 如何通过 CLI / MCP / Web 接入日常使用

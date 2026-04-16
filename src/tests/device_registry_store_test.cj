@@ -26,6 +26,7 @@ public class DeviceRegistryStore_test {
         r1.endpointScheme = "https"
         r1.endpointBasePath = "/gateway"
         r1.online = true
+        r1.remembered = true
         r1.lastSeen = currentTimestamp()
         r1.trustState = Trusted
         r1.trustSource = "pin"
@@ -39,6 +40,7 @@ public class DeviceRegistryStore_test {
         r2.ip = "192.168.1.6"
         r2.port = 8082
         r2.online = false
+        r2.remembered = false
         r2.lastSeen = currentTimestamp()
         r2.trustState = Blocked
         r2.trustSource = "admin"
@@ -53,10 +55,26 @@ public class DeviceRegistryStore_test {
         @Assert(loaded[1].id, "dev-2")
         @Assert(loaded[0].endpointScheme, "https")
         @Assert(loaded[0].endpointBasePath, "/gateway")
+        @Assert(loaded[0].remembered)
         @Assert(deviceTrustStateToString(loaded[0].trustState), "trusted")
         @Assert(loaded[0].trustSource, "pin")
+        @Assert(!loaded[1].remembered)
         @Assert(deviceTrustStateToString(loaded[1].trustState), "blocked")
         @Assert(loaded[1].trustSource, "admin")
+
+        remove(path)
+    }
+
+    @TestCase
+    public func loadLegacyRegistryDefaultsRememberedToTrue(): Unit {
+        let path = testTempPath("soonlink_devices_legacy") + ".json"
+        let fileMgr = LocalFileMgr()
+        fileMgr.writeText(path, "[{\"id\":\"legacy-node\",\"name\":\"Legacy Node\",\"deviceType\":\"remote\",\"ip\":\"192.168.1.9\",\"port\":8083,\"online\":true}]", false)
+
+        let loaded = JsonDeviceRegistryStore(path).load()
+        @Assert(loaded.size, 1)
+        @Assert(loaded[0].id, "legacy-node")
+        @Assert(loaded[0].remembered)
 
         remove(path)
     }

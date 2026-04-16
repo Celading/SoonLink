@@ -4,6 +4,7 @@ import std.collection.ArrayList
 
 public class RelayJob {
     public var id: String = ""
+    public var recordKind: String = "file"
     public var sourceDevice: String = ""
     public var targetDevice: String = ""
     public var targetPath: String = "/"
@@ -23,6 +24,7 @@ public class RelayJob {
     public func toJson(): JsonObject {
         JsonObject()
             .put("id", id)
+            .put("recordKind", recordKind)
             .put("sourceDevice", sourceDevice)
             .put("targetDevice", targetDevice)
             .put("targetPath", targetPath)

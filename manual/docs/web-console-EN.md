@@ -1,6 +1,6 @@
 # Web Console
 
-The SoonLink Web console in the open-source edition mainly serves three kinds of work.
+The SoonLink Web console mainly serves three kinds of work.
 
 ## 1. File Browsing
 
@@ -14,6 +14,15 @@ The SoonLink Web console in the open-source edition mainly serves three kinds of
 - create directory tasks
 - watch task progress and states
 - download existing file content
+- use the relay station for staged files and temporary text
+
+### Relay Text Records
+
+- Temporary text pasted in the browser is stored as a UTF-8 `.txt` record inside the relay cache, which fits notes, meeting scraps, or copied logs.
+- Remote deletion only removes the relay record and its temporary cache. It does not directly delete the real file on a device.
+- After selecting a `.txt` record, the preview panel on the right can read cached content inline.
+- When the text crosses the preview threshold or the sampled payload is too large, the console switches to download guidance instead of forcing an oversized inline render.
+- Text records can also be restored back into the current device and directory so temporary content can be turned into a normal file when needed.
 
 ## 3. Runtime Observation
 

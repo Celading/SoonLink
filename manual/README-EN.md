@@ -1,6 +1,6 @@
 # SoonLink Manual
 
-The SoonLink manual for the open-source baseline centers on three questions:
+The SoonLink manual centers on three questions:
 
 1. how to get it running quickly
 2. how to use it through CLI, MCP, and the Web console

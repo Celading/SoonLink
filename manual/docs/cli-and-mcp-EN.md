@@ -17,7 +17,7 @@ SoonLink ships two automation-facing entrypoints by default:
 
 ## When CLI Helps
 
-- checking version, edition, and capability tags
+- checking version, capability tags, and runtime state
 - reading device, path, and task state quickly
 - verifying whether the current config is effective
 - reproducing issues with the smallest surface possible

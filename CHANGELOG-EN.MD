@@ -1,6 +1,6 @@
 # CHANGELOG
 
-Main change log for the public open-source edition of SoonLink.
+Main change log for SoonLink.
 
 Marker guide:
 
@@ -11,12 +11,20 @@ Marker guide:
 
 Notes:
 
-- `0.1.x` to `0.4.x` carry forward summarized product milestones from before the standalone public repository, so the visible version chain stays continuous.
-- Starting from `0.5.x`, SoonLink entered public repository governance, with versioning, release notes, and collaboration traces maintained inside the repository.
+- `0.1.x` to `0.4.x` carry forward summarized product milestones from before the standalone repository, so the visible version chain stays continuous.
+- Starting from `0.5.x`, SoonLink entered repository governance, with versioning, release notes, and collaboration traces maintained inside the repository.
 
 ---
 
 ## [Unreleased]
+
+---
+
+## [0.5.29] - 2026-04-16
+
+- `=Chore` Bumped the package version to `0.5.29` so it matches the current Core workline
+- `=Fix` Synced the runtime version fallback constant and its paired test to `0.5.29`
+- `=Docs` Synced README, troubleshooting notes, and GitHub Actions version examples to `0.5.29`
 
 ---
 
@@ -25,10 +33,10 @@ Notes:
 - `=Fix` `release-artifacts` now skips only the platforms missing SDK URLs instead of failing the entire release workflow, while still creating the GitHub Release
 - `=Fix` `docker-publish` now warns and skips when Docker Hub credentials are absent instead of turning the whole tag pipeline red
 - `=Fix` `homebrew-tap` now warns and skips when the tap repo, token, or Darwin assets are missing, preventing noisy post-release failures
-- `=Chore` Linux release bundles now fall back to the public beta.25 SDK URL so the minimum artifact lane can run without extra repository variables
+- `=Chore` Linux release bundles now fall back to an accessible beta.25 SDK URL so the minimum artifact lane can run without extra repository variables
 - `=Chore` Unified GitHub Release, Docker, and Homebrew publish flows around plain dotted tags such as `0.8.27` and `0.0.5.17`
 - `=Fix` Added tag-versus-`cjpm.toml` version validation to release workflows so release metadata and asset filenames cannot drift apart
-- `=Fix` Restored stable public automation by switching Homebrew CI to a temporary tap install and correcting formula wrapper rendering
+- `=Fix` Restored stable repository automation by switching Homebrew CI to a temporary tap install and correcting formula wrapper rendering
 - `=Docs` Synced README, CHANGELOG, troubleshooting notes, GitHub Actions guidance, runtime version fallback, and related tests to `0.5.27`
 
 ## [0.5.22] - 2026-04-06
@@ -40,17 +48,17 @@ Notes:
 
 ## [0.5.21] - 2026-04-06
 
-- `+Feature` Fully tightened the default Core product profile to the public capability boundary: active discovery, peer transfer, relay, whitelist, favorites, and advanced security are no longer exposed by default
-- `+Feature` Switched the Web console default edition / capability context to `core`, keeping the landing badges and capability gates aligned with the real public edition
-- `=Fix` Unified placeholder auth / crypto providers to the stable `placeholder` identifier so edition-derived preview labels no longer leak into the public baseline
+- `+Feature` Tightened the default runtime into a “UDP discovery plus manual remember” flow, while keeping mDNS, peer transfer, relay, whitelist, favorites, and advanced security out of the default surface
+- `+Feature` Switched the Web console default runtime / capability context back to `SoonLink`, keeping the landing badges and capability gates aligned with the real capability set
+- `=Fix` Unified placeholder auth / crypto providers to the stable `placeholder` identifier so preview-only labels no longer leak into the default runtime
 - `=Chore` Added GitHub Release artifact automation, cross-platform packaging scripts, and `linux/amd64 + linux/arm64` as the default Docker publish platforms
 - `=Docs` Synced version references, GitHub Actions guidance, troubleshooting notes, and the initial release draft to `0.5.21`
 
 ## [0.5.17] - 2026-04-04
 
-- `+Feature` Turned `manual/` into the formal open-source handbook with quick start, API, docs, skills, and troubleshooting entrypoints
-- `=Docs` Rebuilt README / README-EN into a product-style landing page centered on the open-source baseline, CLI / MCP, and practical entrypoints
-- `=Docs` Tightened handbook navigation and release notes so public-facing docs no longer mix in internal collaboration guidance
+- `+Feature` Turned `manual/` into the formal handbook with quick start, API, docs, skills, and troubleshooting entrypoints
+- `=Docs` Rebuilt README / README-EN into a product-style landing page centered on the repository baseline, CLI / MCP, and practical entrypoints
+- `=Docs` Tightened handbook navigation and release notes so repository docs no longer mix in internal collaboration guidance
 - `=Chore` Unified package metadata, runtime fallback, and related tests on version `0.5.17`
 
 ## [0.5.12] - 2026-04-04
@@ -59,16 +67,16 @@ Notes:
 - `+Feature` Added PIN pairing session generation and confirmation, unified across Web / CLI / MCP
 - `=Fix` High-risk Web actions are now consistently gated by device trust state
 - `=Fix` Directory transfer semantics were tightened to preserve the target tree and overwrite only same-path files
-- `=Docs` Unified the public-facing name as `SoonLink`, while also documenting the spoken / technical identifier `soonlnk`
+- `=Docs` Unified the visible name as `SoonLink`, while also documenting the spoken / technical identifier `soonlnk`
 - `=Docs` Synchronized the version set with `Ignite 0500`
 
 ## [0.5.11] - 2026-03-26
 
-- `+Feature` Established the standalone public repository baseline: `README`, `LICENSE`, `CHANGELOG`, `config/`, `web/`, public scripts, and CI all entered the repo together
-- `+Feature` Promoted CLI and `stdio` MCP entrypoints into the public mainline, covering version, status, device, file, and task queries
-- `+Feature` Landed Docker Compose and Homebrew packaging flows for public distribution validation
-- `=Chore` Added a public-boundary check script to prevent internal workspace material, local dependency mirrors, and runtime state from entering version control
-- `=Docs` Synced local build, public boundary, and packaging guidance into repository documentation
+- `+Feature` Established the standalone repository baseline: `README`, `LICENSE`, `CHANGELOG`, `config/`, `web/`, scripts, and CI all entered the repo together
+- `+Feature` Promoted CLI and `stdio` MCP entrypoints into the mainline, covering version, status, device, file, and task queries
+- `+Feature` Landed Docker Compose and Homebrew packaging flows for repository distribution validation
+- `=Chore` Added a repository-boundary check script to prevent internal workspace material, local dependency mirrors, and runtime state from entering version control
+- `=Docs` Synced local build, repository boundary, and packaging guidance into repository documentation
 
 ## [0.5.1] - 2026-03-28
 
@@ -80,9 +88,9 @@ Notes:
 ## [0.4.12] - archive milestone
 
 - `+Feature` Chunk upload, Range download, and task-tracking flows were completed, significantly improving transfer stability
-- `+Feature` Relay cache, favorites, whitelist, and other enhanced capabilities entered the shared evolution path, while reserving edition-gating hooks
-- `+Feature` The `WebStatic` module was refactored and the visual language between the public page and the management page was unified
-- `+Feature` Session context responses started to output edition / capability information in a unified format
+- `+Feature` Relay cache, favorites, whitelist, and other enhanced capabilities entered the shared evolution path, while reserving future capability-gating hooks
+- `+Feature` The `WebStatic` module was refactored and the visual language between the landing page and the management page was unified
+- `+Feature` Session context responses started to output runtime / capability information in a unified format
 - `=Fix` Web-side upload, download, and task-list error handling became clearer
 - `+Feature` SoonLink Web console reached a complete loop: devices, files, upload, download, transfer tasks, health, and Swagger
 - `+Feature` The management entry, runtime state machine, and file-browser interactions completed their first integration pass
@@ -103,7 +111,7 @@ Notes:
 - `=Docs` Started maintaining Chinese and English README files together with synchronized change traces
 
 ## [0.3.12] - 2025-03-15
-> Full feature-complete milestone for the Golang experiment line
+> Feature-complete milestone for the Golang experiment line
 
 - `+Feature` `CoreServer`, `WebServer`, `FileSystemManager`, `TransferEngine`, and related base modules formed a minimum closed loop
 - `+Feature` The local device model, upload/download flows, task creation, and multi-thread transfer prototype were established

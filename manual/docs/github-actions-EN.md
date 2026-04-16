@@ -1,19 +1,19 @@
 # GitHub / GitCode CI & Release
 
-SoonLink Core now keeps two public automation lanes side by side:
+SoonLink now keeps two automation lanes side by side:
 
 - GitHub handles the full multi-platform release, Docker, and Homebrew publishing path.
-- GitCode handles the public-repo Linux CI path and tag-driven Linux bundle assembly under `.gitcode/workflows/`.
+- GitCode handles the repository Linux CI path and tag-driven Linux bundle assembly under `.gitcode/workflows/`.
 
-That split keeps the public-source validation path lightweight while leaving the full cross-platform release surface on GitHub.
+That split keeps the repository validation path lightweight while leaving the full cross-platform release surface on GitHub.
 
 ## GitHub Workflows
 
 - `.github/workflows/core-ci.yml`
-  Public-boundary checks, Compose validation, and a lightweight build smoke test.
+  Repository-boundary checks, Compose validation, and a lightweight build smoke test.
   - When `CANGJIE_SDK_LINUX_AMD64_URL` is configured, the workflow now installs the Linux SDK and `stdx`, then runs real `cjpm build`, `cjpm test`, and container-bundle preparation.
   - When `CANGJIE_STDX_RELEASE_VERSION` is configured, CI prefers that official prebuilt `stdx` release package. When it is unset, Linux still falls back to source builds, while macOS / Windows / OpenHarmony jobs first try the release version derived from `CANGJIE_STDX_GIT_REF` and only then fall back to `1.0.0.1`.
-  - It also clones `Ignite / lisi / jinguiSSL` and builds inside a temporary path-rewritten workspace instead of depending on the public repository's live git dependency shape.
+  - It also clones `Ignite / lisi / jinguiSSL` and builds inside a temporary path-rewritten workspace instead of depending on the current repository's live git dependency shape.
   - When the repository variable is still missing, the workflow emits a warning and keeps the boundary and Compose checks only.
   - It now also includes an optional OpenHarmony `aarch64` cross-build smoke lane. When the Linux SDK is available and an OpenHarmony DEVECO bundle can be configured or auto-resolved, CI runs one `aarch64-linux-ohos` build as well.
 - `.github/workflows/release-artifacts.yml`
@@ -38,9 +38,9 @@ That split keeps the public-source validation path lightweight while leaving the
 ## GitCode Workflows
 
 - `.gitcode/workflows/core-ci.yml`
-  Runs the public-repo verification path on GitCode's default `euleros-2.10.1` runner.
+  Runs the repository verification path on GitCode's default `euleros-2.10.1` runner.
   - After `checkout-action@0.0.1`, all commands execute inside `repo_workspace`.
-  - The workflow runs the public-boundary audit first, installs Linux prerequisites, installs the Cangjie SDK and `stdx`, clones `Ignite / lisi / jinguiSSL`, projects a clean temporary workspace, and then runs `cjpm build` plus `cjpm test`.
+  - The workflow runs the repository-boundary audit first, installs Linux prerequisites, installs the Cangjie SDK and `stdx`, clones `Ignite / lisi / jinguiSSL`, projects a clean temporary workspace, and then runs `cjpm build` plus `cjpm test`.
   - Compose validation only runs when `docker compose` is available on the runner. Missing Docker support is treated as a warning instead of a false CI regression.
 - `.gitcode/workflows/release-linux.yml`
   Builds a GitCode-side Linux release bundle for tags and manual runs.
@@ -93,7 +93,7 @@ That split keeps the public-source validation path lightweight while leaving the
 - `ATOMGIT_TOKEN`
 - `HOMEBREW_TAP_TOKEN`
 
-GitCode and AtomGit credentials are only needed when dependency repositories require authentication. Public read-only dependencies can leave them unset. `HOMEBREW_TAP_TOKEN` is used to push the generated formula into the tap repository.
+GitCode and AtomGit credentials are only needed when dependency repositories require authentication. Read-only dependencies can leave them unset. `HOMEBREW_TAP_TOKEN` is used to push the generated formula into the tap repository.
 If you want OpenHarmony nightly tag auto-discovery to work, configure `GITCODE_TOKEN` as well because the current GitCode tags API requires the `private-token` request header.
 GitCode workflows are better treated as shell-oriented project variables or injected environment variables with the same names, instead of assuming GitHub-specific repository variable UX.
 
@@ -106,7 +106,7 @@ Once `CANGJIE_HOME` and `CANGJIE_STDX_PATH` are available locally, the same rele
   --target x86_64-unknown-linux-gnu \
   --target-dir ./target-release/linux-x86_64 \
   --archive-platform linux-x86_64 \
-  --version 0.5.27
+  --version 0.5.29
 ```
 
 That command runs `cjpm build --target ...` and then produces:
@@ -135,7 +135,7 @@ Both bundle formats include:
 - `scripts/build_release_target.sh`
   Runs the target build and packaging flow end-to-end.
 - `scripts/build_release_bundle.sh`
-  Packages an already-built binary with public assets.
+  Packages an already-built binary with repository assets.
 - `scripts/prepare_release_workspace.sh`
   Prepares a clean SoonLink + Ignite + lisi + jinguiSSL workspace in CI and rewrites dependencies into local `path` references.
   - It also drops files such as `cangjie-repo.toml`, `module-resolve.json`, and `module-lock.json` so machine-local path hints do not leak into CI contexts.
@@ -144,7 +144,7 @@ Both bundle formats include:
 
 - Pushing tags such as `0.8.27` or `0.0.5.17` automatically triggers `release-artifacts` and `docker-publish`; once the GitHub Release is published, `homebrew-tap` follows.
 - The GitCode tag workflow is intentionally limited to the Linux x86_64 bundle. GitHub remains the primary multi-platform release surface.
-- The pushed tag must either match the `cjpm.toml` version exactly or append one extra dotted revision, for example release tag `0.5.27.1` on package version `0.5.27`.
+- The pushed tag must either match the `cjpm.toml` version exactly or append one extra dotted revision, for example release tag `0.5.29.1` on package version `0.5.29`.
 - `linux-aarch64` now uses a native `ubuntu-24.04-arm` runner with an ARM64 SDK so release bundles do not depend on x86_64 Linux SDK layouts that omit `linux_aarch64_cjnative` modules.
 - `release-artifacts` now attempts all five default platforms by default and adds a sixth OpenHarmony bundle when the toolchain is available:
   - `linux-x86_64`
@@ -157,4 +157,4 @@ Both bundle formats include:
 - OpenHarmony nightly tag discovery now prefers the GitCode tags API instead of `git ls-remote`.
 - If you want to move to a newer SDK later, repository variables can still override these default download URLs.
 - Manual `homebrew-tap` runs now fall back to the current `cjpm.toml` version when `release_tag` is left empty, avoiding the previous empty-value failure.
-- Windows is currently limited to `windows-x86_64`. Do not promise Windows ARM64 publicly until the SDK and stdx layout become reproducible.
+- Windows is currently limited to `windows-x86_64`. Do not promise Windows ARM64 early until the SDK and stdx layout become reproducible.

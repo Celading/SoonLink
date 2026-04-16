@@ -7,7 +7,7 @@ import std.collection.{ArrayList, HashMap}
 import std.convert.*
 import std.unicode.*
 import std.sync.Mutex
-import std.fs.{File, OpenMode}
+import std.fs.{File, FileInfo, OpenMode}
 import stdx.net.http.HttpResponseWriter
 import ignite.{App, Ctx, Config, FormFile, Handler, Group, RouteOption, ResponseSpec, ParamSpec, ParamLocation, SwaggerInfo}
 import ignite.middleware.{loggerMiddleware, corsMiddleware, recoverMiddleware, CorsConfig}
@@ -22,6 +22,8 @@ let listDirCacheMutex: Mutex = Mutex()
 var listDirCache: HashMap<String, ListDirCacheEntry> = HashMap<String, ListDirCacheEntry>()
 let listDirCacheTTLSeconds: Int64 = 2
 let previewTextMaxBytes: Int64 = 256 * 1024
+let relayPreviewTextMaxBytes: Int64 = 128 * 1024
+let relayPreviewInlineMaxLines: Int64 = 240
 
 public class ListDirCacheEntry {
     public let entries: ArrayList<FileEntry>
@@ -301,7 +303,7 @@ public class WebServer {
                 let html = renderTemplate("./web/views/login.html", [("Title", "SoonLink 登录入口")])
                 ctx.html(html)
             } catch (_: Exception) {
-                ctx.html("<h1>SoonLink 登录入口</h1><p>Core 版本仅提供能力占位，不启用远程提权。</p>")
+                ctx.html("<h1>SoonLink 登录入口</h1><p>当前运行态仅提供能力占位，不启用远程提权。</p>")
             }
         }, option: RouteOption()
             .withSummary("登录入口（能力预留）")
@@ -425,7 +427,7 @@ public class WebServer {
                     updated.securityMode = s.setSecurityMode(v)
                 }
             }
-            if (s.profile.supportsActiveDiscovery) {
+            if (s.profile.supportsMdnsDiscovery) {
                 if (let Some(v) <- parseJsonString(body, "enableMdns")) {
                     updated.enableMdns = v == "true"
                 }
@@ -433,6 +435,16 @@ public class WebServer {
             if (s.profile.supportsActiveDiscovery) {
                 if (let Some(v) <- parseJsonString(body, "discoveryUdpPort")) {
                     try { updated.discoveryUdpPort = Int64.parse(v) } catch (_: Exception) {}
+                }
+            }
+            if (s.profile.supportsActiveDiscovery) {
+                if (let Some(v) <- parseJsonString(body, "discoveryAdvertiseIp")) {
+                    updated.discoveryAdvertiseIp = v.trimAscii()
+                }
+            }
+            if (s.profile.supportsActiveDiscovery) {
+                if (let Some(v) <- parseJsonString(body, "discoveryBroadcastEnabled")) {
+                    updated.discoveryBroadcastEnabled = v == "true"
                 }
             }
             if (let Some(v) <- parseJsonString(body, "localAuthTrustProxyHeaders")) {
@@ -484,7 +496,7 @@ public class WebServer {
                 }
             }
 
-            updated = normalizeAppConfigForProfile(updated, s.profile)
+            updated = normalizeAppConfigForRuntime(updated, s.profile)
             saveAppConfig(updated)
 
             ctx.json(JsonObject()
@@ -838,6 +850,39 @@ public class WebServer {
             .withParam(ParamSpec("id", Path, description: "设备ID", required: true))
         )
 
+        devices.post("/:id/remember", { ctx: Ctx =>
+            if (!requireLocalApiAdmin(ctx, s.config)) {
+                return
+            }
+
+            let deviceId = ctx.params("id").trimAscii()
+            if (deviceId.size == 0) {
+                ctx.status(400).json(JsonObject()
+                    .putBool("success", false)
+                    .put("error", "设备ID不能为空")
+                    .toString())
+                return
+            }
+
+            try {
+                let device = m.devices.remember(deviceId)
+                ctx.json(JsonObject()
+                    .putBool("success", true)
+                    .putObj("device", device.toJson())
+                    .put("message", "设备已记住")
+                    .toString())
+            } catch (e: Exception) {
+                ctx.status(400).json(JsonObject()
+                    .putBool("success", false)
+                    .put("error", e.message)
+                    .toString())
+            }
+        }, option: RouteOption()
+            .withSummary("记住已发现设备")
+            .withTag("设备")
+            .withParam(ParamSpec("id", Path, description: "设备ID", required: true))
+        )
+
         devices.post("/:id/pairing/pin", { ctx: Ctx =>
             if (!requireLocalApiAdmin(ctx, s.config)) {
                 return
@@ -976,6 +1021,40 @@ public class WebServer {
                 }
             }, option: RouteOption().withSummary("创建中继任务").withTag("中继"))
 
+            relayJobs.post("/text", { ctx: Ctx =>
+                if (!s.config.relayEnabled) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", "relay disabled")
+                        .toString())
+                    return
+                }
+
+                let sourceDevice = ctx.formValue("sourceDevice") ?? "unknown"
+                let fileName = ctx.formValue("fileName") ?? ""
+                let content = ctx.formValue("content") ?? ""
+                if (content.size == 0) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", "文本内容不能为空")
+                        .toString())
+                    return
+                }
+
+                try {
+                    let job = m.relay.createText(sourceDevice, fileName, content)
+                    ctx.status(200).json(JsonObject()
+                        .putBool("success", true)
+                        .putObj("job", job.toJson())
+                        .toString())
+                } catch (e: Exception) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", e.message)
+                        .toString())
+                }
+            }, option: RouteOption().withSummary("创建临时文本记录").withTag("中继"))
+
             relayJobs.get("/:id/cache", { ctx: Ctx =>
                 let id = ctx.params("id")
                 match (m.relay.cacheDescriptor(id)) {
@@ -988,6 +1067,34 @@ public class WebServer {
                             .toString())
                 }
             }, option: RouteOption().withSummary("下载中继缓存文件").withTag("中继"))
+
+            relayJobs.get("/:id/preview", { ctx: Ctx =>
+                let id = ctx.params("id")
+                match (m.relay.get(id)) {
+                    case Some(job) =>
+                        match (m.relay.cacheDescriptor(id)) {
+                            case Some((cachePath, _fileName)) =>
+                                try {
+                                    ctx.json(buildRelayPreviewPayload(job, cachePath).toString())
+                                } catch (e: Exception) {
+                                    ctx.status(400).json(JsonObject()
+                                        .putBool("success", false)
+                                        .put("error", e.message)
+                                        .toString())
+                                }
+                            case None =>
+                                ctx.status(404).json(JsonObject()
+                                    .putBool("success", false)
+                                    .put("error", "cache file unavailable")
+                                    .toString())
+                        }
+                    case None =>
+                        ctx.status(404).json(JsonObject()
+                            .putBool("success", false)
+                            .put("error", "任务不存在")
+                            .toString())
+                }
+            }, option: RouteOption().withSummary("预览中继缓存文本").withTag("中继"))
 
             relayJobs.get("/:id", { ctx: Ctx =>
                 let id = ctx.params("id")
@@ -1050,6 +1157,15 @@ public class WebServer {
                     .toString())
             }, option: RouteOption().withSummary("取消中继任务").withTag("中继"))
 
+            relayJobs.delete("/:id", { ctx: Ctx =>
+                let id = ctx.params("id")
+                let ok = m.relay.delete(id)
+                ctx.status(if (ok) { 200 } else { 404 }).json(JsonObject()
+                    .putBool("success", ok)
+                    .put("message", if (ok) { "记录已删除，仅移除中继记录与临时缓存" } else { "任务不存在" })
+                    .toString())
+            }, option: RouteOption().withSummary("删除中继记录").withTag("中继"))
+
             relayJobs.post("/batch-retry", { ctx: Ctx =>
                 let body = ctx.bodyString()
                 let ids = parseJsonStringArray(body, "ids")
@@ -1087,6 +1203,24 @@ public class WebServer {
                     .putArr("ids", arr)
                     .toString())
             }, option: RouteOption().withSummary("批量取消中继任务").withTag("中继"))
+
+            relayJobs.post("/batch-delete", { ctx: Ctx =>
+                let body = ctx.bodyString()
+                let ids = parseJsonStringArray(body, "ids")
+                var updated: Int64 = 0
+                let arr = JsonArray()
+                for (id in ids) {
+                    if (m.relay.delete(id)) {
+                        updated += 1
+                        arr.addStr(id)
+                    }
+                }
+                ctx.json(JsonObject()
+                    .putBool("success", true)
+                    .putInt("updated", updated)
+                    .putArr("ids", arr)
+                    .toString())
+            }, option: RouteOption().withSummary("批量删除中继记录").withTag("中继"))
 
             relayJobs.post("/cleanup", { ctx: Ctx =>
                 let body = ctx.bodyString()
@@ -2205,11 +2339,10 @@ func buildSessionContextPayload(server: CoreServer, access: WebAccessContext): J
         .putBool("isLocalAdmin", access.isLocalAdmin)
         .put("accessMode", access.accessMode)
         .put("themeVariant", access.themeVariant)
-        .putObj("product", productProfileToJson(server.profile))
+        .putObj("product", runtimeProfileToJson(server.profile))
         .putObj("auth", JsonObject()
             .put("policy", "local_trust")
             .put("provider", auth.provider)
-            .put("edition", auth.edition)
             .putBool("supportsPassword", auth.supportsPassword)
             .putBool("passwordConfigured", auth.passwordConfigured)
             .putArr("capabilities", authCaps))
@@ -2219,18 +2352,18 @@ func buildSessionContextPayload(server: CoreServer, access: WebAccessContext): J
             .putBool("trustedProxyHeaders", server.config.localAuthTrustProxyHeaders))
 }
 
-func productProfileToJson(profile: ProductProfile): JsonObject {
+func runtimeProfileToJson(profile: RuntimeProfile): JsonObject {
     JsonObject()
-        .put("edition", profile.edition)
         .put("productName", profile.productName)
         .put("displayName", resolveRuntimeDisplayName(profile))
         .put("version", currentProductVersion())
-        .putObj("capabilities", productCapabilitiesToJson(profile))
-        .putArr("capabilityTags", productCapabilityTags(profile))
+        .putObj("capabilities", runtimeCapabilitiesToJson(profile))
+        .putArr("capabilityTags", runtimeCapabilityTags(profile))
 }
 
-func appConfigToJson(config: AppConfig, profile: ProductProfile): JsonObject {
+func appConfigToJson(config: AppConfig, profile: RuntimeProfile): JsonObject {
     let out = JsonObject()
+    out.put("nodeId", config.nodeId)
     out.put("listenAddr", config.listenAddr)
     out.putInt("webPort", Int64(config.webPort))
     out.put("tempDir", config.tempDir)
@@ -2240,11 +2373,10 @@ func appConfigToJson(config: AppConfig, profile: ProductProfile): JsonObject {
     out.put("logDir", config.logDir)
     out.put("localRootDir", config.localRootDir)
     out.putBool("localAuthTrustProxyHeaders", config.localAuthTrustProxyHeaders)
-    out.put("edition", profile.edition)
     out.put("productName", profile.productName)
     out.put("displayName", resolveRuntimeDisplayName(profile))
     out.put("version", currentProductVersion())
-    out.putObj("capabilities", productCapabilitiesToJson(profile))
+    out.putObj("capabilities", runtimeCapabilitiesToJson(profile))
     if (profile.supportsPeerTransfer) {
         out.put("securityMode", config.securityMode)
     }
@@ -2252,6 +2384,8 @@ func appConfigToJson(config: AppConfig, profile: ProductProfile): JsonObject {
         out.putInt("discoveryUdpPort", config.discoveryUdpPort)
         out.putBool("enableMdns", config.enableMdns)
         out.putInt("discoveryHeartbeatSeconds", config.discoveryHeartbeatSeconds)
+        out.put("discoveryAdvertiseIp", config.discoveryAdvertiseIp)
+        out.putBool("discoveryBroadcastEnabled", config.discoveryBroadcastEnabled)
     }
     if (profile.supportsRelay) {
         out.putBool("relayEnabled", config.relayEnabled)
@@ -2292,16 +2426,18 @@ func buildAdminSystemPayload(server: CoreServer, masters: MasterBundle): JsonObj
     let diskTotal = jsonObjectInt(disk, "total")
     let hostname = parseJsonString(system.toString(), "hostname") ?? "localhost"
     let primaryIp = parseJsonString(network.toString(), "primaryIp") ?? ""
+    let discovery = buildAdminDiscoveryPayload(server, primaryIp)
 
     JsonObject()
         .putBool("success", true)
-        .put("edition", server.profile.edition)
         .put("productName", server.profile.productName)
         .put("displayName", resolveRuntimeDisplayName(server.profile))
         .put("version", currentProductVersion())
-        .putObj("capabilities", productCapabilitiesToJson(server.profile))
+        .putObj("capabilities", runtimeCapabilitiesToJson(server.profile))
         .put("hostname", hostname)
         .put("primaryIp", primaryIp)
+        .put("nodeId", server.config.nodeId)
+        .putObj("discovery", discovery)
         .put("uptime", formatDurationHuman(server.uptimeSeconds()))
         .putInt("uptimeSeconds", server.uptimeSeconds())
         .put("cpu", "${roundPercent(cpuUsage)}%")
@@ -2315,6 +2451,93 @@ func buildAdminSystemPayload(server: CoreServer, masters: MasterBundle): JsonObj
         .putInt("devices", devices.size)
         .putInt("onlineDevices", onlineDevices)
         .putInt("logTotal", jsonObjectInt(logStats, "total"))
+}
+
+func buildAdminDiscoveryPayload(server: CoreServer, primaryIp: String): JsonObject {
+    let localDevice = server.getDevice("local")
+    let effectiveAdvertiseIp = resolveAdminDiscoveryEffectiveIp(server, primaryIp, localDevice)
+    let endpointHost = resolveAdminDiscoveryLocalEndpointHost(localDevice, effectiveAdvertiseIp, primaryIp)
+    let endpointPort = resolveAdminDiscoveryLocalEndpointPort(server, localDevice)
+    let mode = if (server.profile.supportsActiveDiscovery) { "active" } else { "passive" }
+    let endpointText = if (endpointHost.size > 0) { "${endpointHost}:${endpointPort}" } else { "-" }
+
+    let out = JsonObject()
+        .put("mode", mode)
+        .put("nodeId", server.config.nodeId)
+        .putBool("supportsActiveDiscovery", server.profile.supportsActiveDiscovery)
+        .putBool("supportsMdnsDiscovery", server.profile.supportsMdnsDiscovery)
+        .putBool("udpBroadcastEnabled", server.config.discoveryBroadcastEnabled)
+        .putBool("mdnsEnabled", server.config.enableMdns)
+        .putInt("udpPort", server.config.discoveryUdpPort)
+        .putInt("heartbeatSeconds", server.config.discoveryHeartbeatSeconds)
+        .put("configuredAdvertiseIp", server.config.discoveryAdvertiseIp)
+        .put("effectiveAdvertiseIp", effectiveAdvertiseIp)
+        .put("primaryIp", primaryIp)
+        .put("localEndpoint", endpointText)
+        .putBool("rememberRequiresConfirmation", true)
+        .put("registerDeviceCommand", buildAdminRegisterDeviceCommand(server.config.nodeId, endpointHost, endpointPort))
+        .putBool("discoverable", server.profile.supportsActiveDiscovery &&
+            (server.config.discoveryBroadcastEnabled || server.config.enableMdns))
+    match (localDevice) {
+        case Some(device) => out.putObj("localDevice", device.toJson())
+        case None => ()
+    }
+    out
+}
+
+func resolveAdminDiscoveryEffectiveIp(server: CoreServer, primaryIp: String, localDevice: ?Device): String {
+    match (localDevice) {
+        case Some(device) =>
+            let ip = device.ip.trimAscii()
+            if (ip.size > 0) {
+                return ip
+            }
+        case None => ()
+    }
+    let configured = server.config.discoveryAdvertiseIp.trimAscii()
+    if (configured.size > 0) {
+        return configured
+    }
+    let primary = primaryIp.trimAscii()
+    if (primary.size > 0) {
+        return primary
+    }
+    "127.0.0.1"
+}
+
+func resolveAdminDiscoveryLocalEndpointHost(localDevice: ?Device, effectiveAdvertiseIp: String, primaryIp: String): String {
+    match (localDevice) {
+        case Some(device) =>
+            let ip = device.ip.trimAscii()
+            if (ip.size > 0) {
+                return ip
+            }
+        case None => ()
+    }
+    if (effectiveAdvertiseIp.trimAscii().size > 0) {
+        return effectiveAdvertiseIp.trimAscii()
+    }
+    primaryIp.trimAscii()
+}
+
+func resolveAdminDiscoveryLocalEndpointPort(server: CoreServer, localDevice: ?Device): Int64 {
+    match (localDevice) {
+        case Some(device) =>
+            if (device.port > 0) {
+                return device.port
+            }
+        case None => ()
+    }
+    Int64(server.config.webPort)
+}
+
+func buildAdminRegisterDeviceCommand(nodeId: String, endpointHost: String, endpointPort: Int64): String {
+    let normalizedId = nodeId.trimAscii()
+    let normalizedHost = endpointHost.trimAscii()
+    if (normalizedId.size == 0 || normalizedHost.size == 0 || endpointPort <= 0) {
+        return ""
+    }
+    "soonlnk register-device --id ${normalizedId} --ip ${normalizedHost} --port ${endpointPort} --connector soonlink-http --scheme http"
 }
 
 func buildAdminDrivesPayload(server: CoreServer): JsonObject {
@@ -2933,6 +3156,89 @@ func buildTextPreviewSnippet(m: MasterBundle, deviceId: String, path: String, to
     }
     out.lineCount = countPreviewLines(out.content)
     out
+}
+
+func buildRelayPreviewPayload(job: RelayJob, cachePath: String): JsonObject {
+    let info = FileInfo(cachePath)
+    let mimeType = resolvePreviewMimeType("", job.fileName, false)
+    let kind = resolvePreviewKind(job.fileName, mimeType, false)
+    let canPreview = kind == "text"
+    let payload = JsonObject()
+        .putBool("success", true)
+        .put("jobId", job.id)
+        .put("recordKind", job.recordKind)
+        .put("name", job.fileName)
+        .putInt("size", info.size)
+        .put("mimeType", mimeType)
+        .put("kind", kind)
+        .put("downloadUrl", "/api/relay/jobs/${job.id}/cache")
+        .putBool("canPreview", canPreview)
+
+    if (!canPreview) {
+        payload.put("message", "当前缓存仅支持文本预览，请直接下载查看")
+        return payload
+    }
+
+    let snippet = buildLocalTextPreviewSnippet(cachePath, info.size)
+    let inlineAllowed = !snippet.truncated && snippet.lineCount <= relayPreviewInlineMaxLines
+    payload.put("encoding", snippet.encoding)
+        .putInt("lineCount", snippet.lineCount)
+        .putBool("truncated", snippet.truncated)
+        .putBool("inlineAllowed", inlineAllowed)
+
+    if (inlineAllowed) {
+        payload.put("content", snippet.content)
+    } else {
+        payload.put("message", "文本超过内联预览阈值，请直接下载查看")
+    }
+    payload
+}
+
+func buildLocalTextPreviewSnippet(path: String, totalSize: Int64): TextPreviewSnippet {
+    let out = TextPreviewSnippet()
+    if (totalSize <= 0) {
+        return out
+    }
+
+    let readSize = if (totalSize > relayPreviewTextMaxBytes) { relayPreviewTextMaxBytes } else { totalSize }
+    let bytes = readLocalPreviewBytes(path, readSize)
+    out.truncated = totalSize > readSize
+    if (bytes.size == 0) {
+        return out
+    }
+
+    out.encoding = detectTextEncoding(bytes)
+    try {
+        out.content = decodeTextBytes(bytes, out.encoding)
+    } catch (_ : Exception) {
+        out.encoding = "utf-8"
+        out.content = String.fromUtf8(bytes)
+    }
+    out.lineCount = countPreviewLines(out.content)
+    out
+}
+
+func readLocalPreviewBytes(path: String, maxBytes: Int64): Array<UInt8> {
+    if (maxBytes <= 0) {
+        return Array<UInt8>(0, repeat: 0)
+    }
+    let file = File(path, OpenMode.Read)
+    let data = ArrayList<UInt8>()
+    var remaining = maxBytes
+    while (remaining > 0) {
+        let chunk = if (remaining > 8192) { 8192 } else { remaining }
+        let readBuf = Array<UInt8>(chunk, repeat: 0)
+        let n = file.read(readBuf)
+        if (n <= 0) {
+            break
+        }
+        for (i in 0..n) {
+            data.add(readBuf[i])
+        }
+        remaining -= n
+    }
+    file.close()
+    data.toArray()
 }
 
 func countPreviewLines(text: String): Int64 {

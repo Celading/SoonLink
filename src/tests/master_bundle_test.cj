@@ -16,23 +16,24 @@ public class MasterBundle_test {
         cfg.deviceRegistryFile = "/tmp/${scope}.json"
         cfg.logDir = "/tmp/${scope}_logs"
 
-        let server = CoreServer(cfg, profile: coreProductProfile())
+        let server = CoreServer(cfg, profile: defaultRuntimeProfile())
         let masters = MasterBundle(server)
 
         let system = masters.monitor.system().toString()
         @Assert(parseJsonString(system, "os") ?? "", "cangjie")
         @Assert(!server.profile.supportsPeerTransfer)
+        @Assert(server.profile.supportsRelay)
         @Assert(server.getSecurityMode(), "plain")
     }
 
     @TestCase
-    public func capabilityCompleteProfileKeepsPeerMaster(): Unit {
+    public func featureRichProfileKeepsPeerMaster(): Unit {
         let scope = testTempToken("soonlink_test_devices_full")
         var cfg = AppConfig()
         cfg.deviceRegistryFile = "/tmp/${scope}.json"
         cfg.logDir = "/tmp/${scope}_logs"
 
-        let server = CoreServer(cfg, profile: capabilityCompleteTestProfile())
+        let server = CoreServer(cfg, profile: featureRichTestRuntime())
         let masters = MasterBundle(server)
         let mode = masters.peers.updateSecurityMode("encrypted")
         @Assert(mode, "encrypted")

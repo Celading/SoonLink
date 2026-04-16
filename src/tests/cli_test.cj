@@ -36,37 +36,46 @@ public class Cli_test {
     }
 
     @TestCase
-    public func versionPayloadIncludesEditionAndVersion(): Unit {
-        let payload = buildVersionPayload(coreProductProfile())
-        @Assert(parseJsonString(payload, "edition") ?? "", "core")
+    public func versionPayloadIncludesNameAndVersion(): Unit {
+        let payload = buildVersionPayload(defaultRuntimeProfile())
         @Assert(parseJsonString(payload, "name") ?? "", "SoonLink")
         @Assert((parseJsonString(payload, "version") ?? "").size > 0)
     }
 
     @TestCase
-    public func capabilitiesPayloadReflectsCoreSlice(): Unit {
-        let payload = buildCapabilitiesPayload(coreProductProfile())
-        @Assert(parseJsonString(payload, "edition") ?? "", "core")
-        @Assert(parseJsonString(payload, "relay") ?? "", "false")
-        @Assert(parseJsonString(payload, "activeDiscovery") ?? "", "false")
-        @Assert(payload.contains("\"relay\":false"))
-        @Assert(payload.contains("\"activeDiscovery\":false"))
-        @Assert(payload.contains("\"lite-security\""))
+    public func capabilitiesPayloadReflectsDefaultRuntime(): Unit {
+        let payload = buildCapabilitiesPayload(defaultRuntimeProfile())
+        @Assert(parseJsonString(payload, "relay") ?? "", "true")
+        @Assert(parseJsonString(payload, "activeDiscovery") ?? "", "true")
+        @Assert(parseJsonString(payload, "mdnsDiscovery") ?? "", "false")
+        @Assert(payload.contains("\"relay\":true"))
+        @Assert(payload.contains("\"activeDiscovery\":true"))
+        @Assert(payload.contains("\"udp-discovery-only\""))
+        @Assert(payload.contains("\"text-cache-records\""))
     }
 
     @TestCase
-    public func configPayloadNormalizesCorePreviewFlags(): Unit {
+    public func configPayloadNormalizesDefaultRuntimeFlags(): Unit {
         var cfg = AppConfig()
+        cfg.nodeId = "public-node"
         cfg.securityMode = "encrypted"
         cfg.enableMdns = true
         cfg.relayEnabled = true
+        cfg.discoveryUdpPort = 19190
+        cfg.discoveryHeartbeatSeconds = 45
+        cfg.discoveryAdvertiseIp = "192.168.1.23"
+        cfg.discoveryBroadcastEnabled = true
         cfg.localRootDir = "/tmp/data"
 
-        let payload = buildConfigPayload(cfg, coreProductProfile())
-        @Assert(parseJsonString(payload, "edition") ?? "", "core")
+        let payload = buildConfigPayload(cfg, defaultRuntimeProfile())
+        @Assert(parseJsonString(payload, "nodeId") ?? "", "public-node")
         @Assert(parseJsonString(payload, "securityMode") ?? "", "plain")
+        @Assert(payload.contains("\"discoveryUdpPort\":19190"))
+        @Assert(payload.contains("\"discoveryHeartbeatSeconds\":45"))
+        @Assert(parseJsonString(payload, "discoveryAdvertiseIp") ?? "", "192.168.1.23")
         @Assert(payload.contains("\"enableMdns\":false"))
-        @Assert(payload.contains("\"relayEnabled\":false"))
+        @Assert(payload.contains("\"discoveryBroadcastEnabled\":true"))
+        @Assert(payload.contains("\"relayEnabled\":true"))
         @Assert(parseJsonString(payload, "rootDir") ?? "", "/tmp/data")
     }
 
@@ -80,6 +89,12 @@ public class Cli_test {
         @Assert(action.command, "help")
         let help = renderCliHelp()
         @Assert(help.contains("soonlnk serve"))
+        @Assert(help.contains("--node-id"))
+        @Assert(help.contains("--discovery-port"))
+        @Assert(help.contains("--advertise-ip"))
+        @Assert(help.contains("--enable-discovery-broadcast"))
+        @Assert(help.contains("--disable-discovery-broadcast"))
+        @Assert(help.contains("remember-device"))
         @Assert(help.contains("--scheme"))
         @Assert(help.contains("--base-path"))
     }
@@ -96,6 +111,39 @@ public class Cli_test {
         @Assert(action.command, "status")
         @Assert(action.effectiveCommandLine.size, 3)
         @Assert(action.effectiveCommandLine[1], "--config")
+    }
+
+    @TestCase
+    public func statusPayloadExposesPassiveDiscoverySummaryAndRegisterCommand(): Unit {
+        let scope = testTempToken("soonlink_public_status")
+        var cfg = AppConfig()
+        cfg.nodeId = "public-status-node"
+        cfg.localRootDir = "/tmp/${scope}"
+        cfg.tempDir = "/tmp/${scope}_temp"
+        cfg.logDir = "/tmp/${scope}_logs"
+        cfg.deviceRegistryFile = "/tmp/${scope}_registry.json"
+        cfg.discoveryAdvertiseIp = "192.168.1.23"
+        cfg.discoveryBroadcastEnabled = true
+        cfg.enableMdns = true
+        cfg.webPort = 18081
+
+        let runtime = AutomationRuntime(cfg, profile: defaultRuntimeProfile())
+        try {
+            runtime.start()
+            let payload = buildStatusPayload(runtime)
+            @Assert(payload.contains("\"discovery\":"))
+            @Assert(payload.contains("\"mode\":\"active\""))
+            @Assert(payload.contains("\"supportsActiveDiscovery\":true"))
+            @Assert(payload.contains("\"supportsMdnsDiscovery\":false"))
+            @Assert(payload.contains("\"discoverable\":true"))
+            @Assert(payload.contains("\"channels\":[\"udp-broadcast\"]"))
+            @Assert(payload.contains("\"rememberRequiresConfirmation\":true"))
+            @Assert(payload.contains("\"effectiveAdvertiseIp\":\"192.168.1.23\""))
+            @Assert(payload.contains("\"localEndpoint\":\"192.168.1.23:18081\""))
+            @Assert(payload.contains("\"registerDeviceCommand\":\"soonlnk register-device --id public-status-node --ip 192.168.1.23 --port 18081 --connector soonlink-http --scheme http\""))
+        } finally {
+            runtime.stop()
+        }
     }
 
     @TestCase
@@ -136,6 +184,16 @@ public class Cli_test {
 
         let action = resolveCliAction(argv)
         @Assert(action.command, "remove-device")
+    }
+
+    @TestCase
+    public func rememberDeviceSubcommandResolves(): Unit {
+        let argv = Array<String>(2, repeat: "")
+        argv[0] = "soonlnk"
+        argv[1] = "remember-device"
+
+        let action = resolveCliAction(argv)
+        @Assert(action.command, "remember-device")
     }
 
     @TestCase

@@ -2,7 +2,6 @@ package soonlnk.commons
 
 public struct AuthDescriptor {
     public var provider: String = "placeholder"
-    public var edition: String = "core"
     public var supportsPassword: Bool = true
     public var passwordConfigured: Bool = false
     public var capabilities: Array<String> = Array<String>(0, repeat: "")
@@ -16,13 +15,13 @@ public interface AuthProvider {
 }
 
 public class CorePlaceholderAuthProvider <: AuthProvider {
-    let profile: ProductProfile
+    let profile: RuntimeProfile
 
     public init() {
-        this.profile = coreProductProfile()
+        this.profile = defaultRuntimeProfile()
     }
 
-    public init(profile: ProductProfile) {
+    public init(profile: RuntimeProfile) {
         this.profile = profile
     }
 
@@ -33,11 +32,14 @@ public class CorePlaceholderAuthProvider <: AuthProvider {
     public func descriptor(): AuthDescriptor {
         var out = AuthDescriptor()
         out.provider = name()
-        out.edition = profile.edition
         out.supportsPassword = true
         out.passwordConfigured = false
         if (profile.supportsPeerTransfer) {
             out.capabilities = ["login-entry", "local-trust-admin", "peer-transfer", "relay", "favorites"]
+        } else if (profile.supportsRelay) {
+            out.capabilities = ["login-entry", "local-trust-admin", "udp-discovery", "manual-remember", "relay-cache", "text-record-cache"]
+        } else if (profile.supportsActiveDiscovery) {
+            out.capabilities = ["login-entry", "local-trust-admin", "udp-discovery", "manual-remember"]
         } else {
             out.capabilities = ["login-entry", "local-trust-admin", "passive-discovery-only"]
         }
@@ -47,7 +49,6 @@ public class CorePlaceholderAuthProvider <: AuthProvider {
 
 public struct CryptoDescriptor {
     public var provider: String = "placeholder"
-    public var edition: String = "core"
     public var mode: String = "plain"
 
     public init() {}
@@ -59,13 +60,13 @@ public interface CryptoProvider {
 }
 
 public class CorePlaceholderCryptoProvider <: CryptoProvider {
-    let profile: ProductProfile
+    let profile: RuntimeProfile
 
     public init() {
-        this.profile = coreProductProfile()
+        this.profile = defaultRuntimeProfile()
     }
 
-    public init(profile: ProductProfile) {
+    public init(profile: RuntimeProfile) {
         this.profile = profile
     }
 
@@ -76,7 +77,6 @@ public class CorePlaceholderCryptoProvider <: CryptoProvider {
     public func descriptor(): CryptoDescriptor {
         var out = CryptoDescriptor()
         out.provider = name()
-        out.edition = profile.edition
         out.mode = if (profile.supportsAdvancedSecurity) {
             "encrypted"
         } else if (profile.supportsPeerTransfer) {

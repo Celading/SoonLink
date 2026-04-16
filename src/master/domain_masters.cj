@@ -41,6 +41,10 @@ public class DeviceMaster {
         server.setDeviceTrustState(deviceId, state)
     }
 
+    public func remember(deviceId: String): Device {
+        server.rememberDiscoveredDevice(deviceId)
+    }
+
     public func startPinPairing(deviceId: String): DevicePinPairingSession {
         server.startPinPairing(deviceId)
     }
@@ -198,8 +202,16 @@ public class RelayMaster {
         server.relayCacheDescriptor(jobId)
     }
 
+    public func createText(sourceDevice: String, fileName: String, content: String): RelayJob {
+        server.createRelayTextRecord(sourceDevice, fileName, content)
+    }
+
     public func retry(jobId: String): ?RelayJob {
         server.retryRelayJob(jobId)
+    }
+
+    public func delete(jobId: String): Bool {
+        server.deleteRelayRecord(jobId)
     }
 
     public func cancel(jobId: String): Bool {

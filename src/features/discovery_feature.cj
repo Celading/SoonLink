@@ -3,6 +3,7 @@ package soonlnk.features
 import soonlnk.commons.*
 import std.collection.{ArrayList, HashMap}
 import std.sync.Mutex
+import std.unicode.*
 
 public class DiscoveryFeature {
     let registryStore: DeviceRegistryStore
@@ -53,6 +54,7 @@ public class DiscoveryFeature {
 
     public func manualRegister(record: DeviceRegistryRecord): Unit {
         if (record.id.size == 0) { return }
+        record.remembered = true
         record.lastSeen = currentTimestamp()
         synchronized(mutex) {
             registry.add(record.id, record)
@@ -116,7 +118,12 @@ public class DiscoveryFeature {
     }
 
     public func persistRegistry(): Unit {
-        let records = listRegistry()
+        let records = ArrayList<DeviceRegistryRecord>()
+        for (record in listRegistry()) {
+            if (record.remembered) {
+                records.add(record)
+            }
+        }
         registryStore.save(records)
     }
 
@@ -124,6 +131,7 @@ public class DiscoveryFeature {
         let records = registryStore.load()
         synchronized(mutex) {
             for (record in records) {
+                record.remembered = true
                 registry.add(record.id, record)
             }
         }
@@ -136,12 +144,45 @@ public class DiscoveryFeature {
 
         let record = DeviceRegistryRecord()
         record.id = packet.deviceId
-        record.name = packet.name
-        record.deviceType = packet.deviceType
-        record.ip = packet.ip
+        record.name = packet.name.trimAscii()
+        record.deviceType = packet.deviceType.trimAscii().toLower()
+        record.ip = packet.ip.trimAscii()
         record.port = packet.port
         record.online = true
-        record.lastSeen = packet.timestamp
+        record.lastSeen = if (packet.timestamp > 0) { packet.timestamp } else { currentTimestamp() }
+
+        var existing: ?DeviceRegistryRecord = None
+        synchronized(mutex) {
+            existing = registry.get(packet.deviceId)
+        }
+
+        match (existing) {
+            case Some(current) =>
+                if (record.name.size == 0) {
+                    record.name = current.name
+                }
+                if (record.deviceType.size == 0) {
+                    record.deviceType = current.deviceType
+                }
+                if (record.ip.size == 0) {
+                    record.ip = current.ip
+                }
+                if (record.port <= 0) {
+                    record.port = current.port
+                }
+                record.connectorType = current.connectorType
+                record.endpointScheme = current.endpointScheme
+                record.endpointBasePath = current.endpointBasePath
+                record.remembered = current.remembered
+                record.trustState = current.trustState
+                record.trustSource = current.trustSource
+                record.trustUpdatedAt = current.trustUpdatedAt
+            case None =>
+                record.remembered = false
+                record.trustState = Unknown
+                record.trustSource = "discovery"
+                record.trustUpdatedAt = currentTimestamp()
+        }
 
         synchronized(mutex) {
             registry.add(record.id, record)
