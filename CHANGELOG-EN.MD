@@ -20,6 +20,14 @@ Notes:
 
 ---
 
+## [0.5.29] - 2026-04-16
+
+- `=Chore` Bumped the package version to `0.5.29` so it matches the current Core workline
+- `=Fix` Synced the runtime version fallback constant and its paired test to `0.5.29`
+- `=Docs` Synced README, troubleshooting notes, and GitHub Actions version examples to `0.5.29`
+
+---
+
 ## [0.5.27] - 2026-04-06
 
 - `=Fix` `release-artifacts` now skips only the platforms missing SDK URLs instead of failing the entire release workflow, while still creating the GitHub Release

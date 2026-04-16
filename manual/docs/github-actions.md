@@ -107,7 +107,7 @@ GitCode workflow 本身不会直接读取 GitHub 风格的 repository variables 
   --target x86_64-unknown-linux-gnu \
   --target-dir ./target-release/linux-x86_64 \
   --archive-platform linux-x86_64 \
-  --version 0.5.27
+  --version 0.5.29
 ```
 
 这条命令会先执行 `cjpm build --target ...`，再自动生成：
@@ -145,7 +145,7 @@ GitCode workflow 本身不会直接读取 GitHub 风格的 repository variables 
 
 - 推送形如 `0.8.27`、`0.0.5.17` 的 tag 时，会自动触发 `release-artifacts` 与 `docker-publish`；GitHub Release 发布后，会继续触发 `homebrew-tap`。
 - GitCode 的 tag workflow 当前只收口到 Linux x86_64 bundle，完整多平台资产仍以 GitHub Release 为主发布面。
-- tag 版本必须与当前提交中的 `cjpm.toml` 版本一致，或使用 `cjpm` 三段版本后再追加一个修订号，例如 `0.5.27.1` 对应包版本 `0.5.27`。
+- tag 版本必须与当前提交中的 `cjpm.toml` 版本一致，或使用 `cjpm` 三段版本后再追加一个修订号，例如 `0.5.29.1` 对应包版本 `0.5.29`。
 - `linux-aarch64` 已改成 `ubuntu-24.04-arm` + ARM64 SDK 的原生构建链，避免 x86_64 Linux SDK 缺失 `linux_aarch64_cjnative` 模块目录时导致 release bundle 缺包。
 - `release-artifacts` 现在默认会尝试五个平台，并在 OpenHarmony 工具链可用时追加第六个平台：
   - `linux-x86_64`

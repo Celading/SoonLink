@@ -127,7 +127,7 @@ public func resolveProductVersion(raw: String): String {
     if (trimmed.size > 0) {
         return trimmed
     }
-    "0.5.27"
+    "0.5.29"
 }
 
 public func resolveRuntimeDisplayName(profile: RuntimeProfile): String {
