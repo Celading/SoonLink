@@ -206,6 +206,10 @@ public class RelayMaster {
         server.createRelayTextRecord(sourceDevice, fileName, content)
     }
 
+    public func createText(sourceDevice: String, fileName: String, content: String, targetPath: String): RelayJob {
+        server.createRelayTextRecord(sourceDevice, fileName, content, targetPath)
+    }
+
     public func retry(jobId: String): ?RelayJob {
         server.retryRelayJob(jobId)
     }

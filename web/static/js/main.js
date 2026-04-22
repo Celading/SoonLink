@@ -35,6 +35,10 @@ const APP_STATE = {
     allRelayJobs: [],
     relaySelectedIds: [],
     relayPreview: null,
+    relayTextStationSelectedId: '',
+    relayTextPreviewCache: {},
+    relayPageDraftSeed: 0,
+    relayModalDraftSeed: 0,
     allFiles: [],
     fileSortBy: 'name',
     fileSortOrder: 'asc',
@@ -2193,6 +2197,7 @@ function updateDeviceSelectors(devices) {
         document.getElementById('source-device'),
         document.getElementById('transfer-target-device'),
         document.getElementById('relay-source-device'),
+        document.getElementById('relay-modal-source-device'),
         document.getElementById('relay-target-device'),
         document.getElementById('whitelist-target-device'),
     ];
@@ -2777,7 +2782,7 @@ function isFavoritePath(path, deviceId = document.getElementById('device-selecto
 
 function toggleFavorite(path, deviceId, customName = '') {
     if (!hasCapability('favorites')) {
-        showAlert('当前版本未启用收藏能力', 'info');
+        showAlert('当前运行态未启用收藏能力', 'info');
         return;
     }
     if (!deviceId) {
@@ -2890,7 +2895,7 @@ function renderFavoritesList(containerId, fromHome) {
     container.innerHTML = '';
 
     if (!hasCapability('favorites')) {
-        container.innerHTML = '<span class="favorite-empty">当前版本未启用收藏能力</span>';
+        container.innerHTML = '<span class="favorite-empty">当前运行态未启用收藏能力</span>';
         return;
     }
 
@@ -2984,7 +2989,7 @@ function renderFilesSubmenu() {
     }
     list.innerHTML = '';
     if (!hasCapability('favorites')) {
-        list.innerHTML = '<span class="favorite-empty">当前版本未启用收藏能力</span>';
+        list.innerHTML = '<span class="favorite-empty">当前运行态未启用收藏能力</span>';
         return;
     }
     if (APP_STATE.favorites.length === 0) {
@@ -3032,7 +3037,7 @@ function syncUploadFavoritesSelector() {
     }
 
     if (!hasCapability('favorites')) {
-        selector.innerHTML = '<option value="">当前版本未启用收藏</option>';
+        selector.innerHTML = '<option value="">当前运行态未启用收藏</option>';
         return;
     }
 
@@ -3312,10 +3317,20 @@ function initRelayPanel() {
     if (submitBtn) {
         submitBtn.addEventListener('click', submitRelayJob);
     }
+    const openTextStationBtn = document.getElementById('relay-open-text-station-btn');
+    if (openTextStationBtn) {
+        openTextStationBtn.addEventListener('click', () => {
+            openRelayTextStation();
+        });
+    }
 
     const textInput = document.getElementById('relay-text-content');
     if (textInput) {
         textInput.addEventListener('input', updateRelayTextMeta);
+    }
+    const fileInput = document.getElementById('relay-file-input');
+    if (fileInput) {
+        fileInput.addEventListener('change', updateRelaySubmitButtonState);
     }
     const textNameInput = document.getElementById('relay-text-name');
     if (textNameInput) {
@@ -3379,6 +3394,51 @@ function initRelayPanel() {
         previewClearBtn.addEventListener('click', clearRelayPreview);
     }
 
+    const modalTextInput = document.getElementById('relay-modal-text-content');
+    if (modalTextInput) {
+        modalTextInput.addEventListener('input', updateRelayModalTextMeta);
+    }
+    const modalTextNameInput = document.getElementById('relay-modal-text-name');
+    if (modalTextNameInput) {
+        modalTextNameInput.addEventListener('input', updateRelayModalTextMeta);
+    }
+    const modalSubmitBtn = document.getElementById('relay-modal-submit-btn');
+    if (modalSubmitBtn) {
+        modalSubmitBtn.addEventListener('click', submitRelayTextRecordFromModal);
+    }
+    const modalDownloadBtn = document.getElementById('relay-text-station-download-btn');
+    if (modalDownloadBtn) {
+        modalDownloadBtn.addEventListener('click', () => {
+            const selectedId = APP_STATE.relayTextStationSelectedId || '';
+            if (!selectedId) {
+                return;
+            }
+            const preview = APP_STATE.relayTextPreviewCache[selectedId];
+            const url = preview?.downloadUrl || `/api/relay/jobs/${encodeURIComponent(selectedId)}/cache`;
+            window.open(url, '_blank', 'noopener');
+        });
+    }
+    const modalRestoreBtn = document.getElementById('relay-text-station-restore-btn');
+    if (modalRestoreBtn) {
+        modalRestoreBtn.addEventListener('click', async () => {
+            const selectedId = APP_STATE.relayTextStationSelectedId || '';
+            if (!selectedId) {
+                return;
+            }
+            await restoreRelayCacheToCurrentDirectory(selectedId);
+        });
+    }
+    const modalDeleteBtn = document.getElementById('relay-text-station-delete-btn');
+    if (modalDeleteBtn) {
+        modalDeleteBtn.addEventListener('click', async () => {
+            const selectedId = APP_STATE.relayTextStationSelectedId || '';
+            if (!selectedId) {
+                return;
+            }
+            await deleteRelayRecord(selectedId);
+        });
+    }
+
     const whitelistBtn = document.getElementById('whitelist-save-btn');
     if (whitelistBtn) {
         whitelistBtn.addEventListener('click', saveWhitelistRule);
@@ -3397,11 +3457,40 @@ function initRelayPanel() {
     }
     APP_STATE.relayUiTimer = setInterval(updateRelayCountdownLabels, 1000);
     updateRelayTextMeta();
+    updateRelayModalTextMeta();
+    updateRelaySubmitButtonState();
+}
+
+function ensureRelayTextDraftSeed(scope = 'page') {
+    const key = scope === 'modal' ? 'relayModalDraftSeed' : 'relayPageDraftSeed';
+    if (!APP_STATE[key]) {
+        APP_STATE[key] = Date.now();
+    }
+    return APP_STATE[key];
+}
+
+function refreshRelayTextDraftSeed(scope = 'page') {
+    const key = scope === 'modal' ? 'relayModalDraftSeed' : 'relayPageDraftSeed';
+    APP_STATE[key] = Date.now();
+    return APP_STATE[key];
+}
+
+function buildRelayTextDefaultFileName(scope = 'page') {
+    return `tmpTXT-${ensureRelayTextDraftSeed(scope)}.txt`;
+}
+
+function buildRelayTextTargetDir(currentPath = document.getElementById('current-path')?.value || '/') {
+    const normalized = normalizePath(currentPath || '/');
+    return normalized === '/' ? '/tmpSL' : `${normalized}/tmpSL`;
+}
+
+function buildRelayTextResolvedPath(rawName = '', scope = 'page') {
+    return normalizePath(`${buildRelayTextTargetDir()}/${normalizeRelayTextRecordName(rawName, scope)}`);
 }
 
 async function submitRelayJob() {
     if (!hasCapability('relay')) {
-        showAlert('当前版本未启用中继能力', 'info');
+        showAlert('当前运行态未启用中继 / 文字中转站能力', 'info');
         return;
     }
     const sourceDevice = document.getElementById('relay-source-device')?.value || '';
@@ -3415,12 +3504,12 @@ async function submitRelayJob() {
     const hasFile = !!file;
 
     if (hasText && hasFile) {
-        showAlert('一次只能提交文件或文本，请先清掉其中一项。', 'warning');
+        showAlert('文字中转站一次只能接收文件或文字其中一种，请先清掉另一项。', 'warning');
         return;
     }
 
     if (hasText) {
-        await submitRelayTextRecord(sourceDevice, textName, textContent);
+        await submitRelayTextRecord(sourceDevice, textName, textContent, { scope: 'page' });
         return;
     }
 
@@ -3466,10 +3555,14 @@ async function submitRelayJob() {
     }
 }
 
-async function submitRelayTextRecord(sourceDevice, fileName, content) {
+async function submitRelayTextRecord(sourceDevice, fileName, content, options = {}) {
+    const scope = options.scope || 'page';
+    const resolvedFileName = normalizeRelayTextRecordName(fileName, scope);
+    const targetPath = options.targetPath || buildRelayTextTargetDir();
     const formData = new FormData();
     formData.append('sourceDevice', sourceDevice || 'web-client');
-    formData.append('fileName', fileName || '');
+    formData.append('fileName', resolvedFileName);
+    formData.append('targetPath', targetPath);
     formData.append('content', content);
 
     try {
@@ -3480,14 +3573,33 @@ async function submitRelayTextRecord(sourceDevice, fileName, content) {
         const data = await resp.json();
         if (!resp.ok || !data.success) {
             showAlert(data.error || '临时文本提交失败', 'danger');
-            return;
+            return null;
         }
-        showAlert('临时文本已缓存到中继站', 'success');
-        resetRelayTextDraft();
-        loadRelayJobs();
+        showAlert('文字中转站记录已缓存到中继站', 'success');
+        resetRelayTextDraft(scope);
+        await loadRelayJobs();
+        return data;
     } catch (error) {
         console.error('提交临时文本失败:', error);
-        showAlert('临时文本提交失败', 'danger');
+        showAlert('文字中转站记录提交失败', 'danger');
+        return null;
+    }
+}
+
+async function submitRelayTextRecordFromModal() {
+    const sourceDevice = document.getElementById('relay-modal-source-device')?.value
+        || document.getElementById('relay-source-device')?.value
+        || '';
+    const fileName = document.getElementById('relay-modal-text-name')?.value || '';
+    const content = document.getElementById('relay-modal-text-content')?.value || '';
+    if (!content.trim()) {
+        showAlert('请输入要发送的文字内容', 'warning');
+        return;
+    }
+    const data = await submitRelayTextRecord(sourceDevice, fileName, content, { scope: 'modal' });
+    if (data?.job?.id) {
+        APP_STATE.relayTextStationSelectedId = String(data.job.id);
+        await selectRelayTextStationRecord(APP_STATE.relayTextStationSelectedId);
     }
 }
 
@@ -3500,20 +3612,69 @@ function updateRelayTextMeta() {
     }
     const chars = content.length;
     const lines = countTextLines(content);
-    const displayName = name ? normalizeRelayTextRecordName(name) : '自动生成 .txt 记录名';
-    metaNode.textContent = `${chars} 字符 · ${lines} 行 · ${displayName}。超过预览阈值时自动改为下载查看，避免浏览器卡住。`;
+    const resolvedPath = buildRelayTextResolvedPath(name, 'page');
+    metaNode.textContent = `${chars} 字符 · ${lines} 行 · 默认落点 ${resolvedPath}。超过预览阈值时自动改为下载查看，避免浏览器卡住。`;
+    updateRelaySubmitButtonState();
 }
 
-function resetRelayTextDraft() {
-    const nameInput = document.getElementById('relay-text-name');
-    const contentInput = document.getElementById('relay-text-content');
+function updateRelayModalTextMeta() {
+    const content = document.getElementById('relay-modal-text-content')?.value || '';
+    const name = (document.getElementById('relay-modal-text-name')?.value || '').trim();
+    const metaNode = document.getElementById('relay-modal-text-meta');
+    if (!metaNode) {
+        return;
+    }
+    const chars = content.length;
+    const lines = countTextLines(content);
+    const resolvedPath = buildRelayTextResolvedPath(name, 'modal');
+    metaNode.textContent = `${chars} 字符 · ${lines} 行 · 默认落点 ${resolvedPath}`;
+    updateRelayModalSubmitButtonState();
+}
+
+function resetRelayTextDraft(scope = 'page') {
+    const nameInput = document.getElementById(scope === 'modal' ? 'relay-modal-text-name' : 'relay-text-name');
+    const contentInput = document.getElementById(scope === 'modal' ? 'relay-modal-text-content' : 'relay-text-content');
     if (nameInput) {
         nameInput.value = '';
     }
     if (contentInput) {
         contentInput.value = '';
     }
-    updateRelayTextMeta();
+    refreshRelayTextDraftSeed(scope);
+    if (scope === 'modal') {
+        updateRelayModalTextMeta();
+    } else {
+        updateRelayTextMeta();
+    }
+}
+
+function updateRelaySubmitButtonState() {
+    const submitBtn = document.getElementById('relay-submit-btn');
+    if (!submitBtn) {
+        return;
+    }
+    const content = document.getElementById('relay-text-content')?.value || '';
+    const hasText = content.length > 0;
+    const hasFile = !!document.getElementById('relay-file-input')?.files?.length;
+    let label = '提交文件 / 文字';
+    if (hasText && !hasFile) {
+        label = '提交到文字中转站';
+    } else if (hasFile && !hasText) {
+        label = '提交到中继';
+    } else if (hasText && hasFile) {
+        label = '请保留文件或文字其一';
+    }
+    submitBtn.innerHTML = `<i class="bi bi-cloud-arrow-up me-1"></i>${label}`;
+}
+
+function updateRelayModalSubmitButtonState() {
+    const submitBtn = document.getElementById('relay-modal-submit-btn');
+    if (!submitBtn) {
+        return;
+    }
+    const hasText = !!document.getElementById('relay-modal-text-content')?.value?.trim();
+    submitBtn.disabled = !hasText;
+    submitBtn.innerHTML = `<i class="bi bi-send me-1"></i>${hasText ? '发送到文字站' : '发送文字'}`;
 }
 
 function countTextLines(text) {
@@ -3523,10 +3684,10 @@ function countTextLines(text) {
     return text.split('\n').length;
 }
 
-function normalizeRelayTextRecordName(name) {
+function normalizeRelayTextRecordName(name, scope = 'page') {
     const raw = String(name || '').trim();
     if (!raw) {
-        return '自动生成 .txt 记录名';
+        return buildRelayTextDefaultFileName(scope);
     }
     return /\.txt$/i.test(raw) ? raw : `${raw}.txt`;
 }
@@ -3538,6 +3699,7 @@ async function loadRelayJobs() {
         updateRelayStats([]);
         renderRelayJobs();
         clearRelayPreview();
+        renderRelayTextStationList();
         return;
     }
     const list = document.getElementById('relay-job-list');
@@ -3552,10 +3714,220 @@ async function loadRelayJobs() {
         syncRelayPreviewState();
         updateRelayStats(APP_STATE.allRelayJobs);
         renderRelayJobs();
+        renderRelayTextStationList();
     } catch (error) {
         console.error('加载中继任务失败:', error);
         list.innerHTML = '<tr><td colspan="12" class="table-empty-cell text-center text-danger">加载中继任务失败</td></tr>';
     }
+}
+
+function getRelayTextJobs() {
+    return APP_STATE.allRelayJobs
+        .filter((job) => String(job.recordKind || '') === 'text')
+        .slice()
+        .sort((a, b) => Number(a.updatedAt || 0) - Number(b.updatedAt || 0));
+}
+
+function syncRelayTextStationSelection(preferredId = '') {
+    const jobs = getRelayTextJobs();
+    if (preferredId && jobs.some((job) => String(job.id || '') === preferredId)) {
+        APP_STATE.relayTextStationSelectedId = preferredId;
+        return preferredId;
+    }
+    const current = APP_STATE.relayTextStationSelectedId || '';
+    if (current && jobs.some((job) => String(job.id || '') === current)) {
+        return current;
+    }
+    APP_STATE.relayTextStationSelectedId = jobs.length ? String(jobs[jobs.length - 1].id || '') : '';
+    return APP_STATE.relayTextStationSelectedId;
+}
+
+function renderRelayTextStationList() {
+    const list = document.getElementById('relay-text-station-list');
+    const countNode = document.getElementById('relay-text-station-count');
+    if (!list || !countNode) {
+        return;
+    }
+    const jobs = getRelayTextJobs();
+    const selectedId = syncRelayTextStationSelection();
+    countNode.textContent = `${jobs.length} 条`;
+
+    if (!jobs.length) {
+        list.innerHTML = '<div class="transfer-preview-empty relay-text-station-empty">还没有文字记录，发送一条后会像短信收件箱一样出现在这里。</div>';
+        renderRelayTextStationEmpty();
+        return;
+    }
+
+    list.innerHTML = jobs.map((job) => {
+        const jobId = String(job.id || '');
+        const snippet = String(job.message || job.fileName || '').trim();
+        return `
+            <button type="button" class="relay-text-station-item ${jobId === selectedId ? 'is-active' : ''}" data-id="${escapeAttr(jobId)}">
+                <div class="relay-text-station-item-title">${escapeHtml(job.fileName || 'tmpTXT.txt')}</div>
+                <div class="relay-text-station-item-meta">${escapeHtml(job.sourceDevice || 'web-client')} · ${escapeHtml(job.targetPath || '/tmpSL')}</div>
+                <div class="relay-text-station-item-meta">${escapeHtml(formatDate(Number(job.updatedAt || 0) * 1000))}</div>
+                <div class="relay-text-station-item-snippet">${escapeHtml(snippet || '文字记录')}</div>
+            </button>
+        `;
+    }).join('');
+
+    list.querySelectorAll('.relay-text-station-item').forEach((node) => {
+        node.addEventListener('click', async () => {
+            const jobId = node.getAttribute('data-id') || '';
+            await selectRelayTextStationRecord(jobId);
+        });
+    });
+
+    const currentJob = jobs.find((job) => String(job.id || '') === selectedId) || null;
+    if (!currentJob) {
+        renderRelayTextStationEmpty();
+        return;
+    }
+    const cachedPreview = APP_STATE.relayTextPreviewCache[selectedId];
+    if (cachedPreview) {
+        renderRelayTextStationDetail(cachedPreview, currentJob);
+    } else {
+        renderRelayTextStationLoading(currentJob);
+    }
+}
+
+function renderRelayTextStationEmpty(message = '选择一条文字记录后，会在这里按会话气泡展示内容；超过预览阈值时可直接下载。') {
+    const title = document.getElementById('relay-text-station-thread-title');
+    const meta = document.getElementById('relay-text-station-thread-meta');
+    const empty = document.getElementById('relay-text-station-empty');
+    const bubble = document.getElementById('relay-text-station-bubble');
+    if (title) title.textContent = '选择一条文字记录';
+    if (meta) meta.textContent = '会显示来源、落点、大小与时间。';
+    if (empty) {
+        empty.hidden = false;
+        empty.textContent = message;
+    }
+    if (bubble) {
+        bubble.hidden = true;
+        bubble.classList.remove('is-self');
+    }
+    setRelayTextStationActionState(null, null);
+}
+
+function renderRelayTextStationLoading(job) {
+    const title = document.getElementById('relay-text-station-thread-title');
+    const meta = document.getElementById('relay-text-station-thread-meta');
+    const empty = document.getElementById('relay-text-station-empty');
+    const bubble = document.getElementById('relay-text-station-bubble');
+    if (title) title.textContent = job?.fileName || '文字记录';
+    if (meta) meta.textContent = `${job?.sourceDevice || 'web-client'} · ${job?.targetPath || '/tmpSL'} · 正在加载文本内容`;
+    if (empty) {
+        empty.hidden = false;
+        empty.textContent = '正在加载文本内容...';
+    }
+    if (bubble) {
+        bubble.hidden = true;
+        bubble.classList.remove('is-self');
+    }
+    setRelayTextStationActionState(job, null);
+}
+
+function setRelayTextStationActionState(job, preview) {
+    const downloadBtn = document.getElementById('relay-text-station-download-btn');
+    const restoreBtn = document.getElementById('relay-text-station-restore-btn');
+    const deleteBtn = document.getElementById('relay-text-station-delete-btn');
+    if (downloadBtn) {
+        downloadBtn.disabled = !job || !job.cacheAvailable;
+    }
+    if (restoreBtn) {
+        restoreBtn.disabled = !job || !job.cacheAvailable;
+    }
+    if (deleteBtn) {
+        deleteBtn.disabled = !job;
+    }
+}
+
+function renderRelayTextStationDetail(preview, job) {
+    if (!job) {
+        renderRelayTextStationEmpty();
+        return;
+    }
+    const title = document.getElementById('relay-text-station-thread-title');
+    const meta = document.getElementById('relay-text-station-thread-meta');
+    const empty = document.getElementById('relay-text-station-empty');
+    const bubble = document.getElementById('relay-text-station-bubble');
+    const bubbleMeta = document.getElementById('relay-text-station-bubble-meta');
+    const bubbleText = document.getElementById('relay-text-station-bubble-text');
+    if (!title || !meta || !empty || !bubble || !bubbleMeta || !bubbleText) {
+        return;
+    }
+
+    const metaParts = [
+        job.sourceDevice || 'web-client',
+        job.targetPath || '/tmpSL',
+        formatDate(Number(job.updatedAt || 0) * 1000),
+    ];
+    if (preview?.encoding) {
+        metaParts.push(String(preview.encoding).toUpperCase());
+    }
+    if (preview?.size) {
+        metaParts.push(formatSize(Number(preview.size || 0)));
+    }
+
+    title.textContent = job.fileName || '文字记录';
+    meta.textContent = metaParts.join(' · ');
+    setRelayTextStationActionState(job, preview);
+
+    if (!preview || !preview.canPreview || !preview.inlineAllowed) {
+        bubble.hidden = true;
+        bubble.classList.remove('is-self');
+        empty.hidden = false;
+        empty.textContent = preview?.message || '当前缓存仅支持文本预览，请直接下载查看。';
+        return;
+    }
+
+    bubble.hidden = false;
+    bubble.classList.toggle('is-self', String(job.sourceDevice || '') === 'web-client');
+    empty.hidden = true;
+    bubbleMeta.textContent = `${job.sourceDevice || 'web-client'} · ${formatDate(Number(job.updatedAt || 0) * 1000)}`;
+    bubbleText.textContent = preview.content || '';
+}
+
+async function openRelayTextStation(preferredId = '') {
+    const modal = document.getElementById('relay-text-station-modal');
+    if (!modal) {
+        return;
+    }
+    syncRelayTextStationSelection(preferredId);
+    renderRelayTextStationList();
+    updateRelayModalTextMeta();
+    bootstrap.Modal.getOrCreateInstance(modal).show();
+    if (APP_STATE.relayTextStationSelectedId) {
+        await selectRelayTextStationRecord(APP_STATE.relayTextStationSelectedId);
+    }
+}
+
+async function selectRelayTextStationRecord(jobId) {
+    if (!jobId) {
+        renderRelayTextStationEmpty();
+        return;
+    }
+    APP_STATE.relayTextStationSelectedId = jobId;
+    renderRelayTextStationList();
+    const job = APP_STATE.allRelayJobs.find((item) => String(item.id || '') === jobId) || null;
+    renderRelayTextStationLoading(job);
+    const preview = APP_STATE.relayTextPreviewCache[jobId] || await fetchRelayPreview(jobId);
+    if (APP_STATE.relayTextStationSelectedId === jobId) {
+        renderRelayTextStationDetail(preview, job);
+    }
+}
+
+async function fetchRelayPreview(jobId, alertOnFailure = true) {
+    const response = await fetch(`/api/relay/jobs/${encodeURIComponent(jobId)}/preview`);
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+        if (alertOnFailure) {
+            showAlert(data.error || '文本预览加载失败', 'danger');
+        }
+        return null;
+    }
+    APP_STATE.relayTextPreviewCache[jobId] = data;
+    return data;
 }
 
 function renderRelayJobs() {
@@ -3576,7 +3948,7 @@ function renderRelayJobs() {
         if (!keyword) {
             return true;
         }
-        const target = `${job.id || ''} ${job.sourceDevice || ''} ${job.targetDevice || ''} ${job.fileName || ''} ${job.message || ''}`.toLowerCase();
+        const target = `${job.id || ''} ${job.sourceDevice || ''} ${job.targetDevice || ''} ${job.targetPath || ''} ${job.fileName || ''} ${job.message || ''}`.toLowerCase();
         return target.includes(keyword);
     });
 
@@ -3597,6 +3969,8 @@ function renderRelayJobs() {
             const allowRetry = recordKind === 'file' && !['delivered', 'expired'].includes(String(job.status || ''));
             const allowCancel = recordKind === 'file' && !['delivered', 'expired'].includes(String(job.status || ''));
             const allowPreview = isRelayTextPreviewAvailable(job);
+            const previewLabel = recordKind === 'text' ? '打开文字站' : '查看文本';
+            const targetDisplay = recordKind === 'text' ? (job.targetPath || '/tmpSL') : (job.targetDevice || '-');
             const cacheState = job.cacheAvailable
                 ? (recordKind === 'text' ? '文本记录缓存可用' : '缓存可用')
                 : '缓存缺失';
@@ -3604,10 +3978,10 @@ function renderRelayJobs() {
                 <td><input class="relay-row-select" type="checkbox" data-id="${escapeAttr(jobId)}" ${selected ? 'checked' : ''}></td>
                 <td>${escapeHtml(jobId.slice(0, 12))}</td>
                 <td>${escapeHtml(job.sourceDevice || '-')}</td>
-                <td>${escapeHtml(job.targetDevice || '-')}</td>
+                <td>${escapeHtml(targetDisplay)}</td>
                 <td>
                     <div>${escapeHtml(job.fileName || '-')}</div>
-                    <div class="section-note">${escapeHtml(recordKind === 'text' ? 'text record' : 'file relay')}</div>
+                    <div class="section-note">${escapeHtml(recordKind === 'text' ? '文字中转站记录' : '文件中继')}</div>
                 </td>
                 <td><span class="badge status-${escapeAttr(job.status || 'pending')}">${escapeHtml(job.status || '-')}</span></td>
                 <td>${formatSize(Number(job.bytes || 0))}</td>
@@ -3620,7 +3994,7 @@ function renderRelayJobs() {
                 </td>
                 <td>
                     <div class="btn-group btn-group-sm relay-action-group">
-                        <button class="btn btn-outline-secondary relay-preview-cache" data-id="${escapeAttr(jobId)}" ${allowPreview && cacheActionReady ? '' : 'disabled'}>查看文本</button>
+                        <button class="btn btn-outline-secondary relay-preview-cache" data-id="${escapeAttr(jobId)}" ${allowPreview && cacheActionReady ? '' : 'disabled'}>${previewLabel}</button>
                         <button class="btn btn-outline-secondary relay-download-cache" data-id="${escapeAttr(jobId)}" ${cacheActionReady ? '' : 'disabled'}>下载缓存</button>
                         <button class="btn btn-outline-primary relay-restore-cache" data-id="${escapeAttr(jobId)}" ${cacheActionReady ? '' : 'disabled'}>回流到当前目录</button>
                         <button class="btn btn-outline-secondary relay-retry" data-id="${escapeAttr(jobId)}" ${allowRetry ? '' : 'disabled'}>重试</button>
@@ -3667,6 +4041,11 @@ function renderRelayJobs() {
     document.querySelectorAll('.relay-preview-cache').forEach((btn) => {
         btn.addEventListener('click', async function() {
             const id = this.getAttribute('data-id');
+            const job = APP_STATE.allRelayJobs.find((item) => String(item.id || '') === String(id || ''));
+            if (String(job?.recordKind || '') === 'text') {
+                await openRelayTextStation(String(id || ''));
+                return;
+            }
             await loadRelayPreview(id);
         });
     });
@@ -3732,6 +4111,14 @@ function syncRelaySelection(jobId, checked) {
 function syncRelaySelectionSet() {
     const existing = new Set(APP_STATE.allRelayJobs.map((job) => String(job.id || '')));
     APP_STATE.relaySelectedIds = APP_STATE.relaySelectedIds.filter((id) => existing.has(id));
+    APP_STATE.relayTextStationSelectedId = existing.has(APP_STATE.relayTextStationSelectedId)
+        ? APP_STATE.relayTextStationSelectedId
+        : '';
+    Object.keys(APP_STATE.relayTextPreviewCache).forEach((jobId) => {
+        if (!existing.has(jobId)) {
+            delete APP_STATE.relayTextPreviewCache[jobId];
+        }
+    });
 }
 
 function isRelayCacheActionAvailable(job) {
@@ -3749,7 +4136,11 @@ function isRelayTextPreviewAvailable(job) {
 
 async function restoreRelayCacheToCurrentDirectory(jobId) {
     const targetDevice = document.getElementById('device-selector')?.value || '';
-    const targetPath = normalizePath(document.getElementById('current-path')?.value || '/');
+    const job = APP_STATE.allRelayJobs.find((item) => String(item.id || '') === String(jobId || '')) || null;
+    const currentPath = normalizePath(document.getElementById('current-path')?.value || '/');
+    const targetPath = String(job?.recordKind || '') === 'text'
+        ? buildRelayTextTargetDir(currentPath)
+        : currentPath;
 
     if (!targetDevice) {
         showAlert('请先在文件页选择回流目标设备', 'warning');
@@ -3772,7 +4163,7 @@ async function restoreRelayCacheToCurrentDirectory(jobId) {
             showAlert(data.message || data.error || '中继回流失败', 'danger');
             return;
         }
-        showAlert('中继缓存已回流到当前目录', 'success');
+        showAlert(String(job?.recordKind || '') === 'text' ? `文字记录已回流到 ${targetPath}` : '中继缓存已回流到当前目录', 'success');
         loadRelayJobs();
         if (APP_STATE.activePageId === 'files-page') {
             loadFiles();
@@ -3965,12 +4356,14 @@ function updateRelayCountdownLabels() {
 function syncRelayPreviewState() {
     const previewId = APP_STATE.relayPreview?.jobId || '';
     if (!previewId) {
+        renderRelayTextStationList();
         return;
     }
     const current = APP_STATE.allRelayJobs.find((job) => String(job.id || '') === previewId);
     if (!current || !current.cacheAvailable) {
         clearRelayPreview();
     }
+    renderRelayTextStationList();
 }
 
 async function loadRelayPreview(jobId) {
@@ -3979,10 +4372,8 @@ async function loadRelayPreview(jobId) {
         return;
     }
     try {
-        const response = await fetch(`/api/relay/jobs/${encodeURIComponent(jobId)}/preview`);
-        const data = await response.json();
-        if (!response.ok || !data.success) {
-            showAlert(data.error || '文本预览加载失败', 'danger');
+        const data = await fetchRelayPreview(jobId);
+        if (!data) {
             return;
         }
         APP_STATE.relayPreview = data;
@@ -4079,7 +4470,7 @@ async function loadWhitelistRules() {
     if (!hasCapability('whitelist')) {
         const list = document.getElementById('whitelist-rules-list');
         if (list) {
-            list.innerHTML = '<div class="text-muted small">当前版本未启用白名单能力</div>';
+            list.innerHTML = '<div class="text-muted small">当前运行态未启用白名单能力</div>';
         }
         return;
     }

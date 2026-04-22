@@ -1033,6 +1033,7 @@ public class WebServer {
                 let sourceDevice = ctx.formValue("sourceDevice") ?? "unknown"
                 let fileName = ctx.formValue("fileName") ?? ""
                 let content = ctx.formValue("content") ?? ""
+                let targetPath = ctx.formValue("targetPath") ?? "/tmpSL"
                 if (content.size == 0) {
                     ctx.status(400).json(JsonObject()
                         .putBool("success", false)
@@ -1042,7 +1043,7 @@ public class WebServer {
                 }
 
                 try {
-                    let job = m.relay.createText(sourceDevice, fileName, content)
+                    let job = m.relay.createText(sourceDevice, fileName, content, targetPath)
                     ctx.status(200).json(JsonObject()
                         .putBool("success", true)
                         .putObj("job", job.toJson())

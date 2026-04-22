@@ -256,8 +256,11 @@
                 </div>
                 <div class="app-card mt-3" data-capability="relay">
                     <div class="card-head">
-                        <h2>中继任务</h2>
+                        <h2>中继任务 / 文字中转站</h2>
                         <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-open-text-station-btn">
+                                <i class="bi bi-chat-dots"></i> 文字站
+                            </button>
                             <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-select-visible-btn">
                                 <i class="bi bi-check2-square"></i> 选择可见
                             </button>
@@ -266,6 +269,7 @@
                             </button>
                         </div>
                     </div>
+                    <div class="section-note mt-2 mb-0">文字中转站就在这里：粘贴临时文本后会按 UTF-8 保存为 <code>.txt</code> 记录，可在记录层删除，不会直接删除设备上的真实文件；点“文字站”后会按对话框样式处理内容。</div>
                     <div class="row g-3 mt-1">
                         <div class="row g-2">
                             <div class="col-6">
@@ -286,18 +290,21 @@
                             <input class="form-control form-control-sm" type="file" id="relay-file-input">
                         </div>
                         <div class="col-md-4">
-                            <label for="relay-text-name" class="form-label">文本记录名</label>
+                            <label for="relay-text-name" class="form-label">文字中转站记录名</label>
                             <input class="form-control form-control-sm" id="relay-text-name" placeholder="meeting-note.txt">
                         </div>
                         <div class="col-12">
-                            <label for="relay-text-content" class="form-label">临时文本</label>
+                            <div class="section-note mb-0">想临时传一段文字而不是文件时，只填写下面两项即可，不需要上传文件；记录名留空时默认按当前目录的 <code>tmpSL/tmpTXT-{毫秒}.txt</code> 处理。</div>
+                        </div>
+                        <div class="col-12">
+                            <label for="relay-text-content" class="form-label">文字中转站内容</label>
                             <textarea class="form-control form-control-sm" id="relay-text-content" rows="4" placeholder="直接粘贴临时文本，系统会按 UTF-8 保存为 .txt 记录"></textarea>
                             <div class="form-text" id="relay-text-meta">0 字符 · 0 行。超过预览阈值时自动改为下载查看，避免浏览器卡住。</div>
                         </div>
                     </div>
                     <div class="d-flex gap-2 mt-2">
                         <button class="btn btn-sm btn-primary pd-fl-cc" type="button" id="relay-submit-btn">
-                            <i class="bi bi-cloud-arrow-up me-1"></i>提交到中继
+                            <i class="bi bi-cloud-arrow-up me-1"></i>提交文件 / 文字
                         </button>
                         <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-retry-selected-btn">
                             <i class="bi bi-arrow-repeat me-1"></i>重试选中
@@ -936,6 +943,81 @@
                     <button type="button" class="btn btn-primary btn-sm" id="paste-upload-btn">
                         <i class="bi bi-cloud-upload me-1"></i>上传到当前目录
                     </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="relay-text-station-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div>
+                        <h5 class="modal-title mb-1">文字中转站</h5>
+                        <div class="text-muted small">像短信会话一样查看、发送、下载、回流与删记录。</div>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="relay-text-station-layout">
+                        <div class="relay-text-station-sidebar">
+                            <div class="preview-head">
+                                <span>文字记录</span>
+                                <span class="text-muted small" id="relay-text-station-count">0 条</span>
+                            </div>
+                            <div class="relay-text-station-list" id="relay-text-station-list"></div>
+                        </div>
+                        <div class="relay-text-station-main">
+                            <div class="relay-text-station-thread">
+                                <div class="preview-head">
+                                    <div>
+                                        <div class="fw-semibold" id="relay-text-station-thread-title">选择一条文字记录</div>
+                                        <div class="text-muted small" id="relay-text-station-thread-meta">会显示来源、落点、大小与时间。</div>
+                                    </div>
+                                    <div class="d-flex gap-2 flex-wrap">
+                                        <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-text-station-download-btn" disabled>
+                                            <i class="bi bi-download me-1"></i>下载缓存
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-primary pd-fl-cc" type="button" id="relay-text-station-restore-btn" disabled>
+                                            <i class="bi bi-arrow-down-square me-1"></i>回流到当前目录
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger pd-fl-cc" type="button" id="relay-text-station-delete-btn" disabled>
+                                            <i class="bi bi-trash3 me-1"></i>删除记录
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="relay-text-station-stream" id="relay-text-station-stream">
+                                    <div class="transfer-preview-empty relay-text-station-empty" id="relay-text-station-empty">选择左侧记录后，会在这里按会话气泡展示内容；超过预览阈值时可直接下载。</div>
+                                    <div class="relay-text-bubble" id="relay-text-station-bubble" hidden>
+                                        <div class="relay-text-bubble-meta" id="relay-text-station-bubble-meta"></div>
+                                        <pre class="relay-text-bubble-text" id="relay-text-station-bubble-text"></pre>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="relay-text-compose">
+                                <div class="row g-2">
+                                    <div class="col-md-4">
+                                        <label for="relay-modal-source-device" class="form-label">源设备</label>
+                                        <select class="form-select form-select-sm" id="relay-modal-source-device"></select>
+                                    </div>
+                                    <div class="col-md-8">
+                                        <label for="relay-modal-text-name" class="form-label">记录名</label>
+                                        <input class="form-control form-control-sm" id="relay-modal-text-name" placeholder="留空则自动生成 tmpTXT-{毫秒}.txt">
+                                    </div>
+                                    <div class="col-12">
+                                        <label for="relay-modal-text-content" class="form-label">文字内容</label>
+                                        <textarea class="form-control form-control-sm" id="relay-modal-text-content" rows="5" placeholder="像发短信一样输入文本，发送后默认按当前目录的 tmpSL/tmpTXT-{毫秒}.txt 处理。"></textarea>
+                                    </div>
+                                </div>
+                                <div class="d-flex gap-2 align-items-center justify-content-between flex-wrap mt-2">
+                                    <div class="relay-text-compose-meta" id="relay-modal-text-meta">0 字符 · 0 行</div>
+                                    <button class="btn btn-sm btn-primary pd-fl-cc" type="button" id="relay-modal-submit-btn">
+                                        <i class="bi bi-send me-1"></i>发送文字
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

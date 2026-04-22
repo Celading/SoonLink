@@ -1126,6 +1126,10 @@ public class CoreServer {
     }
 
     public func createRelayTextRecord(sourceDevice: String, fileName: String, content: String): RelayJob {
+        createRelayTextRecord(sourceDevice, fileName, content, "/tmpSL")
+    }
+
+    public func createRelayTextRecord(sourceDevice: String, fileName: String, content: String, targetPath: String): RelayJob {
         if (!profile.supportsRelay) {
             let job = RelayJob()
             job.status = "disabled"
@@ -1134,7 +1138,7 @@ public class CoreServer {
             job.recordKind = "text"
             return job
         }
-        relayFeature.createTextRecord(sourceDevice, fileName, content)
+        relayFeature.createTextRecord(sourceDevice, fileName, content, targetPath)
     }
 
     public func retryRelayJob(jobId: String): ?RelayJob {
