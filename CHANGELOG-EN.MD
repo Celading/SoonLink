@@ -20,9 +20,19 @@ Notes:
 
 ---
 
+## [0.0.2] - 2026-04-22
+
+- `=Chore` Reset the public package version to `0.0.2` and synced the runtime fallback plus its paired checks
+- `+Feature` Upgraded the relay text station into a conversation-style modal for send, preview, download, restore, and record removal
+- `=Fix` Switched UTF-8 text caching to real byte writes so Chinese text no longer degrades into `?`
+- `=Fix` Unified the default temporary text target to `currentPath/tmpSL/tmpTXT-{millis}.txt`
+- `=Docs` Tightened Web and login copy around runtime wording so the public surface stays runtime-oriented
+
+---
+
 ## [0.5.29] - 2026-04-16
 
-- `=Chore` Bumped the package version to `0.5.29` so it matches the current Core workline
+- `=Chore` Bumped the package version to `0.5.29` and kept it aligned with the repository release cadence at that time
 - `=Fix` Synced the runtime version fallback constant and its paired test to `0.5.29`
 - `=Docs` Synced README, troubleshooting notes, and GitHub Actions version examples to `0.5.29`
 
@@ -88,7 +98,7 @@ Notes:
 ## [0.4.12] - archive milestone
 
 - `+Feature` Chunk upload, Range download, and task-tracking flows were completed, significantly improving transfer stability
-- `+Feature` Relay cache, favorites, whitelist, and other enhanced capabilities entered the shared evolution path, while reserving future capability-gating hooks
+- `+Feature` Relay cache, favorites, whitelist, and other optional runtime features entered the shared evolution path, while reserving future capability-gating hooks
 - `+Feature` The `WebStatic` module was refactored and the visual language between the landing page and the management page was unified
 - `+Feature` Session context responses started to output runtime / capability information in a unified format
 - `=Fix` Web-side upload, download, and task-list error handling became clearer
