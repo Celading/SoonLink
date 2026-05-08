@@ -20,6 +20,33 @@ Notes:
 
 ---
 
+## [0.0.5] - 2026-05-08
+
+- `+Feature` StaticWeb is now installable as an app shell with a root-scope `service-worker`, `manifest.webmanifest`, offline fallback page, and a shared install launcher
+- `+Feature` Nodes can now send transfer requests to remote peers, and the receiver only enters the existing transfer task chain after manual acceptance
+- `+Feature` The `transfers` page now exposes an incoming-request drawer that polls requester, target path, and note details for manual acceptance
+- `=Fix` The main, login, admin, and dashboard pages now share consistent app metadata, icons, theme color, and standalone-safe viewport settings
+- `=Fix` Runtime device records are tightened back around `remembered`, `endpointScheme`, and `endpointBasePath`; request sources discovered through open discovery stay in candidate state until operators confirm them
+- `=Chore` Container bundles and Docker builds now consume a self-contained `dist/` tree with the binary, config, and `web` assets, and CI explicitly verifies that `web` entered the packaged output
+- `=Docs` Synced the public package version, runtime fallback, visible version badges, and release examples to `0.0.5`
+
+---
+
+## [0.0.4] - 2026-04-23
+
+- `=Feature` StaticWeb now has page-level recovery: after repeated handshake failures on the current page, it starts polling same-subnet candidate nodes and auto-jumps to the first reachable page
+- `=Chore` Synced the public package version, runtime fallback, and visible version badges to `0.0.4`
+- `=Docs` Updated troubleshooting and release examples to reference `0.0.4`
+
+---
+
+## [0.0.3] - 2026-04-23
+
+- `=Chore` Promoted the previous text-station fix into a formal public release number and advanced the package metadata to `0.0.3`
+- `=Fix` Kept the text-station submission path on JSON ingress so UTF-8 Chinese content no longer degrades into `?` before cache preview
+
+---
+
 ## [0.0.2] - 2026-04-22
 
 - `=Chore` Reset the public package version to `0.0.2` and synced the runtime fallback plus its paired checks

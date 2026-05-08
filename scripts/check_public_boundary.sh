@@ -25,6 +25,16 @@ tracked_symlinks() {
   fi
 }
 
+require_tracked_path() {
+  path="$1"
+  if git -C "$ROOT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
+    if ! git -C "$ROOT_DIR" ls-files --error-unmatch "$path" >/dev/null 2>&1; then
+      echo "required public path is not tracked: $path" >&2
+      exit 1
+    fi
+  fi
+}
+
 require_path() {
   if [ ! -e "$1" ]; then
     echo "missing required path: $1" >&2
@@ -43,6 +53,11 @@ require_path "README-EN.MD"
 require_path "CHANGELOG-EN.MD"
 require_path "config"
 require_path "web"
+require_path "web/static/icons/app-icon.svg"
+require_path "web/static/js/pwa.js"
+require_path "web/static/manifest.webmanifest"
+require_path "web/static/offline.html"
+require_path "web/static/service-worker.js"
 require_path "docker/entrypoint.sh"
 require_path "scripts/prepare_container_bundle.sh"
 require_path "scripts/prepare_homebrew_bundle.sh"
@@ -66,6 +81,16 @@ for public_path in README.md README-EN.MD CHANGELOG.MD CHANGELOG-EN.MD LICENSE c
     echo "public path must not be a symlink: $public_path" >&2
     exit 1
   fi
+done
+
+for tracked_public_path in \
+  web/static/icons/app-icon.svg \
+  web/static/js/pwa.js \
+  web/static/manifest.webmanifest \
+  web/static/offline.html \
+  web/static/service-worker.js
+do
+  require_tracked_path "$tracked_public_path"
 done
 
 if tracked_symlinks | grep . >/dev/null 2>&1; then

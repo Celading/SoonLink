@@ -71,6 +71,15 @@ RUN export LD_LIBRARY_PATH="${CANGJIE_HOME}/runtime/lib/$(cat /tmp/cangjie-runti
     && cjpm build \
     && ./scripts/prepare_container_bundle.sh --bin /workspace/SoonLink-Core/target/release/bin/main \
     && file /workspace/SoonLink-Core/dist/soonlnk \
+    && test -f /workspace/SoonLink-Core/dist/config/soonlink.toml \
+    && test -f /workspace/SoonLink-Core/dist/web/views/index.html \
+    && test -f /workspace/SoonLink-Core/dist/web/static/js/main.js \
+    && test -f /workspace/SoonLink-Core/dist/web/static/js/pwa.js \
+    && test -f /workspace/SoonLink-Core/dist/web/static/manifest.webmanifest \
+    && test -f /workspace/SoonLink-Core/dist/web/static/service-worker.js \
+    && test -f /workspace/SoonLink-Core/dist/web/static/offline.html \
+    && test -f /workspace/SoonLink-Core/dist/web/static/icons/app-icon.svg \
+    && test -f /workspace/SoonLink-Core/dist/docker/entrypoint.sh \
     && ldd /workspace/SoonLink-Core/dist/soonlnk
 
 FROM --platform=$TARGETPLATFORM ubuntu:24.04 AS runtime
@@ -99,9 +108,9 @@ RUN mkdir -p /opt/cangjie-runtime \
        esac
 
 COPY --from=builder /workspace/SoonLink-Core/dist/soonlnk /app/soonlnk
-COPY --from=builder /workspace/SoonLink-Core/config /app/config
-COPY --from=builder /workspace/SoonLink-Core/web /app/web
-COPY --from=builder /workspace/SoonLink-Core/docker/entrypoint.sh /app/docker/entrypoint.sh
+COPY --from=builder /workspace/SoonLink-Core/dist/config /app/config
+COPY --from=builder /workspace/SoonLink-Core/dist/web /app/web
+COPY --from=builder /workspace/SoonLink-Core/dist/docker/entrypoint.sh /app/docker/entrypoint.sh
 COPY --from=builder /opt/cangjie/runtime/lib /opt/cangjie-runtime/lib
 
 ENV LD_LIBRARY_PATH=/opt/cangjie-runtime/current
