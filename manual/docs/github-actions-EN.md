@@ -30,7 +30,7 @@ That split keeps the repository validation path lightweight while leaving the fu
   - Each platform job now uploads staged artifacts first, and the Ubuntu `publish` job publishes the final GitHub Release assets in one place.
 - `.github/workflows/version-package.yml`
   Produces a preview packaging run whenever the mainline package version moves forward.
-  - It triggers on pushes to `main` / `core` when `cjpm.toml` changes.
+  - It triggers on pushes to `main` / `core` when `cjpm.toml` changes or when the release-bundle workflow / scripts themselves change.
   - The workflow reuses the multi-platform bundle matrix from `release-artifacts.yml`, but always keeps `publish_release=false`, so it does not publish a GitHub Release and does not trigger Docker / Homebrew publishing.
   - Bundles are uploaded as workflow artifacts, which fits the "bump version once, get one downloadable package preview" habit before pushing a formal tag.
 - `.github/workflows/docker-publish.yml`
@@ -147,7 +147,7 @@ Both bundle formats include:
 
 ## Notes
 
-- When `cjpm.toml` changes on `main` / `core`, GitHub automatically runs `version-package` and uploads a multi-platform preview bundle set without publishing a GitHub Release.
+- When `cjpm.toml` changes on `main` / `core`, or the packaging flow itself changes, GitHub automatically runs `version-package` and uploads a multi-platform preview bundle set without publishing a GitHub Release.
 - Pushing tags such as `0.8.27` or `0.0.5.17` automatically triggers `release-artifacts` and `docker-publish`; once the GitHub Release is published, `homebrew-tap` follows.
 - If you want the old "one version bump, one action packaging run" rhythm back, the recommended flow is: bump `cjpm.toml`, merge to the mainline, wait for `version-package` artifacts, verify them, then push the matching tag for formal Release / Docker / Homebrew publishing.
 - The GitCode tag workflow is intentionally limited to the Linux x86_64 bundle. GitHub remains the primary multi-platform release surface.

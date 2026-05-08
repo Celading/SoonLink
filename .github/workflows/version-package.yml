@@ -13,6 +13,12 @@ on:
       - core
     paths:
       - cjpm.toml
+      - .github/workflows/release-artifacts.yml
+      - .github/workflows/version-package.yml
+      - scripts/build_release_bundle.sh
+      - scripts/build_release_target.sh
+      - scripts/install_cangjie_ci.sh
+      - scripts/prepare_release_workspace.sh
 
 permissions:
   contents: read

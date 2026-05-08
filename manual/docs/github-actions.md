@@ -30,7 +30,7 @@ SoonLink 现在同时维护 GitHub 与 GitCode 两套自动化入口：
   - 每个平台 job 先产出并上传制品，再统一由 Ubuntu `publish` job 收拢并写入 GitHub Release，避免 macOS / Windows runner 直接上传 release asset 时的差异。
 - `.github/workflows/version-package.yml`
   用于在主线版本号推进时自动产出一轮预览打包制品。
-  - 触发方式为推送到 `main` / `core`，且本次提交修改了 `cjpm.toml`。
+  - 触发方式为推送到 `main` / `core`，且本次提交修改了 `cjpm.toml`，或命中了 release bundle 相关 workflow / script。
   - 该 workflow 复用 `release-artifacts.yml` 的多平台打包矩阵，但固定 `publish_release=false`，因此不会自动创建 GitHub Release，也不会触发 Docker / Homebrew 发布。
   - 产物会作为当前 workflow 的 artifact 上传，适合“改版本号后先拿一轮可下载包验收”，再决定是否推正式 tag。
 - `.github/workflows/docker-publish.yml`
@@ -148,7 +148,7 @@ GitCode workflow 本身不会直接读取 GitHub 风格的 repository variables 
 
 ## 备注
 
-- 推送到 `main` / `core` 且 `cjpm.toml` 版本发生变更时，会自动触发 `version-package`，先产出一轮多平台预览制品；这条链路不会自动发布 GitHub Release。
+- 推送到 `main` / `core` 且 `cjpm.toml` 版本发生变更，或打包工作流自身发生调整时，会自动触发 `version-package`，先产出一轮多平台预览制品；这条链路不会自动发布 GitHub Release。
 - 推送形如 `0.8.27`、`0.0.5.17` 的 tag 时，会自动触发 `release-artifacts` 与 `docker-publish`；GitHub Release 发布后，会继续触发 `homebrew-tap`。
 - 如果你希望“版本号一次 action 打包”恢复到日常习惯，推荐流程是：先改 `cjpm.toml` 版本并合主线，等待 `version-package` 产出 artifact；确认无误后，再推同版本 tag 触发正式 Release / Docker / Homebrew。
 - GitCode 的 tag workflow 当前只收口到 Linux x86_64 bundle，完整多平台资产仍以 GitHub Release 为主发布面。
