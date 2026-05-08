@@ -22,9 +22,9 @@ env:
   CANGJIE_NIGHTLY_TAGS_API: ${{ vars.CANGJIE_NIGHTLY_TAGS_API != '' && vars.CANGJIE_NIGHTLY_TAGS_API || 'https://api.gitcode.com/api/v5/repos/Cangjie/nightly_build/tags?per_page=100' }}
   CANGJIE_SDK_LINUX_AMD64_URL: ${{ vars.CANGJIE_SDK_LINUX_AMD64_URL }}
   DEVECO_CANGJIE_OHOS_AARCH64_URL: ${{ vars.DEVECO_CANGJIE_OHOS_AARCH64_URL }}
-  IGNITE_GIT_URL: https://gitcode.com/cinyu/ignite-cangjie.git
-  LISI_GIT_URL: https://gitcode.com/cinyu/lisi
-  JINGUISSL_GIT_URL: https://atomgit.com/cinyu/jinguiSSL
+  IGNITE_GIT_URL: https://atomgit.com/cinyu/ignite-cangjie.git
+  LISI_GIT_URL: https://atomgit.com/cinyu/lisi.git
+  JINGUISSL_GIT_URL: https://atomgit.com/cinyu/jinguiSSL.git
 
 jobs:
   boundary:
@@ -60,8 +60,8 @@ jobs:
 
       - name: Install build prerequisites
         run: |
-          sudo apt-get update -o Acquire::Retries=5
-          sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl file git tar unzip zip
+          chmod +x ./scripts/install_ci_prerequisites.sh
+          ./scripts/install_ci_prerequisites.sh
 
       - name: Install Cangjie SDK when repository variables are configured
         id: sdk
@@ -186,8 +186,8 @@ jobs:
 
       - name: Install build prerequisites
         run: |
-          sudo apt-get update -o Acquire::Retries=5
-          sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl file git tar unzip zip python3
+          chmod +x ./scripts/install_ci_prerequisites.sh
+          ./scripts/install_ci_prerequisites.sh
 
       - name: Resolve OpenHarmony toolchain URL
         id: ohos

@@ -8,8 +8,8 @@
   description = "SoonLink / 溯联 file transfer service powered by Ignite"
 
 [dependencies]
-  ignite = { git = "https://gitcode.com/cinyu/ignite-cangjie.git" }
-  lisi = { git = "https://gitcode.com/cinyu/lisi" }
+  ignite = { git = "https://atomgit.com/cinyu/ignite-cangjie.git" }
+  lisi = { git = "https://atomgit.com/cinyu/lisi.git" }
 
 [target.x86_64-w64-mingw32]
   link-option = "-lcrypt32"
