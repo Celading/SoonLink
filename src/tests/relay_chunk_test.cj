@@ -155,16 +155,19 @@ public class RelayChunk_test {
         let cacheDir = "/tmp/${scope}_cache"
         let whitelistFile = "/tmp/${scope}_whitelist.toml"
         let relay = RelayFeature(cacheDir, 24, "fixed", 1024 * 1024, 10, DefaultDiskProbe(), whitelistFile)
+        let content = "备案号\n你好，SoonLink"
 
-        let job = relay.createTextRecord("web-client", "meeting-note", "line1\nline2")
+        let job = relay.createTextRecord("web-client", "", content, "/notes/tmpSL")
         @Assert(job.recordKind, "text")
         @Assert(job.status, "cached")
         @Assert(job.targetDevice, "")
+        @Assert(job.targetPath, "/notes/tmpSL")
         @Assert(strEndsWith(job.fileName, ".txt"))
 
         match (relay.cacheDescriptor(job.id)) {
-            case Some((_cachePath, fileName)) =>
-                @Assert(fileName, "meeting-note.txt")
+            case Some((cachePath, fileName)) =>
+                @Assert(strStartsWith(fileName, "tmpTXT-"), true)
+                @Assert(LocalFileMgr().readText(cachePath), content)
             case None =>
                 @Assert(false)
         }

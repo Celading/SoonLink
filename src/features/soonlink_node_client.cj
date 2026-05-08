@@ -171,6 +171,14 @@ public class SoonLinkNodeClient {
         }
         (parseJsonString(completeResp.body(), "success") ?? "false") == "true"
     }
+
+    public func pushTransferRequest(payload: String): Bool {
+        let resp = client.postJson("/api/transfer-requests/ingest", payload)
+        if (!resp.isOk()) {
+            return false
+        }
+        (parseJsonString(resp.body(), "success") ?? "false") == "true"
+    }
 }
 
 public func buildSoonLinkNodeBaseUrl(host: String, port: Int64, scheme: String, basePath: String): String {

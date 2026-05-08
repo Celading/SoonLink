@@ -5,17 +5,16 @@ const APP_STATE = {
         themeVariant: 'remote',
     },
     productContext: {
-        runtimeLabel: 'SoonLink',
+        edition: 'runtime',
         productName: 'SoonLink',
         capabilities: {
             passiveDiscovery: true,
             activeDiscovery: true,
-            mdnsDiscovery: false,
-            peerTransfer: false,
+            peerTransfer: true,
             relay: true,
-            whitelist: false,
-            favorites: false,
-            advancedSecurity: false,
+            whitelist: true,
+            favorites: true,
+            advancedSecurity: true,
         },
     },
     activePageId: 'devices-page',
@@ -35,6 +34,10 @@ const APP_STATE = {
     allRelayJobs: [],
     relaySelectedIds: [],
     relayPreview: null,
+    relayTextStationSelectedId: '',
+    relayTextPreviewCache: {},
+    relayPageDraftSeed: 0,
+    relayModalDraftSeed: 0,
     allFiles: [],
     fileSortBy: 'name',
     fileSortOrder: 'asc',
@@ -46,12 +49,31 @@ const APP_STATE = {
     relayUiTimer: null,
     transferSource: null,
     transferPreview: null,
+    transferRequests: [],
+    transferRequestSeenIds: [],
+    transferRequestTargetDrafts: {},
     adminSystemSummary: null,
     manualDeviceEditingId: '',
     fileListMeta: {
         loaded: 0,
         total: 0,
         truncated: false,
+    },
+    sessionRescue: {
+        currentFailures: 0,
+        active: false,
+        attempts: 0,
+        candidateIndex: 0,
+        candidates: [],
+        lastCandidate: '',
+        lastSuccessOrigin: '',
+        lastHealthyAt: Date.now(),
+        lastHealthySource: 'page-load',
+        redirecting: false,
+        watchdogTimer: null,
+        scanTimer: null,
+        watchdogInFlight: false,
+        scanInFlight: false,
     },
 };
 
@@ -60,6 +82,13 @@ const NAV_DOCK_KEY = 'soonlink_nav_dock_side';
 const FAVORITES_KEY = 'soonlink_path_favorites';
 const DEFAULT_CHUNK_SIZE = 2 * 1024 * 1024;
 const DOUBLE_ACTIVATE_WINDOW_MS = 420;
+const SESSION_HANDSHAKE_ROUTE = '/api/session/handshake';
+const SESSION_WATCHDOG_INTERVAL_MS = 6000;
+const SESSION_FAILURE_THRESHOLD = 3;
+const SESSION_HEALTH_GRACE_WINDOW_MS = 30000;
+const SESSION_RESCUE_SCAN_INTERVAL_MS = 2200;
+const SESSION_RESCUE_BATCH_SIZE = 8;
+const SESSION_RESCUE_PROBE_TIMEOUT_MS = 1400;
 
 const PAGE_ID_MAP = {
     'devices': 'devices-page',
@@ -156,6 +185,400 @@ function updateUrlParams(updates = {}) {
     history.replaceState(null, '', newUrl);
 }
 
+function stripTrailingSlash(text) {
+    return String(text || '').replace(/\/+$/g, '');
+}
+
+function isIpv4Host(host) {
+    const source = String(host || '').trim();
+    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(source)) {
+        return false;
+    }
+    return source.split('.').every((part) => {
+        const value = Number(part);
+        return Number.isInteger(value) && value >= 0 && value <= 255;
+    });
+}
+
+function ipv4SubnetPrefix(host) {
+    if (!isIpv4Host(host)) {
+        return '';
+    }
+    return String(host).trim().split('.').slice(0, 3).join('.');
+}
+
+function sameIpv4Subnet(left, right) {
+    const leftPrefix = ipv4SubnetPrefix(left);
+    return !!leftPrefix && leftPrefix === ipv4SubnetPrefix(right);
+}
+
+function resolveCurrentAppBasePath(pathname = window.location.pathname) {
+    let path = String(pathname || '/').trim();
+    if (!path.startsWith('/')) {
+        path = `/${path}`;
+    }
+    if (path === '/') {
+        return '';
+    }
+    if (path.endsWith('/')) {
+        path = path.slice(0, -1);
+    }
+    const lastSlash = path.lastIndexOf('/');
+    const tail = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
+    if (tail.includes('.')) {
+        return lastSlash > 0 ? path.slice(0, lastSlash) : '';
+    }
+    return path;
+}
+
+function resolveCurrentEndpointOrigin() {
+    return `${stripTrailingSlash(window.location.origin)}${resolveCurrentAppBasePath()}`;
+}
+
+function buildSessionHandshakeUrl(endpointOrigin = resolveCurrentEndpointOrigin()) {
+    const base = stripTrailingSlash(endpointOrigin);
+    return `${base}${SESSION_HANDSHAKE_ROUTE}`;
+}
+
+async function probeSessionHandshake(endpointOrigin, timeoutMs = SESSION_RESCUE_PROBE_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(`${buildSessionHandshakeUrl(endpointOrigin)}?ts=${Date.now()}`, {
+            cache: 'no-store',
+            signal: controller.signal,
+        });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        if (!data || data.success !== true) {
+            throw new Error(data?.error || 'handshake rejected');
+        }
+        return data;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function ensureSessionRescuePanel() {
+    let panel = document.getElementById('session-rescue-panel');
+    if (panel) {
+        return panel;
+    }
+
+    panel = document.createElement('section');
+    panel.id = 'session-rescue-panel';
+    panel.className = 'session-rescue-panel';
+    panel.hidden = true;
+    panel.innerHTML = `
+        <div class="session-rescue-copy">
+            <div class="session-rescue-title" id="session-rescue-title">当前页面联通不稳定</div>
+            <div class="session-rescue-meta" id="session-rescue-meta">正在准备当前网段的握手候选。</div>
+        </div>
+        <div class="session-rescue-actions">
+            <button class="btn btn-sm btn-outline-secondary" type="button" id="session-rescue-refresh-btn">重试当前页</button>
+            <button class="btn btn-sm btn-outline-danger" type="button" id="session-rescue-stop-btn">停止轮询</button>
+        </div>
+    `;
+
+    const anchor = document.getElementById('main-app-header');
+    if (anchor && anchor.parentNode) {
+        anchor.insertAdjacentElement('afterend', panel);
+    } else {
+        document.body.appendChild(panel);
+    }
+
+    panel.querySelector('#session-rescue-refresh-btn')?.addEventListener('click', () => {
+        window.location.reload();
+    });
+    panel.querySelector('#session-rescue-stop-btn')?.addEventListener('click', () => {
+        stopSessionRescue({ notify: true });
+    });
+    return panel;
+}
+
+function renderSessionRescuePanel() {
+    const panel = ensureSessionRescuePanel();
+    const title = panel.querySelector('#session-rescue-title');
+    const meta = panel.querySelector('#session-rescue-meta');
+    const state = APP_STATE.sessionRescue;
+
+    if (!state.active) {
+        panel.hidden = true;
+        return;
+    }
+
+    const queued = Array.isArray(state.candidates) ? state.candidates.length : 0;
+    const scanned = Math.min(state.candidateIndex, queued);
+    panel.hidden = false;
+
+    if (state.redirecting) {
+        title.textContent = '已找到可握手节点，正在跳转';
+        meta.textContent = state.lastSuccessOrigin
+            ? `目标页面 ${state.lastSuccessOrigin}`
+            : '新的可用页面已经响应，即将自动打开。';
+        return;
+    }
+
+    title.textContent = '当前页面联通不稳定，正在轮询当前网段握手';
+    if (queued <= 0) {
+        meta.textContent = '还没推断出可尝试的节点端点，请稍后刷新或手动切换到其他节点。';
+        return;
+    }
+
+    const parts = [
+        `已尝试 ${state.attempts} 个端点`,
+        `当前候选 ${scanned}/${queued}`,
+    ];
+    if (state.lastCandidate) {
+        parts.push(`最近探测 ${state.lastCandidate}`);
+    }
+    meta.textContent = parts.join(' · ');
+}
+
+function buildSessionRescueRedirectUrl(endpointOrigin) {
+    const pageKey = PAGE_ID_REVERSE_MAP[APP_STATE.activePageId] || 'devices';
+    const params = new URLSearchParams();
+    if (pageKey) {
+        params.set('page', pageKey);
+    }
+    if (pageKey === 'files') {
+        params.set('device', 'local');
+        const path = normalizePath(document.getElementById('current-path')?.value || '/');
+        if (path && path !== '/') {
+            params.set('path', path);
+        }
+    } else if (pageKey === 'transfers') {
+        params.set('device', 'local');
+    }
+    const query = params.toString();
+    return query ? `${stripTrailingSlash(endpointOrigin)}/?${query}` : `${stripTrailingSlash(endpointOrigin)}/`;
+}
+
+function buildSessionRescueCandidates() {
+    const currentOrigin = stripTrailingSlash(resolveCurrentEndpointOrigin());
+    const currentHost = String(window.location.hostname || '').trim();
+    const scheme = window.location.protocol === 'https:' ? 'https' : 'http';
+    const port = window.location.port
+        ? Number(window.location.port)
+        : (scheme === 'https' ? 443 : 80);
+    const basePath = resolveCurrentAppBasePath();
+    const selectedDeviceId = document.getElementById('device-selector')?.value || APP_STATE.pendingDeviceFromUrl || '';
+    const selectedBinding = selectedDeviceId ? getConnectorBinding(selectedDeviceId) : null;
+    const referenceHost = String(selectedBinding?.ip || currentHost || '').trim();
+    const ranked = [];
+    const seen = new Set();
+
+    const pushCandidate = (origin, score = 20) => {
+        const normalized = stripTrailingSlash(origin);
+        if (!normalized || normalized === currentOrigin || seen.has(normalized)) {
+            return;
+        }
+        seen.add(normalized);
+        ranked.push({ origin: normalized, score });
+    };
+
+    if (selectedBinding?.endpoint?.origin) {
+        pushCandidate(selectedBinding.endpoint.origin, 0);
+    }
+
+    const bindings = Array.isArray(APP_STATE.connectorBindings) && APP_STATE.connectorBindings.length > 0
+        ? APP_STATE.connectorBindings
+        : synthesizeConnectorBindings(APP_STATE.allDevices);
+    bindings.forEach((binding) => {
+        const endpoint = buildEndpointInfo(binding, binding?.connectorType || '');
+        if (!endpoint.origin || endpoint.scheme === 'local') {
+            return;
+        }
+        const score = binding?.id === selectedDeviceId
+            ? 0
+            : (sameIpv4Subnet(referenceHost, endpoint.host) ? 4 : 12);
+        pushCandidate(endpoint.origin, score);
+    });
+
+    const syntheticHost = isIpv4Host(currentHost)
+        ? currentHost
+        : (isIpv4Host(referenceHost) ? referenceHost : '');
+    const subnetPrefix = ipv4SubnetPrefix(syntheticHost);
+    if (subnetPrefix) {
+        for (let host = 1; host <= 254; host += 1) {
+            const ip = `${subnetPrefix}.${host}`;
+            if (ip === syntheticHost) {
+                continue;
+            }
+            pushCandidate(`${scheme}://${ip}:${port}${basePath}`, 30);
+        }
+    }
+
+    ranked.sort((left, right) => {
+        if (left.score !== right.score) {
+            return left.score - right.score;
+        }
+        return left.origin.localeCompare(right.origin);
+    });
+    return ranked.map((item) => item.origin);
+}
+
+function stopSessionRescue(options = {}) {
+    const notify = !!options.notify;
+    const state = APP_STATE.sessionRescue;
+    if (state.scanTimer) {
+        clearInterval(state.scanTimer);
+    }
+    state.scanTimer = null;
+    state.scanInFlight = false;
+    state.active = false;
+    state.attempts = 0;
+    state.candidateIndex = 0;
+    state.candidates = [];
+    state.lastCandidate = '';
+    state.lastSuccessOrigin = '';
+    state.redirecting = false;
+    state.currentFailures = 0;
+    renderSessionRescuePanel();
+    if (notify) {
+        showAlert('已停止当前网段握手轮询', 'info');
+    }
+}
+
+function hasRecentSessionHealth(windowMs = SESSION_HEALTH_GRACE_WINDOW_MS) {
+    const stamp = Number(APP_STATE.sessionRescue?.lastHealthyAt || 0);
+    return stamp > 0 && (Date.now() - stamp) < windowMs;
+}
+
+function markCurrentSessionHealthy(source = 'api', options = {}) {
+    const silent = !!options.silent;
+    const state = APP_STATE.sessionRescue;
+    state.lastHealthyAt = Date.now();
+    state.lastHealthySource = source;
+    state.currentFailures = 0;
+    if (state.active || state.redirecting) {
+        stopSessionRescue();
+        if (!silent) {
+            showAlert('当前页面已恢复联通，已停止自救轮询', 'success', 2600);
+        }
+        return;
+    }
+    renderSessionRescuePanel();
+}
+
+function startSessionRescue(reason = 'watchdog') {
+    const state = APP_STATE.sessionRescue;
+    if (state.active || state.redirecting) {
+        return;
+    }
+    state.active = true;
+    state.attempts = 0;
+    state.candidateIndex = 0;
+    state.lastCandidate = '';
+    state.lastSuccessOrigin = '';
+    state.redirecting = false;
+    state.candidates = buildSessionRescueCandidates();
+    renderSessionRescuePanel();
+    showAlert(
+        reason === 'watchdog'
+            ? '当前页面连续握手失败，开始轮询当前网段可用节点'
+            : '当前页面已进入自救轮询，正在寻找可握手节点',
+        'warning',
+        4800
+    );
+    scanSessionRescueCandidates();
+    state.scanTimer = setInterval(scanSessionRescueCandidates, SESSION_RESCUE_SCAN_INTERVAL_MS);
+}
+
+async function scanSessionRescueCandidates() {
+    const state = APP_STATE.sessionRescue;
+    if (!state.active || state.redirecting || state.scanInFlight) {
+        return;
+    }
+
+    if (!Array.isArray(state.candidates) || state.candidates.length === 0) {
+        state.candidates = buildSessionRescueCandidates();
+        state.candidateIndex = 0;
+        renderSessionRescuePanel();
+        return;
+    }
+
+    if (state.candidateIndex >= state.candidates.length) {
+        state.candidates = buildSessionRescueCandidates();
+        state.candidateIndex = 0;
+    }
+
+    const batch = state.candidates.slice(state.candidateIndex, state.candidateIndex + SESSION_RESCUE_BATCH_SIZE);
+    if (!batch.length) {
+        return;
+    }
+
+    state.scanInFlight = true;
+    state.candidateIndex += batch.length;
+    state.lastCandidate = batch[batch.length - 1] || '';
+    state.attempts += batch.length;
+    renderSessionRescuePanel();
+
+    try {
+        const results = await Promise.all(batch.map(async (origin) => {
+            try {
+                const data = await probeSessionHandshake(origin);
+                return { origin, data };
+            } catch (_error) {
+                return null;
+            }
+        }));
+        const matched = results.find((item) => !!item);
+        if (!matched) {
+            renderSessionRescuePanel();
+            return;
+        }
+
+        state.redirecting = true;
+        state.lastSuccessOrigin = matched.origin;
+        renderSessionRescuePanel();
+        window.location.replace(buildSessionRescueRedirectUrl(matched.origin));
+    } finally {
+        state.scanInFlight = false;
+    }
+}
+
+async function runSessionWatchdogTick() {
+    const state = APP_STATE.sessionRescue;
+    if (document.hidden || state.redirecting || state.watchdogInFlight) {
+        return;
+    }
+
+    state.watchdogInFlight = true;
+    try {
+        await probeSessionHandshake(resolveCurrentEndpointOrigin());
+        markCurrentSessionHealthy('watchdog', { silent: true });
+    } catch (_error) {
+        if (hasRecentSessionHealth()) {
+            state.currentFailures = 0;
+            if (state.active) {
+                stopSessionRescue();
+            }
+            return;
+        }
+        state.currentFailures += 1;
+        if (state.currentFailures >= SESSION_FAILURE_THRESHOLD && !state.active) {
+            startSessionRescue('watchdog');
+        } else if (state.active) {
+            renderSessionRescuePanel();
+        }
+    } finally {
+        state.watchdogInFlight = false;
+    }
+}
+
+function initSessionWatchdog() {
+    ensureSessionRescuePanel();
+    const state = APP_STATE.sessionRescue;
+    if (state.watchdogTimer) {
+        clearInterval(state.watchdogTimer);
+    }
+    state.watchdogTimer = setInterval(runSessionWatchdogTick, SESSION_WATCHDOG_INTERVAL_MS);
+    runSessionWatchdogTick();
+}
+
 function parseInitialUrlState() {
     const params = getUrlParams();
     if (params.page && PAGE_ID_MAP[params.page]) {
@@ -171,17 +594,16 @@ function parseInitialUrlState() {
 
 function defaultProductContext() {
     return {
-        runtimeLabel: 'SoonLink',
+        edition: 'runtime',
         productName: 'SoonLink',
         capabilities: {
             passiveDiscovery: true,
             activeDiscovery: true,
-            mdnsDiscovery: false,
-            peerTransfer: false,
+            peerTransfer: true,
             relay: true,
-            whitelist: false,
-            favorites: false,
-            advancedSecurity: false,
+            whitelist: true,
+            favorites: true,
+            advancedSecurity: true,
         },
     };
 }
@@ -194,8 +616,8 @@ function normalizeProductContext(product) {
     };
 
     return {
-        runtimeLabel: product?.runtimeLabel || product?.displayName || product?.productName || defaults.runtimeLabel,
-        productName: product?.productName || product?.displayName || defaults.productName,
+        edition: product?.edition || defaults.edition,
+        productName: product?.productName || defaults.productName,
         capabilities,
     };
 }
@@ -464,10 +886,6 @@ function getDeviceById(deviceId) {
     return APP_STATE.allDevices.find((item) => item.id === deviceId) || null;
 }
 
-function isRememberedDevice(device) {
-    return device?.remembered !== false;
-}
-
 function getDeviceTrustGuardMessage(deviceId, actionLabel) {
     const device = getDeviceById(deviceId);
     if (!device || !isTrustManagedDevice(device)) {
@@ -508,30 +926,6 @@ async function updateDeviceTrustState(deviceId, state) {
     } catch (error) {
         console.error('更新设备授信状态失败:', error);
         showAlert('更新设备授信状态失败', 'danger');
-        return false;
-    }
-}
-
-async function rememberDiscoveredDevice(deviceId) {
-    if (!APP_STATE.accessContext.isLocalAdmin) {
-        showAlert('仅本机管理员可记住已发现设备', 'warning');
-        return false;
-    }
-    try {
-        const response = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/remember`, {
-            method: 'POST',
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok || result.success === false) {
-            showAlert(result.error || '记住设备失败', 'danger');
-            return false;
-        }
-        showAlert(result.message || '设备已记住', 'success');
-        await loadDevices();
-        return true;
-    } catch (error) {
-        console.error('记住设备失败:', error);
-        showAlert('记住设备失败', 'danger');
         return false;
     }
 }
@@ -587,20 +981,52 @@ function getCurrentFileWorkspace() {
     };
 }
 
+function isRelayTextRecord(job) {
+    return String(job?.recordKind || '') === 'text';
+}
+
+function buildRelayRestoreTargetPath(job = null, currentPath = document.getElementById('current-path')?.value || '/') {
+    const normalizedCurrentPath = normalizePath(currentPath || '/');
+    return isRelayTextRecord(job)
+        ? buildRelayTextTargetDir(normalizedCurrentPath)
+        : normalizedCurrentPath;
+}
+
+function buildRelayRestoreTargetFilePath(job = null, currentPath = document.getElementById('current-path')?.value || '/') {
+    const targetPath = buildRelayRestoreTargetPath(job, currentPath);
+    const fileName = String(job?.fileName || '').trim();
+    return fileName ? normalizePath(`${targetPath}/${fileName}`) : targetPath;
+}
+
+function buildRelayRestoreButtonLabel(job = null) {
+    return isRelayTextRecord(job) ? '回流到当前目录/tmpSL' : '回流到当前目录';
+}
+
+function applyRelayRestoreButtonCopy(button, job = null, currentPath = document.getElementById('current-path')?.value || '/') {
+    if (!button) {
+        return;
+    }
+    const targetPath = buildRelayRestoreTargetPath(job, currentPath);
+    button.innerHTML = `<i class="bi bi-arrow-down-square me-1"></i>${buildRelayRestoreButtonLabel(job)}`;
+    button.title = `会写回 ${targetPath}`;
+}
+
 function renderRelayRestoreHint() {
     const hint = document.getElementById('relay-restore-hint');
     if (!hint) {
         return;
     }
     const workspace = getCurrentFileWorkspace();
+    const textRestorePath = buildRelayRestoreTargetPath({ recordKind: 'text' }, workspace.currentPath);
     hint.textContent = workspace.deviceId
-        ? `回流默认写回 ${workspace.deviceName} 的 ${workspace.currentPath}`
-        : '回流默认复用当前文件页的设备与目录';
+        ? `文字记录默认写回 ${workspace.deviceName} 的 ${textRestorePath}；文件中继仍写回 ${workspace.currentPath}`
+        : '文字记录会写回当前文件页的 tmpSL 子目录，文件中继仍复用当前设备与目录';
 }
 
 function renderTransferTargetSummary() {
     const hint = document.getElementById('transfer-target-summary');
     const transferBtn = document.getElementById('transfer-btn');
+    const requestBtn = document.getElementById('transfer-request-btn');
     const sourceDevice = document.getElementById('source-device')?.value || '';
     const targetDevice = document.getElementById('transfer-target-device')?.value || '';
     const targetPath = normalizePath(document.getElementById('transfer-target-path')?.value || '/');
@@ -695,6 +1121,140 @@ function renderTransferTargetSummary() {
         transferBtn.title = sourceBlocked || targetBlocked
             ? (sourceTrustMessage || targetTrustMessage || '当前所选设备连接器未就绪')
             : '';
+    }
+    if (requestBtn) {
+        const blocked = sourceBlocked || targetBlocked || !sourceDevice || !targetDevice || !sourcePath;
+        requestBtn.disabled = blocked;
+        requestBtn.title = sourceBlocked || targetBlocked
+            ? (sourceTrustMessage || targetTrustMessage || '当前所选设备连接器未就绪')
+            : '';
+    }
+}
+
+function getPendingTransferRequests() {
+    return APP_STATE.transferRequests
+        .filter((request) => String(request?.status || 'pending') === 'pending')
+        .slice()
+        .sort((left, right) => Number(right?.updatedAt || 0) - Number(left?.updatedAt || 0));
+}
+
+function updateTransferRequestStats() {
+    const pending = getPendingTransferRequests();
+    const pendingChip = document.getElementById('transfer-requests-pending-chip');
+    const drawerCount = document.getElementById('transfer-request-drawer-count');
+    if (pendingChip) {
+        pendingChip.textContent = `待确认请求 ${pending.length}`;
+    }
+    if (drawerCount) {
+        drawerCount.textContent = `待确认 ${pending.length}`;
+    }
+}
+
+function openTransferRequestDrawer() {
+    const drawer = document.getElementById('transfer-request-drawer');
+    if (!drawer) {
+        return null;
+    }
+    const instance = bootstrap.Offcanvas.getOrCreateInstance(drawer);
+    instance.show();
+    return instance;
+}
+
+function getTransferRequestTargetDraft(requestId, fallbackPath = '/') {
+    const current = APP_STATE.transferRequestTargetDrafts?.[requestId];
+    return normalizePath(current || fallbackPath || '/');
+}
+
+function setTransferRequestTargetDraft(requestId, value) {
+    APP_STATE.transferRequestTargetDrafts[requestId] = normalizePath(value || '/');
+}
+
+function buildTransferRequestRouteLabel(request) {
+    const requesterName = request?.requesterName || request?.requesterDeviceId || '另一端';
+    const sourceName = request?.sourceName || request?.sourceDevice || '源节点';
+    if (request?.sourceDevice && request?.requesterDeviceId && request.sourceDevice !== request.requesterDeviceId) {
+        return `${requesterName} 代 ${sourceName}`;
+    }
+    return sourceName || requesterName;
+}
+
+function renderTransferRequestDrawer() {
+    const list = document.getElementById('transfer-request-drawer-list');
+    if (!list) {
+        return;
+    }
+    const pending = getPendingTransferRequests();
+    updateTransferRequestStats();
+    if (!pending.length) {
+        list.innerHTML = '<div class="transfer-request-empty">当前没有待确认的来向传输请求。</div>';
+        return;
+    }
+
+    list.innerHTML = pending.map((request) => {
+        const requestId = String(request?.id || '');
+        const sourceLabel = buildTransferRequestRouteLabel(request);
+        const fileName = request?.metadata?.name || basenamePath(request?.filePath || '/');
+        const targetPath = getTransferRequestTargetDraft(requestId, request?.targetPath || '/');
+        const targetDeviceLabel = getDeviceById('local')?.name || '本机';
+        const metaParts = [
+            `${request?.sourceIsDir ? '目录' : '文件'}`,
+            formatSize(request?.totalBytes, request?.totalBytesText),
+            formatDate(Number(request?.createdAt || 0) * 1000),
+        ];
+        if (request?.requesterHost) {
+            metaParts.push(request.requesterPort ? `${request.requesterHost}:${request.requesterPort}` : request.requesterHost);
+        }
+        return `
+            <article class="transfer-request-card" data-request-id="${escapeAttr(requestId)}">
+                <div class="transfer-request-card-head">
+                    <div>
+                        <h6 class="transfer-request-title">${escapeHtml(fileName || '未命名请求')}</h6>
+                        <div class="transfer-request-meta">${escapeHtml(metaParts.join(' · '))}</div>
+                    </div>
+                    <span class="badge status-pending">pending</span>
+                </div>
+                <div class="transfer-request-route">
+                    <span class="route-node"><i class="bi bi-box-arrow-up-right"></i>${escapeHtml(sourceLabel)}</span>
+                    <i class="bi bi-arrow-right"></i>
+                    <span class="route-node"><i class="bi bi-inbox"></i>${escapeHtml(targetDeviceLabel)}</span>
+                </div>
+                <div class="transfer-request-source-path">源路径：${escapeHtml(request?.filePath || '/')}</div>
+                ${request?.note ? `<div class="transfer-request-note">说明：${escapeHtml(request.note)}</div>` : ''}
+                <div class="transfer-request-target">
+                    <label class="form-label form-label-sm" for="transfer-request-target-${escapeAttr(requestId)}">接收目录</label>
+                    <input class="form-control form-control-sm transfer-request-target-input" id="transfer-request-target-${escapeAttr(requestId)}" data-request-id="${escapeAttr(requestId)}" value="${escapeAttr(targetPath)}" placeholder="/downloads">
+                </div>
+                <div class="transfer-request-actions">
+                    <button class="btn btn-sm btn-primary transfer-request-accept" data-request-id="${escapeAttr(requestId)}"><i class="bi bi-check2-circle me-1"></i>接受并创建任务</button>
+                    <button class="btn btn-sm btn-outline-danger transfer-request-reject" data-request-id="${escapeAttr(requestId)}"><i class="bi bi-x-circle me-1"></i>拒绝</button>
+                </div>
+            </article>
+        `;
+    }).join('');
+
+    list.querySelectorAll('.transfer-request-target-input').forEach((input) => {
+        input.addEventListener('input', (event) => {
+            const requestId = event.currentTarget?.dataset?.requestId || '';
+            setTransferRequestTargetDraft(requestId, event.currentTarget?.value || '/');
+        });
+    });
+
+    list.querySelectorAll('.transfer-request-accept').forEach((button) => {
+        button.addEventListener('click', async (event) => {
+            const requestId = event.currentTarget?.dataset?.requestId || '';
+            await acceptTransferRequest(requestId);
+        });
+    });
+
+    list.querySelectorAll('.transfer-request-reject').forEach((button) => {
+        button.addEventListener('click', async (event) => {
+            const requestId = event.currentTarget?.dataset?.requestId || '';
+            await rejectTransferRequest(requestId);
+        });
+    });
+
+    if (window.SoonLinkIcons && typeof window.SoonLinkIcons.upgrade === 'function') {
+        window.SoonLinkIcons.upgrade(list);
     }
 }
 
@@ -824,7 +1384,7 @@ function buildTransferPreviewMeta(preview) {
         parts.push(String(preview.encoding).toUpperCase());
     }
     if (Number(preview.size || 0) > 0) {
-        parts.push(formatSize(Number(preview.size || 0)));
+        parts.push(formatSize(preview.size, preview.sizeText));
     }
     if (Number(preview.lineCount || 0) > 0) {
         parts.push(`${Number(preview.lineCount || 0)} 行`);
@@ -977,6 +1537,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     initFileExplorer();
     initUploadModal();
     initTransferModal();
+    initTransferRequestDrawer();
     initSettingsForm();
     initAdminPanel();
     initThemeAutomation();
@@ -992,6 +1553,8 @@ document.addEventListener('DOMContentLoaded', async function() {
     initManualDeviceManager();
 
     await loadDevices();
+    await loadTransferRequests({ autoOpen: true, silent: true });
+    initSessionWatchdog();
 
     if (APP_STATE.pendingPageFromUrl) {
         const targetPage = APP_STATE.pendingPageFromUrl;
@@ -1019,6 +1582,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
 
     APP_STATE.taskTimer = setInterval(() => {
+        loadTransferRequests({ autoOpen: true, silent: true });
         if (APP_STATE.activePageId === 'transfers-page') {
             loadTasks();
             if (hasCapability('relay')) {
@@ -1050,14 +1614,14 @@ async function loadSessionContext() {
 function applyAccessContext() {
     const body = document.body;
     const modePill = document.getElementById('mode-pill');
-    const runtimePill = document.getElementById('runtime-pill');
+    const editionPill = document.getElementById('edition-pill');
     const isAdmin = !!APP_STATE.accessContext.isLocalAdmin;
 
     body.dataset.roleVariant = isAdmin ? 'admin' : 'remote';
-    body.dataset.productLine = 'soonlink';
+    body.dataset.productEdition = APP_STATE.productContext.edition || 'runtime';
     modePill.textContent = isAdmin ? '本机管理模式' : '普通访问';
-    if (runtimePill) {
-        runtimePill.textContent = APP_STATE.productContext.runtimeLabel || APP_STATE.productContext.productName || 'SoonLink';
+    if (editionPill) {
+        editionPill.textContent = (APP_STATE.productContext.edition || 'runtime').toUpperCase();
     }
 
     document.querySelectorAll('.admin-only').forEach((node) => {
@@ -1086,11 +1650,6 @@ function applyCapabilityContext() {
         const canShow = hasCapability(capability) && (!requiresAdmin || !!APP_STATE.accessContext.isLocalAdmin);
         node.style.display = canShow ? '' : 'none';
     });
-
-    const activeDiscoveryDisabledPanel = document.getElementById('admin-active-discovery-disabled-panel');
-    if (activeDiscoveryDisabledPanel) {
-        activeDiscoveryDisabledPanel.style.display = hasCapability('activeDiscovery') ? 'none' : '';
-    }
 
     const discoverBtn = document.getElementById('discover-btn');
     if (discoverBtn) {
@@ -1321,6 +1880,7 @@ function showPage(pageId) {
             break;
         case 'transfers-page':
             loadTasks();
+            loadTransferRequests({ autoOpen: false, silent: true });
             if (hasCapability('relay')) {
                 loadRelayJobs();
             }
@@ -1366,6 +1926,7 @@ function initRefreshAction() {
                 break;
             case 'transfers-page':
                 loadTasks();
+                loadTransferRequests({ autoOpen: false, silent: false });
                 if (hasCapability('relay')) {
                     loadRelayJobs();
                 }
@@ -1547,6 +2108,7 @@ async function loadDevices() {
             fetch('/api/devices/'),
             fetch('/api/connectors').catch(() => null),
         ]);
+        markCurrentSessionHealthy('devices');
         const devices = await response.json();
         APP_STATE.allDevices = Array.isArray(devices) ? devices : [];
         if (connectorResponse && connectorResponse.ok) {
@@ -1594,6 +2156,7 @@ function applyPendingDeviceAndPath() {
         }
         APP_STATE.pendingPathFromUrl = null;
     }
+    renderFileWorkspaceMeta();
 }
 
 function renderDeviceList() {
@@ -1614,7 +2177,7 @@ function renderDeviceList() {
             return true;
         }
         const binding = getConnectorBinding(device.id);
-        const target = `${device.name} ${device.id} ${device.ip} ${binding.connectorType} ${getConnectorDisplayName(binding)} ${getEndpointDisplayText(binding)}`.toLowerCase();
+        const target = `${device.name} ${device.id} ${device.ip} ${binding.connectorType} ${getConnectorDisplayName(binding)}`.toLowerCase();
         return target.includes(keyword);
     });
 
@@ -1629,13 +2192,9 @@ function renderDeviceList() {
         const binding = getConnectorBinding(device.id);
         const connectorName = getConnectorDisplayName(binding);
         const connectorState = getConnectorDriverStateText(binding);
-        const endpointText = getEndpointDisplayText(binding);
         const trustLabel = getDeviceTrustLabel(device);
         const trustClass = getDeviceTrustClass(device);
         const trustState = normalizeDeviceTrustState(device.trustState);
-        const remembered = isRememberedDevice(device);
-        const memoryLabel = remembered ? '已记住' : '临时发现';
-        const memoryClass = remembered ? 'is-ready' : 'is-warning';
         const canBrowse = isDeviceTrustedForRemoteActions(device);
         const capabilityText = Array.isArray(device.capability) && device.capability.length > 0
             ? device.capability.join(' · ')
@@ -1643,12 +2202,8 @@ function renderDeviceList() {
         const manageButton = APP_STATE.accessContext.isLocalAdmin && device.id !== 'local'
             ? `<button class="btn btn-sm btn-outline-primary device-manage" data-device-id="${escapeAttr(device.id)}">维护端点</button>`
             : '';
-        const rememberButton = APP_STATE.accessContext.isLocalAdmin && device.id !== 'local' && !remembered
-            ? `<button class="btn btn-sm btn-outline-primary device-remember-action" data-device-id="${escapeAttr(device.id)}">记住设备</button>`
-            : '';
         const trustActions = APP_STATE.accessContext.isLocalAdmin && device.id !== 'local'
             ? `
-                ${rememberButton}
                 <button class="btn btn-sm btn-outline-success device-trust-action" data-state="trusted" data-device-id="${escapeAttr(device.id)}">授信</button>
                 <button class="btn btn-sm btn-outline-secondary device-pin-action" data-device-id="${escapeAttr(device.id)}">PIN</button>
                 <button class="btn btn-sm btn-outline-danger device-trust-action" data-state="${trustState === 'blocked' ? 'unknown' : 'blocked'}" data-device-id="${escapeAttr(device.id)}">
@@ -1667,11 +2222,10 @@ function renderDeviceList() {
             </div>
             <div class="card-body">
                 <p class="mb-1 small"><strong>ID:</strong> ${escapeHtml(device.id)}</p>
-                <p class="mb-1 small"><strong>端点:</strong> ${escapeHtml(endpointText)}</p>
+                <p class="mb-1 small"><strong>IP:</strong> ${escapeHtml(device.ip)}:${escapeHtml(String(device.port))}</p>
                 <div class="device-card-meta">
                     <span class="device-chip">${escapeHtml(connectorName)}</span>
                     <span class="device-chip ${escapeAttr(getConnectorDriverStateClass(binding))}">${escapeHtml(connectorState)}</span>
-                    <span class="device-chip ${escapeAttr(memoryClass)}">${escapeHtml(memoryLabel)}</span>
                     <span class="device-chip ${escapeAttr(trustClass)}">${escapeHtml(trustLabel)}</span>
                 </div>
                 <p class="mb-1 small"><strong>能力:</strong> ${escapeHtml(capabilityText)}</p>
@@ -1702,10 +2256,7 @@ function renderDeviceList() {
             const device = APP_STATE.allDevices.find((d) => d.id === id);
             if (device) {
                 const binding = getConnectorBinding(id);
-                showAlert(
-                    `${device.name} · ${isRememberedDevice(device) ? '已记住' : '临时发现'} · ${getConnectorDisplayName(binding)} · ${getConnectorDriverStateText(binding)} · ${getEndpointDisplayText(binding)}`,
-                    'info',
-                );
+                showAlert(`${device.name} · ${getConnectorDisplayName(binding)} · ${getConnectorDriverStateText(binding)} · ${device.ip}:${device.port}`, 'info');
             }
         });
     });
@@ -1722,13 +2273,6 @@ function renderDeviceList() {
             const id = this.getAttribute('data-device-id');
             const state = this.getAttribute('data-state') || 'unknown';
             await updateDeviceTrustState(id, state);
-        });
-    });
-
-    document.querySelectorAll('.device-remember-action').forEach((btn) => {
-        btn.addEventListener('click', async function() {
-            const id = this.getAttribute('data-device-id');
-            await rememberDiscoveredDevice(id);
         });
     });
 
@@ -2120,14 +2664,6 @@ async function saveManualDeviceForm(event) {
         showAlert('请填写主机或 IP', 'warning');
         return;
     }
-    if (payload.connectorType === 'soonlink-http' && payload.endpointScheme) {
-        const normalizedScheme = normalizeEndpointSchemeValue(payload.endpointScheme, payload.connectorType);
-        if (!['http', 'https'].includes(normalizedScheme)) {
-            showAlert('SoonLink HTTP 端点当前只支持 http 或 https', 'warning');
-            return;
-        }
-        payload.endpointScheme = normalizedScheme;
-    }
 
     try {
         const response = await fetch(`/api/devices/${encodeURIComponent(payload.id)}`, {
@@ -2193,6 +2729,7 @@ function updateDeviceSelectors(devices) {
         document.getElementById('source-device'),
         document.getElementById('transfer-target-device'),
         document.getElementById('relay-source-device'),
+        document.getElementById('relay-modal-source-device'),
         document.getElementById('relay-target-device'),
         document.getElementById('whitelist-target-device'),
     ];
@@ -2318,6 +2855,7 @@ async function loadFiles() {
 
     try {
         const response = await fetch(`/api/fs/list?device=${encodeURIComponent(deviceId)}&path=${encodeURIComponent(path)}`);
+        markCurrentSessionHealthy('fs-list');
         const data = await response.json();
 
         if (data.error) {
@@ -2378,7 +2916,7 @@ function renderFileList(truncated = false, offset = 0, total = 0) {
         const modifiedDate = formatDate(file.modified * 1000);
         const subInfo = file.isDir
             ? `${file.itemCount || 0} 项`
-            : formatSize(file.size);
+            : formatSize(file.size, file.sizeText);
 
         const isFavorite = isFavoritePath(file.path);
         const primaryIcon = file.isDir ? 'bi-folder-fill' : 'bi-file-earmark';
@@ -2676,7 +3214,7 @@ async function showTransferModalWithFile(deviceId, filePath) {
                 if (summaryResp.ok && summary.success) {
                     const totalFiles = Number(summary.totalFiles || 0);
                     const totalDirs = Math.max(Number(summary.totalDirs || 0) - 1, 0);
-                    document.getElementById('transfer-info-size').textContent = formatSize(Number(summary.totalBytes || 0));
+                    document.getElementById('transfer-info-size').textContent = formatSize(summary.totalBytes, summary.totalBytesText);
                     document.getElementById('transfer-info-entries').textContent = `${totalFiles} 文件 · ${totalDirs} 目录`;
                 } else {
                     document.getElementById('transfer-info-size').textContent = '-';
@@ -2684,7 +3222,7 @@ async function showTransferModalWithFile(deviceId, filePath) {
                 }
                 showTransferPreviewMessage('目录暂不提供内容预览', '目录任务会保留完整目录树结构');
             } else {
-                document.getElementById('transfer-info-size').textContent = formatSize(Number(data.size || 0));
+                document.getElementById('transfer-info-size').textContent = formatSize(data.size, data.sizeText);
                 document.getElementById('transfer-info-entries').textContent = '1 文件';
                 await loadTransferPreview(deviceId, resolvedPath, false);
             }
@@ -3119,7 +3657,7 @@ function initUploadModal() {
                     <i class="bi bi-file-earmark me-2"></i>
                     <div>
                         <div class="fw-medium">${escapeHtml(file.name)}</div>
-                        <small class="text-muted">${formatSize(file.size)}</small>
+                        <small class="text-muted">${formatSize(file.size, file.sizeText)}</small>
                     </div>
                 </div>
                 <button class="btn btn-sm btn-outline-danger remove-file" data-index="${index}">
@@ -3312,10 +3850,20 @@ function initRelayPanel() {
     if (submitBtn) {
         submitBtn.addEventListener('click', submitRelayJob);
     }
+    const openTextStationBtn = document.getElementById('relay-open-text-station-btn');
+    if (openTextStationBtn) {
+        openTextStationBtn.addEventListener('click', () => {
+            openRelayTextStation();
+        });
+    }
 
     const textInput = document.getElementById('relay-text-content');
     if (textInput) {
         textInput.addEventListener('input', updateRelayTextMeta);
+    }
+    const fileInput = document.getElementById('relay-file-input');
+    if (fileInput) {
+        fileInput.addEventListener('change', updateRelaySubmitButtonState);
     }
     const textNameInput = document.getElementById('relay-text-name');
     if (textNameInput) {
@@ -3379,6 +3927,51 @@ function initRelayPanel() {
         previewClearBtn.addEventListener('click', clearRelayPreview);
     }
 
+    const modalTextInput = document.getElementById('relay-modal-text-content');
+    if (modalTextInput) {
+        modalTextInput.addEventListener('input', updateRelayModalTextMeta);
+    }
+    const modalTextNameInput = document.getElementById('relay-modal-text-name');
+    if (modalTextNameInput) {
+        modalTextNameInput.addEventListener('input', updateRelayModalTextMeta);
+    }
+    const modalSubmitBtn = document.getElementById('relay-modal-submit-btn');
+    if (modalSubmitBtn) {
+        modalSubmitBtn.addEventListener('click', submitRelayTextRecordFromModal);
+    }
+    const modalDownloadBtn = document.getElementById('relay-text-station-download-btn');
+    if (modalDownloadBtn) {
+        modalDownloadBtn.addEventListener('click', () => {
+            const selectedId = APP_STATE.relayTextStationSelectedId || '';
+            if (!selectedId) {
+                return;
+            }
+            const preview = APP_STATE.relayTextPreviewCache[selectedId];
+            const url = preview?.downloadUrl || `/api/relay/jobs/${encodeURIComponent(selectedId)}/cache`;
+            window.open(url, '_blank', 'noopener');
+        });
+    }
+    const modalRestoreBtn = document.getElementById('relay-text-station-restore-btn');
+    if (modalRestoreBtn) {
+        modalRestoreBtn.addEventListener('click', async () => {
+            const selectedId = APP_STATE.relayTextStationSelectedId || '';
+            if (!selectedId) {
+                return;
+            }
+            await restoreRelayCacheToCurrentDirectory(selectedId);
+        });
+    }
+    const modalDeleteBtn = document.getElementById('relay-text-station-delete-btn');
+    if (modalDeleteBtn) {
+        modalDeleteBtn.addEventListener('click', async () => {
+            const selectedId = APP_STATE.relayTextStationSelectedId || '';
+            if (!selectedId) {
+                return;
+            }
+            await deleteRelayRecord(selectedId);
+        });
+    }
+
     const whitelistBtn = document.getElementById('whitelist-save-btn');
     if (whitelistBtn) {
         whitelistBtn.addEventListener('click', saveWhitelistRule);
@@ -3397,11 +3990,40 @@ function initRelayPanel() {
     }
     APP_STATE.relayUiTimer = setInterval(updateRelayCountdownLabels, 1000);
     updateRelayTextMeta();
+    updateRelayModalTextMeta();
+    updateRelaySubmitButtonState();
+}
+
+function ensureRelayTextDraftSeed(scope = 'page') {
+    const key = scope === 'modal' ? 'relayModalDraftSeed' : 'relayPageDraftSeed';
+    if (!APP_STATE[key]) {
+        APP_STATE[key] = Date.now();
+    }
+    return APP_STATE[key];
+}
+
+function refreshRelayTextDraftSeed(scope = 'page') {
+    const key = scope === 'modal' ? 'relayModalDraftSeed' : 'relayPageDraftSeed';
+    APP_STATE[key] = Date.now();
+    return APP_STATE[key];
+}
+
+function buildRelayTextDefaultFileName(scope = 'page') {
+    return `tmpTXT-${ensureRelayTextDraftSeed(scope)}.txt`;
+}
+
+function buildRelayTextTargetDir(currentPath = document.getElementById('current-path')?.value || '/') {
+    const normalized = normalizePath(currentPath || '/');
+    return normalized === '/' ? '/tmpSL' : `${normalized}/tmpSL`;
+}
+
+function buildRelayTextResolvedPath(rawName = '', scope = 'page') {
+    return normalizePath(`${buildRelayTextTargetDir()}/${normalizeRelayTextRecordName(rawName, scope)}`);
 }
 
 async function submitRelayJob() {
     if (!hasCapability('relay')) {
-        showAlert('当前版本未启用中继能力', 'info');
+        showAlert('当前版本未启用中继 / 文字中转站能力', 'info');
         return;
     }
     const sourceDevice = document.getElementById('relay-source-device')?.value || '';
@@ -3415,12 +4037,12 @@ async function submitRelayJob() {
     const hasFile = !!file;
 
     if (hasText && hasFile) {
-        showAlert('一次只能提交文件或文本，请先清掉其中一项。', 'warning');
+        showAlert('文字中转站一次只能接收文件或文字其中一种，请先清掉另一项。', 'warning');
         return;
     }
 
     if (hasText) {
-        await submitRelayTextRecord(sourceDevice, textName, textContent);
+        await submitRelayTextRecord(sourceDevice, textName, textContent, { scope: 'page' });
         return;
     }
 
@@ -3466,28 +4088,55 @@ async function submitRelayJob() {
     }
 }
 
-async function submitRelayTextRecord(sourceDevice, fileName, content) {
-    const formData = new FormData();
-    formData.append('sourceDevice', sourceDevice || 'web-client');
-    formData.append('fileName', fileName || '');
-    formData.append('content', content);
+async function submitRelayTextRecord(sourceDevice, fileName, content, options = {}) {
+    const scope = options.scope || 'page';
+    const resolvedFileName = normalizeRelayTextRecordName(fileName, scope);
+    const targetPath = options.targetPath || buildRelayTextTargetDir();
+    const payload = {
+        sourceDevice: sourceDevice || 'web-client',
+        fileName: resolvedFileName,
+        targetPath,
+        content,
+    };
 
     try {
         const resp = await fetch('/api/relay/jobs/text', {
             method: 'POST',
-            body: formData,
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
         });
         const data = await resp.json();
         if (!resp.ok || !data.success) {
             showAlert(data.error || '临时文本提交失败', 'danger');
-            return;
+            return null;
         }
-        showAlert('临时文本已缓存到中继站', 'success');
-        resetRelayTextDraft();
-        loadRelayJobs();
+        showAlert('文字中转站记录已缓存到中继站', 'success');
+        resetRelayTextDraft(scope);
+        await loadRelayJobs();
+        return data;
     } catch (error) {
         console.error('提交临时文本失败:', error);
-        showAlert('临时文本提交失败', 'danger');
+        showAlert('文字中转站记录提交失败', 'danger');
+        return null;
+    }
+}
+
+async function submitRelayTextRecordFromModal() {
+    const sourceDevice = document.getElementById('relay-modal-source-device')?.value
+        || document.getElementById('relay-source-device')?.value
+        || '';
+    const fileName = document.getElementById('relay-modal-text-name')?.value || '';
+    const content = document.getElementById('relay-modal-text-content')?.value || '';
+    if (!content.trim()) {
+        showAlert('请输入要发送的文字内容', 'warning');
+        return;
+    }
+    const data = await submitRelayTextRecord(sourceDevice, fileName, content, { scope: 'modal' });
+    if (data?.job?.id) {
+        APP_STATE.relayTextStationSelectedId = String(data.job.id);
+        await selectRelayTextStationRecord(APP_STATE.relayTextStationSelectedId);
     }
 }
 
@@ -3500,20 +4149,69 @@ function updateRelayTextMeta() {
     }
     const chars = content.length;
     const lines = countTextLines(content);
-    const displayName = name ? normalizeRelayTextRecordName(name) : '自动生成 .txt 记录名';
-    metaNode.textContent = `${chars} 字符 · ${lines} 行 · ${displayName}。超过预览阈值时自动改为下载查看，避免浏览器卡住。`;
+    const resolvedPath = buildRelayTextResolvedPath(name, 'page');
+    metaNode.textContent = `${chars} 字符 · ${lines} 行 · 默认落点 ${resolvedPath}。超过预览阈值时自动改为下载查看，避免浏览器卡住。`;
+    updateRelaySubmitButtonState();
 }
 
-function resetRelayTextDraft() {
-    const nameInput = document.getElementById('relay-text-name');
-    const contentInput = document.getElementById('relay-text-content');
+function updateRelayModalTextMeta() {
+    const content = document.getElementById('relay-modal-text-content')?.value || '';
+    const name = (document.getElementById('relay-modal-text-name')?.value || '').trim();
+    const metaNode = document.getElementById('relay-modal-text-meta');
+    if (!metaNode) {
+        return;
+    }
+    const chars = content.length;
+    const lines = countTextLines(content);
+    const resolvedPath = buildRelayTextResolvedPath(name, 'modal');
+    metaNode.textContent = `${chars} 字符 · ${lines} 行 · 默认落点 ${resolvedPath}`;
+    updateRelayModalSubmitButtonState();
+}
+
+function resetRelayTextDraft(scope = 'page') {
+    const nameInput = document.getElementById(scope === 'modal' ? 'relay-modal-text-name' : 'relay-text-name');
+    const contentInput = document.getElementById(scope === 'modal' ? 'relay-modal-text-content' : 'relay-text-content');
     if (nameInput) {
         nameInput.value = '';
     }
     if (contentInput) {
         contentInput.value = '';
     }
-    updateRelayTextMeta();
+    refreshRelayTextDraftSeed(scope);
+    if (scope === 'modal') {
+        updateRelayModalTextMeta();
+    } else {
+        updateRelayTextMeta();
+    }
+}
+
+function updateRelaySubmitButtonState() {
+    const submitBtn = document.getElementById('relay-submit-btn');
+    if (!submitBtn) {
+        return;
+    }
+    const content = document.getElementById('relay-text-content')?.value || '';
+    const hasText = content.length > 0;
+    const hasFile = !!document.getElementById('relay-file-input')?.files?.length;
+    let label = '提交文件 / 文字';
+    if (hasText && !hasFile) {
+        label = '提交到文字中转站';
+    } else if (hasFile && !hasText) {
+        label = '提交到中继';
+    } else if (hasText && hasFile) {
+        label = '请保留文件或文字其一';
+    }
+    submitBtn.innerHTML = `<i class="bi bi-cloud-arrow-up me-1"></i>${label}`;
+}
+
+function updateRelayModalSubmitButtonState() {
+    const submitBtn = document.getElementById('relay-modal-submit-btn');
+    if (!submitBtn) {
+        return;
+    }
+    const hasText = !!document.getElementById('relay-modal-text-content')?.value?.trim();
+    submitBtn.disabled = !hasText;
+    submitBtn.innerHTML = `<i class="bi bi-send me-1"></i>${hasText ? '发送到文字站' : '发送文字'}`;
 }
 
 function countTextLines(text) {
@@ -3523,10 +4221,10 @@ function countTextLines(text) {
     return text.split('\n').length;
 }
 
-function normalizeRelayTextRecordName(name) {
+function normalizeRelayTextRecordName(name, scope = 'page') {
     const raw = String(name || '').trim();
     if (!raw) {
-        return '自动生成 .txt 记录名';
+        return buildRelayTextDefaultFileName(scope);
     }
     return /\.txt$/i.test(raw) ? raw : `${raw}.txt`;
 }
@@ -3538,6 +4236,7 @@ async function loadRelayJobs() {
         updateRelayStats([]);
         renderRelayJobs();
         clearRelayPreview();
+        renderRelayTextStationList();
         return;
     }
     const list = document.getElementById('relay-job-list');
@@ -3546,16 +4245,228 @@ async function loadRelayJobs() {
     }
     try {
         const resp = await fetch('/api/relay/jobs/');
+        markCurrentSessionHealthy('relay-jobs');
         const data = await resp.json();
         APP_STATE.allRelayJobs = (data && Array.isArray(data.jobs)) ? data.jobs : [];
         syncRelaySelectionSet();
         syncRelayPreviewState();
         updateRelayStats(APP_STATE.allRelayJobs);
         renderRelayJobs();
+        renderRelayTextStationList();
     } catch (error) {
         console.error('加载中继任务失败:', error);
         list.innerHTML = '<tr><td colspan="12" class="table-empty-cell text-center text-danger">加载中继任务失败</td></tr>';
     }
+}
+
+function getRelayTextJobs() {
+    return APP_STATE.allRelayJobs
+        .filter((job) => String(job.recordKind || '') === 'text')
+        .slice()
+        .sort((a, b) => Number(a.updatedAt || 0) - Number(b.updatedAt || 0));
+}
+
+function syncRelayTextStationSelection(preferredId = '') {
+    const jobs = getRelayTextJobs();
+    if (preferredId && jobs.some((job) => String(job.id || '') === preferredId)) {
+        APP_STATE.relayTextStationSelectedId = preferredId;
+        return preferredId;
+    }
+    const current = APP_STATE.relayTextStationSelectedId || '';
+    if (current && jobs.some((job) => String(job.id || '') === current)) {
+        return current;
+    }
+    APP_STATE.relayTextStationSelectedId = jobs.length ? String(jobs[jobs.length - 1].id || '') : '';
+    return APP_STATE.relayTextStationSelectedId;
+}
+
+function renderRelayTextStationList() {
+    const list = document.getElementById('relay-text-station-list');
+    const countNode = document.getElementById('relay-text-station-count');
+    if (!list || !countNode) {
+        return;
+    }
+    const jobs = getRelayTextJobs();
+    const selectedId = syncRelayTextStationSelection();
+    countNode.textContent = `${jobs.length} 条`;
+
+    if (!jobs.length) {
+        list.innerHTML = '<div class="transfer-preview-empty relay-text-station-empty">还没有文字记录，发送一条后会像短信收件箱一样出现在这里。</div>';
+        renderRelayTextStationEmpty();
+        return;
+    }
+
+    list.innerHTML = jobs.map((job) => {
+        const jobId = String(job.id || '');
+        const snippet = String(job.message || job.fileName || '').trim();
+        return `
+            <button type="button" class="relay-text-station-item ${jobId === selectedId ? 'is-active' : ''}" data-id="${escapeAttr(jobId)}">
+                <div class="relay-text-station-item-title">${escapeHtml(job.fileName || 'tmpTXT.txt')}</div>
+                <div class="relay-text-station-item-meta">${escapeHtml(job.sourceDevice || 'web-client')} · ${escapeHtml(job.targetPath || '/tmpSL')}</div>
+                <div class="relay-text-station-item-meta">${escapeHtml(formatDate(Number(job.updatedAt || 0) * 1000))}</div>
+                <div class="relay-text-station-item-snippet">${escapeHtml(snippet || '文字记录')}</div>
+            </button>
+        `;
+    }).join('');
+
+    list.querySelectorAll('.relay-text-station-item').forEach((node) => {
+        node.addEventListener('click', async () => {
+            const jobId = node.getAttribute('data-id') || '';
+            await selectRelayTextStationRecord(jobId);
+        });
+    });
+
+    const currentJob = jobs.find((job) => String(job.id || '') === selectedId) || null;
+    if (!currentJob) {
+        renderRelayTextStationEmpty();
+        return;
+    }
+    const cachedPreview = APP_STATE.relayTextPreviewCache[selectedId];
+    if (cachedPreview) {
+        renderRelayTextStationDetail(cachedPreview, currentJob);
+    } else {
+        renderRelayTextStationLoading(currentJob);
+    }
+}
+
+function renderRelayTextStationEmpty(message = '选择一条文字记录后，会在这里按会话气泡展示内容；超过预览阈值时可直接下载。') {
+    const title = document.getElementById('relay-text-station-thread-title');
+    const meta = document.getElementById('relay-text-station-thread-meta');
+    const empty = document.getElementById('relay-text-station-empty');
+    const bubble = document.getElementById('relay-text-station-bubble');
+    if (title) title.textContent = '选择一条文字记录';
+    if (meta) meta.textContent = '会显示来源、落点、大小与时间。';
+    if (empty) {
+        empty.hidden = false;
+        empty.textContent = message;
+    }
+    if (bubble) {
+        bubble.hidden = true;
+        bubble.classList.remove('is-self');
+    }
+    setRelayTextStationActionState(null, null);
+}
+
+function renderRelayTextStationLoading(job) {
+    const title = document.getElementById('relay-text-station-thread-title');
+    const meta = document.getElementById('relay-text-station-thread-meta');
+    const empty = document.getElementById('relay-text-station-empty');
+    const bubble = document.getElementById('relay-text-station-bubble');
+    if (title) title.textContent = job?.fileName || '文字记录';
+    if (meta) meta.textContent = `${job?.sourceDevice || 'web-client'} · ${job?.targetPath || '/tmpSL'} · 正在加载文本内容`;
+    if (empty) {
+        empty.hidden = false;
+        empty.textContent = '正在加载文本内容...';
+    }
+    if (bubble) {
+        bubble.hidden = true;
+        bubble.classList.remove('is-self');
+    }
+    setRelayTextStationActionState(job, null);
+}
+
+function setRelayTextStationActionState(job, preview) {
+    const downloadBtn = document.getElementById('relay-text-station-download-btn');
+    const restoreBtn = document.getElementById('relay-text-station-restore-btn');
+    const deleteBtn = document.getElementById('relay-text-station-delete-btn');
+    if (downloadBtn) {
+        downloadBtn.disabled = !job || !job.cacheAvailable;
+    }
+    if (restoreBtn) {
+        restoreBtn.disabled = !job || !job.cacheAvailable;
+        applyRelayRestoreButtonCopy(restoreBtn, job || { recordKind: 'text' });
+    }
+    if (deleteBtn) {
+        deleteBtn.disabled = !job;
+    }
+}
+
+function renderRelayTextStationDetail(preview, job) {
+    if (!job) {
+        renderRelayTextStationEmpty();
+        return;
+    }
+    const title = document.getElementById('relay-text-station-thread-title');
+    const meta = document.getElementById('relay-text-station-thread-meta');
+    const empty = document.getElementById('relay-text-station-empty');
+    const bubble = document.getElementById('relay-text-station-bubble');
+    const bubbleMeta = document.getElementById('relay-text-station-bubble-meta');
+    const bubbleText = document.getElementById('relay-text-station-bubble-text');
+    if (!title || !meta || !empty || !bubble || !bubbleMeta || !bubbleText) {
+        return;
+    }
+
+    const metaParts = [
+        job.sourceDevice || 'web-client',
+        job.targetPath || '/tmpSL',
+        formatDate(Number(job.updatedAt || 0) * 1000),
+    ];
+    if (preview?.encoding) {
+        metaParts.push(String(preview.encoding).toUpperCase());
+    }
+    if (preview?.size) {
+        metaParts.push(formatSize(preview.size, preview.sizeText));
+    }
+
+    title.textContent = job.fileName || '文字记录';
+    meta.textContent = metaParts.join(' · ');
+    setRelayTextStationActionState(job, preview);
+
+    if (!preview || !preview.canPreview || !preview.inlineAllowed) {
+        bubble.hidden = true;
+        bubble.classList.remove('is-self');
+        empty.hidden = false;
+        empty.textContent = preview?.message || '当前缓存仅支持文本预览，请直接下载查看。';
+        return;
+    }
+
+    bubble.hidden = false;
+    bubble.classList.toggle('is-self', String(job.sourceDevice || '') === 'web-client');
+    empty.hidden = true;
+    bubbleMeta.textContent = `${job.sourceDevice || 'web-client'} · ${formatDate(Number(job.updatedAt || 0) * 1000)}`;
+    bubbleText.textContent = preview.content || '';
+}
+
+async function openRelayTextStation(preferredId = '') {
+    const modal = document.getElementById('relay-text-station-modal');
+    if (!modal) {
+        return;
+    }
+    syncRelayTextStationSelection(preferredId);
+    renderRelayTextStationList();
+    updateRelayModalTextMeta();
+    bootstrap.Modal.getOrCreateInstance(modal).show();
+    if (APP_STATE.relayTextStationSelectedId) {
+        await selectRelayTextStationRecord(APP_STATE.relayTextStationSelectedId);
+    }
+}
+
+async function selectRelayTextStationRecord(jobId) {
+    if (!jobId) {
+        renderRelayTextStationEmpty();
+        return;
+    }
+    APP_STATE.relayTextStationSelectedId = jobId;
+    renderRelayTextStationList();
+    const job = APP_STATE.allRelayJobs.find((item) => String(item.id || '') === jobId) || null;
+    renderRelayTextStationLoading(job);
+    const preview = APP_STATE.relayTextPreviewCache[jobId] || await fetchRelayPreview(jobId);
+    if (APP_STATE.relayTextStationSelectedId === jobId) {
+        renderRelayTextStationDetail(preview, job);
+    }
+}
+
+async function fetchRelayPreview(jobId, alertOnFailure = true) {
+    const response = await fetch(`/api/relay/jobs/${encodeURIComponent(jobId)}/preview`);
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+        if (alertOnFailure) {
+            showAlert(data.error || '文本预览加载失败', 'danger');
+        }
+        return null;
+    }
+    APP_STATE.relayTextPreviewCache[jobId] = data;
+    return data;
 }
 
 function renderRelayJobs() {
@@ -3576,7 +4487,7 @@ function renderRelayJobs() {
         if (!keyword) {
             return true;
         }
-        const target = `${job.id || ''} ${job.sourceDevice || ''} ${job.targetDevice || ''} ${job.fileName || ''} ${job.message || ''}`.toLowerCase();
+        const target = `${job.id || ''} ${job.sourceDevice || ''} ${job.targetDevice || ''} ${job.targetPath || ''} ${job.fileName || ''} ${job.message || ''}`.toLowerCase();
         return target.includes(keyword);
     });
 
@@ -3597,6 +4508,10 @@ function renderRelayJobs() {
             const allowRetry = recordKind === 'file' && !['delivered', 'expired'].includes(String(job.status || ''));
             const allowCancel = recordKind === 'file' && !['delivered', 'expired'].includes(String(job.status || ''));
             const allowPreview = isRelayTextPreviewAvailable(job);
+            const previewLabel = recordKind === 'text' ? '打开文字站' : '查看文本';
+            const targetDisplay = recordKind === 'text' ? (job.targetPath || '/tmpSL') : (job.targetDevice || '-');
+            const restoreLabel = buildRelayRestoreButtonLabel(job);
+            const restoreTitle = buildRelayRestoreTargetPath(job);
             const cacheState = job.cacheAvailable
                 ? (recordKind === 'text' ? '文本记录缓存可用' : '缓存可用')
                 : '缓存缺失';
@@ -3604,13 +4519,13 @@ function renderRelayJobs() {
                 <td><input class="relay-row-select" type="checkbox" data-id="${escapeAttr(jobId)}" ${selected ? 'checked' : ''}></td>
                 <td>${escapeHtml(jobId.slice(0, 12))}</td>
                 <td>${escapeHtml(job.sourceDevice || '-')}</td>
-                <td>${escapeHtml(job.targetDevice || '-')}</td>
+                <td>${escapeHtml(targetDisplay)}</td>
                 <td>
                     <div>${escapeHtml(job.fileName || '-')}</div>
-                    <div class="section-note">${escapeHtml(recordKind === 'text' ? 'text record' : 'file relay')}</div>
+                    <div class="section-note">${escapeHtml(recordKind === 'text' ? '文字中转站记录' : '文件中继')}</div>
                 </td>
                 <td><span class="badge status-${escapeAttr(job.status || 'pending')}">${escapeHtml(job.status || '-')}</span></td>
-                <td>${formatSize(Number(job.bytes || 0))}</td>
+                <td>${formatSize(job.bytes, job.bytesText)}</td>
                 <td>${escapeHtml(String(job.attempts || 0))}</td>
                 <td class="relay-ttl" data-expire="${escapeAttr(String(job.expiresAt || 0))}">${escapeHtml(formatTtlCountdown(Number(job.expiresAt || 0)))}</td>
                 <td>${formatDate(Number(job.updatedAt || 0) * 1000)}</td>
@@ -3620,9 +4535,9 @@ function renderRelayJobs() {
                 </td>
                 <td>
                     <div class="btn-group btn-group-sm relay-action-group">
-                        <button class="btn btn-outline-secondary relay-preview-cache" data-id="${escapeAttr(jobId)}" ${allowPreview && cacheActionReady ? '' : 'disabled'}>查看文本</button>
+                        <button class="btn btn-outline-secondary relay-preview-cache" data-id="${escapeAttr(jobId)}" ${allowPreview && cacheActionReady ? '' : 'disabled'}>${previewLabel}</button>
                         <button class="btn btn-outline-secondary relay-download-cache" data-id="${escapeAttr(jobId)}" ${cacheActionReady ? '' : 'disabled'}>下载缓存</button>
-                        <button class="btn btn-outline-primary relay-restore-cache" data-id="${escapeAttr(jobId)}" ${cacheActionReady ? '' : 'disabled'}>回流到当前目录</button>
+                        <button class="btn btn-outline-primary relay-restore-cache" data-id="${escapeAttr(jobId)}" title="会写回 ${escapeAttr(restoreTitle)}" ${cacheActionReady ? '' : 'disabled'}>${restoreLabel}</button>
                         <button class="btn btn-outline-secondary relay-retry" data-id="${escapeAttr(jobId)}" ${allowRetry ? '' : 'disabled'}>重试</button>
                         <button class="btn btn-outline-danger relay-cancel" data-id="${escapeAttr(jobId)}" ${allowCancel ? '' : 'disabled'}>取消</button>
                         <button class="btn btn-outline-danger relay-delete-record" data-id="${escapeAttr(jobId)}">删除记录</button>
@@ -3667,6 +4582,11 @@ function renderRelayJobs() {
     document.querySelectorAll('.relay-preview-cache').forEach((btn) => {
         btn.addEventListener('click', async function() {
             const id = this.getAttribute('data-id');
+            const job = APP_STATE.allRelayJobs.find((item) => String(item.id || '') === String(id || ''));
+            if (String(job?.recordKind || '') === 'text') {
+                await openRelayTextStation(String(id || ''));
+                return;
+            }
             await loadRelayPreview(id);
         });
     });
@@ -3732,6 +4652,14 @@ function syncRelaySelection(jobId, checked) {
 function syncRelaySelectionSet() {
     const existing = new Set(APP_STATE.allRelayJobs.map((job) => String(job.id || '')));
     APP_STATE.relaySelectedIds = APP_STATE.relaySelectedIds.filter((id) => existing.has(id));
+    APP_STATE.relayTextStationSelectedId = existing.has(APP_STATE.relayTextStationSelectedId)
+        ? APP_STATE.relayTextStationSelectedId
+        : '';
+    Object.keys(APP_STATE.relayTextPreviewCache).forEach((jobId) => {
+        if (!existing.has(jobId)) {
+            delete APP_STATE.relayTextPreviewCache[jobId];
+        }
+    });
 }
 
 function isRelayCacheActionAvailable(job) {
@@ -3749,7 +4677,10 @@ function isRelayTextPreviewAvailable(job) {
 
 async function restoreRelayCacheToCurrentDirectory(jobId) {
     const targetDevice = document.getElementById('device-selector')?.value || '';
-    const targetPath = normalizePath(document.getElementById('current-path')?.value || '/');
+    const job = APP_STATE.allRelayJobs.find((item) => String(item.id || '') === String(jobId || '')) || null;
+    const currentPath = normalizePath(document.getElementById('current-path')?.value || '/');
+    const targetPath = buildRelayRestoreTargetPath(job, currentPath);
+    const targetFilePath = buildRelayRestoreTargetFilePath(job, currentPath);
 
     if (!targetDevice) {
         showAlert('请先在文件页选择回流目标设备', 'warning');
@@ -3772,7 +4703,7 @@ async function restoreRelayCacheToCurrentDirectory(jobId) {
             showAlert(data.message || data.error || '中继回流失败', 'danger');
             return;
         }
-        showAlert('中继缓存已回流到当前目录', 'success');
+        showAlert(`${isRelayTextRecord(job) ? '文字记录' : '中继缓存'}已回流到 ${targetFilePath}`, 'success');
         loadRelayJobs();
         if (APP_STATE.activePageId === 'files-page') {
             loadFiles();
@@ -3965,12 +4896,14 @@ function updateRelayCountdownLabels() {
 function syncRelayPreviewState() {
     const previewId = APP_STATE.relayPreview?.jobId || '';
     if (!previewId) {
+        renderRelayTextStationList();
         return;
     }
     const current = APP_STATE.allRelayJobs.find((job) => String(job.id || '') === previewId);
     if (!current || !current.cacheAvailable) {
         clearRelayPreview();
     }
+    renderRelayTextStationList();
 }
 
 async function loadRelayPreview(jobId) {
@@ -3979,10 +4912,8 @@ async function loadRelayPreview(jobId) {
         return;
     }
     try {
-        const response = await fetch(`/api/relay/jobs/${encodeURIComponent(jobId)}/preview`);
-        const data = await response.json();
-        if (!response.ok || !data.success) {
-            showAlert(data.error || '文本预览加载失败', 'danger');
+        const data = await fetchRelayPreview(jobId);
+        if (!data) {
             return;
         }
         APP_STATE.relayPreview = data;
@@ -4024,7 +4955,7 @@ function renderRelayPreview(preview) {
     const lineCount = Number(preview.lineCount || 0);
     const metaParts = [
         preview.name || 'relay.txt',
-        `${formatSize(Number(preview.size || 0))}`,
+        `${formatSize(preview.size, preview.sizeText)}`,
     ];
     if (lineCount > 0) {
         metaParts.push(`${lineCount} 行`);
@@ -4090,6 +5021,7 @@ async function loadWhitelistRules() {
     try {
         const target = document.getElementById('whitelist-target-device')?.value || '';
         const resp = await fetch(`/api/whitelist/rules?targetDevice=${encodeURIComponent(target)}`);
+        markCurrentSessionHealthy('whitelist');
         const data = await resp.json();
         const rules = (data && Array.isArray(data.rules)) ? data.rules : [];
         if (!rules.length) {
@@ -4258,6 +5190,7 @@ function initTransferModal() {
     const refreshBtn = document.getElementById('file-inspector-refresh-btn');
     const downloadBtn = document.getElementById('transfer-download-btn');
     const previewOpenBtn = document.getElementById('transfer-preview-open-btn');
+    const requestBtn = document.getElementById('transfer-request-btn');
     const sourceDevice = document.getElementById('source-device');
     const sourcePath = document.getElementById('source-path');
     const targetDevice = document.getElementById('transfer-target-device');
@@ -4365,11 +5298,71 @@ function initTransferModal() {
             showAlert('创建传输任务失败', 'danger');
         }
     });
+
+    if (requestBtn) {
+        requestBtn.addEventListener('click', async function() {
+            const sourceDevice = document.getElementById('source-device').value;
+            const sourcePath = document.getElementById('source-path').value;
+            const targetDevice = document.getElementById('transfer-target-device').value;
+            const targetPath = document.getElementById('transfer-target-path').value;
+
+            if (!sourceDevice || !sourcePath) {
+                showAlert('请选择源文件', 'warning');
+                return;
+            }
+
+            if (!targetDevice) {
+                showAlert('请选择目标设备', 'warning');
+                return;
+            }
+            const sourceTrustMessage = getDeviceTrustGuardMessage(sourceDevice, '发起传输请求');
+            if (sourceTrustMessage) {
+                showAlert(sourceTrustMessage, 'warning');
+                return;
+            }
+            const targetTrustMessage = getDeviceTrustGuardMessage(targetDevice, '接收传输请求');
+            if (targetTrustMessage) {
+                showAlert(targetTrustMessage, 'warning');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/transfer-requests/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        sourceDevice,
+                        targetDevice,
+                        filePath: sourcePath,
+                        targetPath,
+                    }),
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok || result.success === false) {
+                    showAlert(result.error || '发送传输请求失败', 'danger');
+                    return;
+                }
+                showAlert(result.message || '传输请求已送达对端，等待确认', 'success');
+                const modal = bootstrap.Modal.getInstance(document.getElementById('transfer-modal'));
+                if (modal) {
+                    modal.hide();
+                }
+                showPage('transfers-page');
+                loadTransferRequests({ autoOpen: false });
+            } catch (error) {
+                console.error('发送传输请求失败:', error);
+                showAlert('发送传输请求失败', 'danger');
+            }
+        });
+    }
 }
 
 async function loadTasks() {
     try {
         const response = await fetch('/api/tasks/');
+        markCurrentSessionHealthy('tasks');
         const tasks = await response.json();
         APP_STATE.allTasks = Array.isArray(tasks) ? tasks : [];
         updateTaskStats(APP_STATE.allTasks);
@@ -4377,6 +5370,121 @@ async function loadTasks() {
     } catch (error) {
         console.error('加载任务列表失败:', error);
         document.getElementById('task-list').innerHTML = '<tr><td colspan="6" class="text-center text-danger">加载任务列表失败</td></tr>';
+    }
+}
+
+function initTransferRequestDrawer() {
+    const openBtn = document.getElementById('open-transfer-request-drawer');
+    if (openBtn) {
+        openBtn.addEventListener('click', () => {
+            openTransferRequestDrawer();
+            renderTransferRequestDrawer();
+        });
+    }
+    const refreshBtn = document.getElementById('transfer-request-drawer-refresh-btn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+            loadTransferRequests({ autoOpen: false, silent: false });
+        });
+    }
+}
+
+async function loadTransferRequests(options = {}) {
+    const { autoOpen = true, silent = true } = options;
+    try {
+        const response = await fetch('/api/transfer-requests/');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        markCurrentSessionHealthy('transfer-requests');
+        const requests = await response.json();
+        const normalized = Array.isArray(requests) ? requests : [];
+        const previousPendingIds = new Set(getPendingTransferRequests().map((item) => String(item.id || '')));
+        APP_STATE.transferRequests = normalized;
+        renderTransferRequestDrawer();
+
+        const pending = getPendingTransferRequests();
+        const newPending = pending.filter((request) => {
+            const requestId = String(request?.id || '');
+            return requestId && !APP_STATE.transferRequestSeenIds.includes(requestId);
+        });
+
+        pending.forEach((request) => {
+            const requestId = String(request?.id || '');
+            if (requestId && !APP_STATE.transferRequestSeenIds.includes(requestId)) {
+                APP_STATE.transferRequestSeenIds.push(requestId);
+            }
+        });
+
+        const shouldAutoOpen = autoOpen && newPending.length > 0 && newPending.some((request) => !previousPendingIds.has(String(request?.id || '')));
+        if (shouldAutoOpen) {
+            openTransferRequestDrawer();
+            const latest = newPending[0];
+            showAlert(`收到来自 ${buildTransferRequestRouteLabel(latest)} 的传输请求`, 'info');
+        }
+    } catch (error) {
+        console.error('加载传输请求失败:', error);
+        if (!silent && APP_STATE.activePageId === 'transfers-page') {
+            showAlert('加载传输请求失败', 'warning');
+        }
+    }
+}
+
+async function acceptTransferRequest(requestId) {
+    if (!requestId) {
+        return;
+    }
+    const input = document.getElementById(`transfer-request-target-${requestId}`);
+    const targetPath = normalizePath(input?.value || getTransferRequestTargetDraft(requestId, '/'));
+    setTransferRequestTargetDraft(requestId, targetPath);
+
+    try {
+        const response = await fetch(`/api/transfer-requests/${encodeURIComponent(requestId)}/accept`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ targetPath }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.success === false) {
+            showAlert(result.error || '接受传输请求失败', 'danger');
+            return;
+        }
+        showAlert(result.message || '已接受传输请求', 'success');
+        await loadTransferRequests({ autoOpen: false, silent: false });
+        await loadTasks();
+    } catch (error) {
+        console.error('接受传输请求失败:', error);
+        showAlert('接受传输请求失败', 'danger');
+    }
+}
+
+async function rejectTransferRequest(requestId) {
+    if (!requestId) {
+        return;
+    }
+    if (!window.confirm('确定拒绝这个传输请求吗？')) {
+        return;
+    }
+    try {
+        const response = await fetch(`/api/transfer-requests/${encodeURIComponent(requestId)}/reject`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({}),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.success === false) {
+            showAlert(result.error || '拒绝传输请求失败', 'danger');
+            return;
+        }
+        showAlert(result.message || '已拒绝传输请求', 'success');
+        await loadTransferRequests({ autoOpen: false, silent: false });
+    } catch (error) {
+        console.error('拒绝传输请求失败:', error);
+        showAlert('拒绝传输请求失败', 'danger');
     }
 }
 
@@ -4439,8 +5547,8 @@ function renderTaskList() {
         const canDownload = task.status === 'completed' && !isDirTask;
         const downloadPath = canDownload ? resolveTaskDownloadPath(task) : '';
         const progressMeta = isDirTask
-            ? `${Number(task.completedEntries || 0)}/${Number(task.totalEntries || 0)} 项 · ${formatSize(Number(task.transferredBytes || 0))}${Number(task.totalBytes || 0) > 0 ? ` / ${formatSize(Number(task.totalBytes || 0))}` : ''}`
-            : `${formatSize(Number(task.transferredBytes || 0))}${Number(task.totalBytes || 0) > 0 ? ` / ${formatSize(Number(task.totalBytes || 0))}` : ''}`;
+            ? `${Number(task.completedEntries || 0)}/${Number(task.totalEntries || 0)} 项 · ${formatSize(task.transferredBytes, task.transferredBytesText)}${Number(task.totalBytes || 0) > 0 ? ` / ${formatSize(task.totalBytes, task.totalBytesText)}` : ''}`
+            : `${formatSize(task.transferredBytes, task.transferredBytesText)}${Number(task.totalBytes || 0) > 0 ? ` / ${formatSize(task.totalBytes, task.totalBytesText)}` : ''}`;
         const currentItem = task.currentItem
             ? `<div class="small text-muted mt-1">当前项: ${escapeHtml(task.currentItem)}</div>`
             : '';
@@ -4644,23 +5752,20 @@ function refreshAdminDiscoveryHint() {
         return;
     }
     if (!hasCapability('activeDiscovery')) {
-        hint.textContent = '当前运行态未启用主动发现，mDNS 与 UDP 广播会保持关闭；请在上方复制本机端点或登记命令发给其他设备手动接入。';
+        hint.textContent = '当前版本仅支持被动发现与手动登记，mDNS 与 UDP 广播会保持关闭。';
         return;
     }
 
     const advertiseIp = getInputValue('admin-discovery-advertise-ip').trim();
     const udpPort = getInputValue('admin-discovery-udp-port') || '19090';
-    const mdnsSupported = hasCapability('mdnsDiscovery');
-    const mdnsEnabled = mdnsSupported && isChecked('admin-enable-mdns');
+    const mdnsEnabled = isChecked('admin-enable-mdns');
     const broadcastEnabled = isChecked('admin-discovery-broadcast-enabled');
     const advertiseText = advertiseIp
         ? `通告IP固定为 ${advertiseIp}`
         : '通告IP留空时自动优先选择局域网 IPv4';
     const modeText = broadcastEnabled ? '允许 UDP 广播被发现' : '已关闭 UDP 广播被发现';
-    const mdnsText = mdnsSupported
-        ? (mdnsEnabled ? 'mDNS 已启用' : 'mDNS 已关闭')
-        : 'mDNS 当前未接入';
-    hint.textContent = `${advertiseText}，发现端口 ${udpPort}；${modeText}；${mdnsText}；发现到的设备需手动记住后才会登记。`;
+    const mdnsText = mdnsEnabled ? 'mDNS 已启用' : 'mDNS 已关闭';
+    hint.textContent = `${advertiseText}，发现端口 ${udpPort}；${modeText}；${mdnsText}。`;
 }
 
 function setAdminStatusText(id, value, fallback = '-') {
@@ -4821,7 +5926,7 @@ function renderAdminSystemSummary(data) {
         heartbeatSeconds > 0 ? `${heartbeatSeconds}s · UDP ${udpPort}` : `UDP ${udpPort}`,
     );
 
-    setAdminStatusText('admin-discovery-mode-chip', supportsActiveDiscovery ? '简易互发现' : '被动发现');
+    setAdminStatusText('admin-discovery-mode-chip', supportsActiveDiscovery ? '主动发现' : '被动发现');
     setAdminStatusText('admin-discovery-broadcast-chip', broadcastEnabled ? 'UDP广播开启' : 'UDP广播关闭');
     setAdminStatusText('admin-discovery-mdns-chip', mdnsEnabled ? 'mDNS开启' : 'mDNS关闭');
 
@@ -4844,13 +5949,13 @@ function renderAdminSystemSummary(data) {
         return;
     }
     if (channelLabels.length === 0) {
-        note.textContent = `当前未开启主动发现通道，其他节点需要通过手动登记连接 ${localEndpoint || '本机端点'}；发现到的设备不会自动记住。`;
+        note.textContent = `当前未开启主动发现通道，其他节点需要通过手动登记连接 ${localEndpoint || '本机端点'}。`;
         return;
     }
     const advertiseModeText = configuredAdvertiseIp
         ? `按手动通告IP ${configuredAdvertiseIp} 对外公布`
         : '按自动选择的局域网地址对外公布';
-    note.textContent = `当前通过 ${channelLabels.join(' + ')} 对外可发现，${advertiseModeText} ${effectiveAdvertiseIp || '本机地址'}；发现结果需手动记住后才会登记。`;
+    note.textContent = `当前通过 ${channelLabels.join(' + ')} 对外可发现，${advertiseModeText} ${effectiveAdvertiseIp || '本机地址'}。`;
 }
 
 async function loadAdminSystemSummary() {
@@ -4860,6 +5965,7 @@ async function loadAdminSystemSummary() {
 
     try {
         const response = await fetch('/admin/api/system');
+        markCurrentSessionHealthy('admin-system');
         const data = await response.json();
         if (!data.success) {
             throw new Error('admin system payload invalid');
@@ -4897,6 +6003,7 @@ async function loadAdminConfig() {
 
     try {
         const response = await fetch('/admin/config');
+        markCurrentSessionHealthy('admin-config');
         const data = await response.json();
 
         if (!data.success || !data.config) {
@@ -4919,10 +6026,6 @@ async function loadAdminConfig() {
             setInputValue('admin-discovery-advertise-ip', cfg.discoveryAdvertiseIp || '');
             setChecked('admin-enable-mdns', !!cfg.enableMdns);
             setChecked('admin-discovery-broadcast-enabled', !!cfg.discoveryBroadcastEnabled);
-            const mdnsCheckbox = document.getElementById('admin-enable-mdns');
-            if (mdnsCheckbox) {
-                mdnsCheckbox.disabled = !hasCapability('mdnsDiscovery');
-            }
         }
         if (hasCapability('relay')) {
             setInputValue('admin-relay-retention-hours', cfg.relayRetentionHours || 24);
@@ -4972,7 +6075,7 @@ async function saveAdminConfig(event) {
     if (hasCapability('activeDiscovery')) {
         payload.discoveryUdpPort = Number(getInputValue('admin-discovery-udp-port') || '19090');
         payload.discoveryAdvertiseIp = getInputValue('admin-discovery-advertise-ip').trim();
-        payload.enableMdns = hasCapability('mdnsDiscovery') && isChecked('admin-enable-mdns');
+        payload.enableMdns = isChecked('admin-enable-mdns');
         payload.discoveryBroadcastEnabled = isChecked('admin-discovery-broadcast-enabled');
     }
     if (hasCapability('relay')) {
@@ -5024,6 +6127,7 @@ async function loadAdminLogs() {
 
     try {
         const response = await fetch('/admin/api/logs');
+        markCurrentSessionHealthy('admin-logs');
         const data = await response.json();
 
         if (!data.logs || data.logs.length === 0) {
@@ -5080,13 +6184,20 @@ function formatDate(timestamp) {
     return date.toLocaleString();
 }
 
-function formatSize(bytes) {
-    if (bytes === 0) {
+function formatSize(bytes, preferredText = '') {
+    const text = String(preferredText || '').trim();
+    if (text) {
+        return text;
+    }
+    const numeric = Number(bytes);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
         return '0 B';
     }
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + units[i];
+    const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    const unitIndex = Math.min(Math.floor(Math.log(numeric) / Math.log(1024)), units.length - 1);
+    const value = numeric / Math.pow(1024, unitIndex);
+    const digits = unitIndex === 0 ? 0 : (value >= 100 ? 0 : (value >= 10 ? 1 : 2));
+    return `${value.toFixed(digits)} ${units[unitIndex]}`;
 }
 
 function getStatusText(status) {

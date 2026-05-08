@@ -7,9 +7,9 @@ RUN apk add --no-cache ca-certificates libstdc++ wget file \
     && adduser -S -G soonlink soonlink
 
 COPY dist/soonlnk /app/soonlnk
-COPY config /app/config
-COPY web /app/web
-COPY docker/entrypoint.sh /app/docker/entrypoint.sh
+COPY dist/config /app/config
+COPY dist/web /app/web
+COPY dist/docker/entrypoint.sh /app/docker/entrypoint.sh
 
 RUN chmod +x /app/soonlnk /app/docker/entrypoint.sh \
     && mkdir -p /app/runtime/config /app/runtime/tmp /app/runtime/logs /app/runtime/cache/relay /app/data \

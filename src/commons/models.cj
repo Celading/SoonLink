@@ -18,6 +18,13 @@ public enum DeviceTrustState {
     | Blocked
 }
 
+public enum TransferRequestStatus {
+    | RequestPending
+    | RequestAccepted
+    | RequestRejected
+    | RequestCancelled
+}
+
 public func taskStatusToString(status: TaskStatus): String {
     match (status) {
         case Pending => "pending"
@@ -51,6 +58,24 @@ public func deviceTrustStateFromString(raw: String): DeviceTrustState {
         case "trusted" => Trusted
         case "blocked" => Blocked
         case _ => Unknown
+    }
+}
+
+public func transferRequestStatusToString(status: TransferRequestStatus): String {
+    match (status) {
+        case RequestAccepted => "accepted"
+        case RequestRejected => "rejected"
+        case RequestCancelled => "cancelled"
+        case _ => "pending"
+    }
+}
+
+public func transferRequestStatusFromString(raw: String): TransferRequestStatus {
+    match (raw.trimAscii().toLower()) {
+        case "accepted" => RequestAccepted
+        case "rejected" => RequestRejected
+        case "cancelled" => RequestCancelled
+        case _ => RequestPending
     }
 }
 
@@ -152,6 +177,7 @@ public class FileMetadata {
             .put("name", name)
             .put("path", path)
             .putInt("size", size)
+            .put("sizeText", formatBytes(size))
             .put("mimeType", mimeType)
             .putInt("modified", modified)
             .putBool("isDir", isDir)
@@ -186,6 +212,7 @@ public class FileEntry {
             .put("name", name)
             .put("path", path)
             .putInt("size", size)
+            .put("sizeText", formatBytes(size))
             .putInt("modified", modified)
             .putBool("isDir", isDir)
             .put("mimeType", mimeType)
@@ -235,7 +262,9 @@ public class TransferTask {
             .putInt("totalEntries", totalEntries)
             .putInt("completedEntries", completedEntries)
             .putInt("totalBytes", totalBytes)
+            .put("totalBytesText", formatBytes(totalBytes))
             .putInt("transferredBytes", transferredBytes)
+            .put("transferredBytesText", formatBytes(transferredBytes))
             .put("status", taskStatusToString(status))
             .putFloat("progress", progress)
             .putInt("createdAt", createdAt)
@@ -253,6 +282,73 @@ public class TransferTask {
         }
         if (currentItem.size > 0) {
             obj.put("currentItem", currentItem)
+        }
+        if (metadata.path.size > 0 || metadata.name.size > 0) {
+            obj.putObj("metadata", metadata.toJson())
+        }
+        obj
+    }
+}
+
+public class TransferRequest {
+    public var id: String = ""
+    public var requesterDeviceId: String = ""
+    public var requesterName: String = ""
+    public var requesterHost: String = ""
+    public var requesterPort: Int64 = 0
+    public var sourceDevice: String = ""
+    public var sourceName: String = ""
+    public var targetDevice: String = "local"
+    public var filePath: String = ""
+    public var targetPath: String = "/"
+    public var metadata: FileMetadata = FileMetadata()
+    public var sourceIsDir: Bool = false
+    public var totalEntries: Int64 = 0
+    public var totalBytes: Int64 = 0
+    public var status: TransferRequestStatus = RequestPending
+    public var createdAt: Int64 = 0
+    public var updatedAt: Int64 = 0
+    public var resolvedAt: Int64 = 0
+    public var note: String = ""
+    public var responseMessage: String = ""
+    public var acceptedTaskId: String = ""
+
+    public init() {
+        let now = currentTimestamp()
+        this.createdAt = now
+        this.updatedAt = now
+    }
+
+    public func toJson(): JsonObject {
+        let obj = JsonObject()
+            .put("id", id)
+            .put("requesterDeviceId", requesterDeviceId)
+            .put("requesterName", requesterName)
+            .put("requesterHost", requesterHost)
+            .putInt("requesterPort", requesterPort)
+            .put("sourceDevice", sourceDevice)
+            .put("sourceName", sourceName)
+            .put("targetDevice", targetDevice)
+            .put("filePath", filePath)
+            .put("targetPath", targetPath)
+            .putBool("sourceIsDir", sourceIsDir)
+            .putInt("totalEntries", totalEntries)
+            .putInt("totalBytes", totalBytes)
+            .put("totalBytesText", formatBytes(totalBytes))
+            .put("status", transferRequestStatusToString(status))
+            .putInt("createdAt", createdAt)
+            .putInt("updatedAt", updatedAt)
+        if (resolvedAt > 0) {
+            obj.putInt("resolvedAt", resolvedAt)
+        }
+        if (note.size > 0) {
+            obj.put("note", note)
+        }
+        if (responseMessage.size > 0) {
+            obj.put("responseMessage", responseMessage)
+        }
+        if (acceptedTaskId.size > 0) {
+            obj.put("acceptedTaskId", acceptedTaskId)
         }
         if (metadata.path.size > 0 || metadata.name.size > 0) {
             obj.putObj("metadata", metadata.toJson())

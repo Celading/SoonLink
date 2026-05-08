@@ -22,7 +22,7 @@ async function loadLoginContext() {
         console.error('加载登录上下文失败:', error);
         setText('login-mode-pill', '上下文读取失败');
         setText('login-summary', '当前无法读取访问上下文，请稍后重试。');
-        setText('login-detail', '当前版本不会通过此入口为远程访问授予管理员权限。');
+        setText('login-detail', '当前运行态不会通过此入口为远程访问授予管理员权限。');
     }
 }
 
