@@ -356,7 +356,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: soonlink-core-${{ matrix.artifact_platform }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ github.workspace }}/bundle-artifacts/${{ matrix.artifact_platform }}/*
+          path: ${{ steps.workspace.outputs.core_dir }}/dist/releases/*
           if-no-files-found: error
           overwrite: true
           compression-level: 0
