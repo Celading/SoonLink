@@ -28,6 +28,11 @@ That split keeps the repository validation path lightweight while leaving the fu
   - When `CANGJIE_STDX_RELEASE_VERSION` is configured, release jobs reuse that official per-platform `stdx` bundle. When it is unset, macOS / Windows / OpenHarmony jobs first try the release version derived from `CANGJIE_STDX_GIT_REF` and only then fall back to `1.0.0.1`.
   - Each platform now emits both `.tar.gz` and `.zip` bundles so users can unpack a full runtime bundle more directly.
   - Each platform job now uploads staged artifacts first, and the Ubuntu `publish` job publishes the final GitHub Release assets in one place.
+- `.github/workflows/version-package.yml`
+  Produces a preview packaging run whenever the mainline package version moves forward.
+  - It triggers on pushes to `main` / `core` when `cjpm.toml` changes or when the release-bundle workflow / scripts themselves change.
+  - The workflow reuses the multi-platform bundle matrix from `release-artifacts.yml`, but always keeps `publish_release=false`, so it does not publish a GitHub Release and does not trigger Docker / Homebrew publishing.
+  - Bundles are uploaded as workflow artifacts, which fits the "bump version once, get one downloadable package preview" habit before pushing a formal tag.
 - `.github/workflows/docker-publish.yml`
   Publishes Docker Hub images with the default platform set:
   - `linux/amd64`
@@ -106,7 +111,7 @@ Once `CANGJIE_HOME` and `CANGJIE_STDX_PATH` are available locally, the same rele
   --target x86_64-unknown-linux-gnu \
   --target-dir ./target-release/linux-x86_64 \
   --archive-platform linux-x86_64 \
-  --version 0.0.5
+  --version 0.5.56
 ```
 
 That command runs `cjpm build --target ...` and then produces:
@@ -142,9 +147,11 @@ Both bundle formats include:
 
 ## Notes
 
-- Pushing tags such as `0.8.27` or `0.0.5.17` automatically triggers `release-artifacts` and `docker-publish`; once the GitHub Release is published, `homebrew-tap` follows.
+- When `cjpm.toml` changes on `main` / `core`, or the packaging flow itself changes, GitHub automatically runs `version-package` and uploads a multi-platform preview bundle set without publishing a GitHub Release.
+- Pushing tags such as `0.8.27` or `0.5.56.1` automatically triggers `release-artifacts` and `docker-publish`; once the GitHub Release is published, `homebrew-tap` follows.
+- If you want the old "one version bump, one action packaging run" rhythm back, the recommended flow is: bump `cjpm.toml`, merge to the mainline, wait for `version-package` artifacts, verify them, then push the matching tag for formal Release / Docker / Homebrew publishing.
 - The GitCode tag workflow is intentionally limited to the Linux x86_64 bundle. GitHub remains the primary multi-platform release surface.
-- The pushed tag must either match the `cjpm.toml` version exactly or append one extra dotted revision, for example release tag `0.0.5.1` on package version `0.0.5`.
+- The pushed tag must either match the `cjpm.toml` version exactly or append one extra dotted revision, for example release tag `0.5.56.1` on package version `0.5.56`.
 - `linux-aarch64` now uses a native `ubuntu-24.04-arm` runner with an ARM64 SDK so release bundles do not depend on x86_64 Linux SDK layouts that omit `linux_aarch64_cjnative` modules.
 - `release-artifacts` now attempts all five default platforms by default and adds a sixth OpenHarmony bundle when the toolchain is available:
   - `linux-x86_64`
