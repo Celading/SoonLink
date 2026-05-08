@@ -1,0 +1,41 @@
+{
+  "name": "SoonLink",
+  "short_name": "SoonLink",
+  "description": "SoonLink staticWeb installable app shell for device transfer, file browsing, and node management.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui", "browser"],
+  "background_color": "#0f172a",
+  "theme_color": "#1d4ed8",
+  "icons": [
+    {
+      "src": "/static/icons/app-icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "设备列表",
+      "short_name": "设备",
+      "url": "/?page=devices"
+    },
+    {
+      "name": "文件页",
+      "short_name": "文件",
+      "url": "/?page=files&device=local"
+    },
+    {
+      "name": "传输页",
+      "short_name": "传输",
+      "url": "/?page=transfers&device=local"
+    },
+    {
+      "name": "管理台",
+      "short_name": "管理",
+      "url": "/admin"
+    }
+  ]
+}

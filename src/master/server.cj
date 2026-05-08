@@ -55,6 +55,9 @@ public class CoreServer {
     var tasks: HashMap<String, TransferTask> = HashMap<String, TransferTask>()
     let tasksMutex: Mutex = Mutex()
 
+    var transferRequests: HashMap<String, TransferRequest> = HashMap<String, TransferRequest>()
+    let transferRequestsMutex: Mutex = Mutex()
+
     var pinPairingSessions: HashMap<String, DevicePinPairingSession> = HashMap<String, DevicePinPairingSession>()
     let pinPairingMutex: Mutex = Mutex()
 
@@ -195,7 +198,6 @@ public class CoreServer {
             port: Int64(config.webPort),
             online: true
         )
-        localDevice.remembered = true
         applyDefaultDeviceCapabilities(localDevice, profile)
         applyDefaultDeviceConnector(localDevice)
         applyDeviceTrustState(localDevice, Trusted, "runtime")
@@ -243,7 +245,6 @@ public class CoreServer {
         record.ip = resolveDiscoveryAdvertiseIp()
         record.port = Int64(config.webPort)
         record.online = true
-        record.remembered = true
         record.lastSeen = currentTimestamp()
         record.trustState = Trusted
         record.trustSource = "runtime"
@@ -819,6 +820,180 @@ public class CoreServer {
         transferEngine.cancelTask(taskId)
     }
 
+    public func listTransferRequests(): ArrayList<TransferRequest> {
+        let result = ArrayList<TransferRequest>()
+        synchronized(transferRequestsMutex) {
+            for ((_, request) in transferRequests) {
+                result.add(request)
+            }
+        }
+        result
+    }
+
+    public func getTransferRequest(requestId: String): ?TransferRequest {
+        synchronized(transferRequestsMutex) {
+            transferRequests.get(requestId)
+        }
+    }
+
+    public func ingestTransferRequest(request: TransferRequest): TransferRequest {
+        registerRuntimeRequestCandidate(request.sourceDevice, request.sourceName, request.requesterHost, request.requesterPort)
+        registerRuntimeRequestCandidate(request.requesterDeviceId, request.requesterName, request.requesterHost, request.requesterPort)
+        ensureIncomingRequestAllowed(request)
+
+        let now = currentTimestamp()
+        if (request.id.trimAscii().size == 0) {
+            request.id = "req-" + generateId()
+        }
+        request.targetDevice = "local"
+        request.filePath = normalizeVirtualPath(request.filePath)
+        request.targetPath = normalizeVirtualPath(request.targetPath)
+        if (request.targetPath.size == 0) {
+            request.targetPath = "/"
+        }
+        if (request.metadata.path.size == 0) {
+            request.metadata.path = request.filePath
+        }
+        if (request.metadata.name.size == 0) {
+            request.metadata.name = extractVirtualBaseName(request.filePath)
+        }
+        if (request.sourceName.trimAscii().size == 0) {
+            request.sourceName = request.sourceDevice
+        }
+        if (request.requesterName.trimAscii().size == 0) {
+            request.requesterName = request.requesterDeviceId
+        }
+        if (!request.sourceIsDir && request.totalEntries <= 0) {
+            request.totalEntries = 1
+        }
+        if (request.totalBytes <= 0 && request.metadata.size > 0) {
+            request.totalBytes = request.metadata.size
+        }
+        if (request.createdAt <= 0) {
+            request.createdAt = now
+        }
+        request.updatedAt = now
+        request.status = RequestPending
+        request.resolvedAt = 0
+        request.acceptedTaskId = ""
+        request.responseMessage = ""
+
+        synchronized(transferRequestsMutex) {
+            transferRequests.add(request.id, request)
+        }
+        request
+    }
+
+    public func sendTransferRequest(
+        sourceDevice: String,
+        targetDevice: String,
+        filePath: String,
+        targetPath: String,
+        note: String
+    ): TransferRequest {
+        ensureDeviceUsableForTransfer(sourceDevice, "transfer request source")
+        ensureDeviceUsableForTransfer(targetDevice, "transfer request target")
+
+        let request = buildTransferRequest(sourceDevice, filePath, targetPath, note)
+        if (targetDevice == "local") {
+            return ingestTransferRequest(request)
+        }
+
+        match (openRemoteNodeClient(targetDevice)) {
+            case Some(client) =>
+                try {
+                    let ok = client.pushTransferRequest(buildTransferRequestIngressPayload(request))
+                    client.close()
+                    if (!ok) {
+                        throw Exception("对端未接受传输请求")
+                    }
+                    return request
+                } catch (e: Exception) {
+                    client.close()
+                    throw e
+                }
+            case None =>
+                throw Exception("目标设备当前不支持传输请求投递: ${targetDevice}")
+        }
+    }
+
+    public func acceptTransferRequest(requestId: String, targetPath: String): TransferTask {
+        var requestSnapshot: ?TransferRequest = None
+        synchronized(transferRequestsMutex) {
+            match (transferRequests.get(requestId)) {
+                case Some(request) =>
+                    match (request.status) {
+                        case RequestPending => ()
+                        case _ => throw Exception("传输请求当前不可接受: ${requestId}")
+                    }
+                    requestSnapshot = Some(request)
+                case None =>
+                    throw Exception("传输请求不存在: ${requestId}")
+            }
+        }
+
+        match (requestSnapshot) {
+            case Some(request) =>
+                let resolvedSource = resolveTransferRequestSourceDevice(request)
+                let resolvedTargetPath = normalizeVirtualPath(if (targetPath.trimAscii().size > 0) { targetPath } else { request.targetPath })
+                let task = createTransferTask(resolvedSource, "local", request.filePath, resolvedTargetPath)
+                let now = currentTimestamp()
+                synchronized(transferRequestsMutex) {
+                    if (let Some(stored) <- transferRequests.get(requestId)) {
+                        stored.status = RequestAccepted
+                        stored.targetPath = resolvedTargetPath
+                        stored.updatedAt = now
+                        stored.resolvedAt = now
+                        stored.responseMessage = "已接受传输请求"
+                        stored.acceptedTaskId = task.id
+                    }
+                }
+                task
+            case None =>
+                throw Exception("传输请求不存在: ${requestId}")
+        }
+    }
+
+    public func rejectTransferRequest(requestId: String, reason: String): ?TransferRequest {
+        let now = currentTimestamp()
+        synchronized(transferRequestsMutex) {
+            match (transferRequests.get(requestId)) {
+                case Some(request) =>
+                    match (request.status) {
+                        case RequestPending => ()
+                        case _ => return Some(request)
+                    }
+                    request.status = RequestRejected
+                    request.updatedAt = now
+                    request.resolvedAt = now
+                    request.responseMessage = if (reason.trimAscii().size > 0) { reason.trimAscii() } else { "已拒绝传输请求" }
+                    Some(request)
+                case None =>
+                    None
+            }
+        }
+    }
+
+    public func cancelTransferRequest(requestId: String, reason: String): ?TransferRequest {
+        let now = currentTimestamp()
+        synchronized(transferRequestsMutex) {
+            match (transferRequests.get(requestId)) {
+                case Some(request) =>
+                    match (request.status) {
+                        case RequestPending => ()
+                        case _ => return Some(request)
+                    }
+                    request.status = RequestCancelled
+                    request.updatedAt = now
+                    request.resolvedAt = now
+                    request.responseMessage = if (reason.trimAscii().size > 0) { reason.trimAscii() } else { "已取消传输请求" }
+                    Some(request)
+                case None =>
+                    None
+            }
+        }
+    }
+
     func updateTaskStatus(taskId: String, status: TaskStatus, progress: Float64): Unit {
         synchronized(tasksMutex) {
             if (let Some(task) <- tasks.get(taskId)) {
@@ -955,7 +1130,7 @@ public class CoreServer {
         if (!profile.supportsPeerTransfer) {
             let result = PeerTransferResult()
             result.success = false
-            result.message = "peer transfer unavailable in current runtime"
+            result.message = "peer transfer disabled in current edition"
             return result
         }
         peerTransferFeature.acceptUpload(targetPath, peerId, token, payload)
@@ -965,7 +1140,7 @@ public class CoreServer {
         if (!profile.supportsPeerTransfer) {
             let result = PeerDownloadPayload()
             result.result.success = false
-            result.result.message = "peer transfer unavailable in current runtime"
+            result.result.message = "peer transfer disabled in current edition"
             return result
         }
         peerTransferFeature.provideDownload(sourcePath, peerId, token)
@@ -975,7 +1150,7 @@ public class CoreServer {
         if (!profile.supportsPeerTransfer) {
             let result = PeerTransferResult()
             result.success = false
-            result.message = "peer transfer unavailable in current runtime"
+            result.message = "peer transfer disabled in current edition"
             return result
         }
         peerTransferFeature.pullLocalToPath(sourcePath, targetPath)
@@ -1094,7 +1269,7 @@ public class CoreServer {
         if (!profile.supportsRelay) {
             let job = RelayJob()
             job.status = "disabled"
-            job.message = "relay unavailable in current runtime"
+            job.message = "relay disabled in current edition"
             job.targetDevice = targetDevice
             job.targetPath = targetPath
             job.fileName = fileName
@@ -1133,7 +1308,7 @@ public class CoreServer {
         if (!profile.supportsRelay) {
             let job = RelayJob()
             job.status = "disabled"
-            job.message = "relay unavailable in current runtime"
+            job.message = "relay disabled in current edition"
             job.fileName = fileName
             job.recordKind = "text"
             return job
@@ -1275,6 +1450,7 @@ public class CoreServer {
             .putInt("totalFiles", plan.files.size)
             .putInt("totalEntries", plan.totalEntries)
             .putInt("totalBytes", plan.totalBytes)
+            .put("totalBytesText", formatBytes(plan.totalBytes))
     }
 
     func openRemoteFileClient(deviceId: String): ?ConnectorFileClient {
@@ -1290,6 +1466,191 @@ public class CoreServer {
                 connectorRegistry.openFileClient(device)
             case None => None
         }
+    }
+
+    func openRemoteNodeClient(deviceId: String): ?SoonLinkNodeClient {
+        if (deviceId == "local") {
+            return None
+        }
+        ensureRemoteDeviceTrusted(deviceId, "transfer request delivery")
+        match (getDevice(deviceId)) {
+            case Some(device) =>
+                if (defaultConnectorTypeForDevice(device) != "soonlink-http") {
+                    return None
+                }
+                if (device.ip.trimAscii().size == 0 || device.port <= 0) {
+                    return None
+                }
+                Some(SoonLinkNodeClient(device.ip.trimAscii(), device.port))
+            case None =>
+                None
+        }
+    }
+
+    func ensureIncomingRequestAllowed(request: TransferRequest): Unit {
+        ensureKnownDeviceNotBlocked(request.requesterDeviceId, "请求发起节点")
+        if (request.sourceDevice != request.requesterDeviceId) {
+            ensureKnownDeviceNotBlocked(request.sourceDevice, "源节点")
+        }
+    }
+
+    func ensureKnownDeviceNotBlocked(deviceId: String, label: String): Unit {
+        let normalized = deviceId.trimAscii()
+        if (normalized.size == 0 || normalized == "local") {
+            return
+        }
+        match (getDevice(normalized)) {
+            case Some(device) =>
+                match (device.trustState) {
+                    case Blocked => throw Exception("${label}已拉黑，拒绝接收传输请求: ${normalized}")
+                    case _ => ()
+                }
+            case None => ()
+        }
+    }
+
+    func registerRuntimeRequestCandidate(deviceId: String, name: String, host: String, port: Int64): Unit {
+        let normalizedId = deviceId.trimAscii()
+        let normalizedHost = host.trimAscii()
+        if (normalizedId.size == 0 || normalizedId == "local" || normalizedId == config.nodeId.trimAscii()) {
+            return
+        }
+        if (normalizedHost.size == 0 || port <= 0) {
+            return
+        }
+        match (getDevice(normalizedId)) {
+            case Some(_) =>
+                return
+            case None => ()
+        }
+
+        let device = Device(
+            id: normalizedId,
+            name: if (name.trimAscii().size > 0) { name.trimAscii() } else { normalizedId },
+            deviceType: "node",
+            ip: normalizedHost,
+            port: port,
+            online: true
+        )
+        applyDiscoveredDeviceCapabilities(device)
+        applyDefaultDeviceConnector(device)
+        applyDeviceTrustState(device, Unknown, "request")
+        registerDevice(device)
+    }
+
+    func buildTransferRequest(
+        sourceDevice: String,
+        filePath: String,
+        targetPath: String,
+        note: String
+    ): TransferRequest {
+        let normalizedSource = sourceDevice.trimAscii()
+        let normalizedFilePath = normalizeVirtualPath(filePath)
+        let plan = buildTransferPlan(normalizedSource, normalizedFilePath)
+        let request = TransferRequest()
+        request.id = "req-" + generateId()
+        request.requesterDeviceId = config.nodeId.trimAscii()
+        request.requesterName = resolveNodeDisplayName()
+        request.requesterHost = resolveDiscoveryAdvertiseIp()
+        request.requesterPort = Int64(config.webPort)
+        request.sourceDevice = resolveTransferRequestSourceDeviceId(normalizedSource)
+        request.sourceName = resolveTransferRequestSourceName(normalizedSource)
+        request.targetDevice = "local"
+        request.filePath = normalizedFilePath
+        request.targetPath = normalizeVirtualPath(targetPath)
+        request.sourceIsDir = plan.sourceIsDir
+        request.totalEntries = plan.totalEntries
+        request.totalBytes = plan.totalBytes
+        request.note = note.trimAscii()
+
+        match (getFileInfo(normalizedSource, normalizedFilePath)) {
+            case Some(meta) =>
+                request.metadata = meta
+            case None =>
+                request.metadata.name = plan.rootName
+                request.metadata.path = normalizedFilePath
+                request.metadata.isDir = plan.sourceIsDir
+                request.metadata.size = plan.totalBytes
+        }
+
+        if (request.metadata.path.size == 0) {
+            request.metadata.path = normalizedFilePath
+        }
+        if (request.metadata.name.size == 0) {
+            request.metadata.name = plan.rootName
+        }
+        if (request.targetPath.size == 0) {
+            request.targetPath = "/"
+        }
+        request
+    }
+
+    func resolveTransferRequestSourceDeviceId(sourceDevice: String): String {
+        let normalized = sourceDevice.trimAscii()
+        if (normalized == "local" || normalized.size == 0) {
+            let publicId = config.nodeId.trimAscii()
+            if (publicId.size == 0) {
+                throw Exception("当前节点未配置 nodeId，暂时无法向对端发送传输请求")
+            }
+            return publicId
+        }
+        normalized
+    }
+
+    func resolveTransferRequestSourceName(sourceDevice: String): String {
+        let normalized = sourceDevice.trimAscii()
+        if (normalized == "local" || normalized.size == 0) {
+            return resolveNodeDisplayName()
+        }
+        match (getDevice(normalized)) {
+            case Some(device) =>
+                if (device.name.trimAscii().size > 0) {
+                    device.name
+                } else {
+                    normalized
+                }
+            case None =>
+                normalized
+        }
+    }
+
+    func resolveTransferRequestSourceDevice(request: TransferRequest): String {
+        let normalized = request.sourceDevice.trimAscii()
+        if (normalized.size == 0) {
+            throw Exception("传输请求缺少源设备ID")
+        }
+        if (normalized == config.nodeId.trimAscii()) {
+            return "local"
+        }
+        match (getDevice(normalized)) {
+            case Some(_) =>
+                normalized
+            case None =>
+                throw Exception("源节点尚未登记或不可用: ${normalized}")
+        }
+    }
+
+    func buildTransferRequestIngressPayload(request: TransferRequest): String {
+        JsonObject()
+            .put("id", request.id)
+            .put("requesterDeviceId", request.requesterDeviceId)
+            .put("requesterName", request.requesterName)
+            .put("requesterHost", request.requesterHost)
+            .putInt("requesterPort", request.requesterPort)
+            .put("sourceDevice", request.sourceDevice)
+            .put("sourceName", request.sourceName)
+            .put("filePath", request.filePath)
+            .put("targetPath", request.targetPath)
+            .put("fileName", request.metadata.name)
+            .put("mimeType", request.metadata.mimeType)
+            .putInt("sourceSize", request.metadata.size)
+            .putInt("sourceModified", request.metadata.modified)
+            .putBool("sourceIsDir", request.sourceIsDir)
+            .putInt("totalEntries", request.totalEntries)
+            .putInt("totalBytes", request.totalBytes)
+            .put("note", request.note)
+            .putInt("createdAt", request.createdAt)
+            .toString()
     }
 
     func normalizeManagedDeviceRecord(record: DeviceRegistryRecord, existing: ?Device): String {
@@ -1320,7 +1681,6 @@ public class CoreServer {
             case Some(device) =>
                 record.online = device.online
                 record.lastSeen = if (device.lastSeen > 0) { device.lastSeen } else { currentTimestamp() }
-                record.remembered = true
                 record.trustState = device.trustState
                 record.trustSource = device.trustSource
                 record.trustUpdatedAt = device.trustUpdatedAt
@@ -1329,7 +1689,6 @@ public class CoreServer {
                 }
             case None =>
                 record.online = false
-                record.remembered = true
                 record.lastSeen = if (record.lastSeen > 0) { record.lastSeen } else { currentTimestamp() }
                 record.trustState = Unknown
                 record.trustSource = "manual"

@@ -2,12 +2,19 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#1d4ed8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="SoonLink">
     <title>{{.Title}}</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" type="image/svg+xml" href="/static/icons/app-icon.svg">
+    <link rel="apple-touch-icon" href="/static/icons/app-icon.svg">
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
 </head>
-<body class="soonlink-app" data-role-variant="remote" data-product-line="soonlink" data-time-mode="light">
+<body class="soonlink-app" data-role-variant="remote" data-time-mode="light">
     <div class="app-shell">
         <header class="app-header" id="main-app-header">
             <div class="app-header-brand">
@@ -20,7 +27,7 @@
             <div class="app-header-actions">
                 <div class="app-header-context" id="app-header-context">
                     <span class="pill" id="mode-pill">普通访问</span>
-                    <span class="pill" id="runtime-pill">SoonLink</span>
+                    <span class="pill" id="edition-pill">RUNTIME</span>
                 </div>
                 <div class="app-header-controls">
                     <button type="button" class="btn btn-sm btn-outline-secondary theme-switch-btn pd-fl-cc pd-asr1" id="theme-toggle-btn" title="切换主题模式">
@@ -216,9 +223,20 @@
                 <div class="app-card">
                     <div class="card-head">
                         <h2>传输任务</h2>
-                        <button class="btn btn-sm btn-outline-primary pd-fl-cc" type="button" id="open-transfer-modal">
-                            <i class="bi bi-plus-circle"></i> 新建任务
-                        </button>
+                        <div class="d-flex gap-2 flex-wrap">
+                            <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="open-transfer-request-drawer">
+                                <i class="bi bi-inboxes"></i> 来向请求
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary pd-fl-cc" type="button" id="open-transfer-modal">
+                                <i class="bi bi-plus-circle"></i> 新建任务
+                            </button>
+                        </div>
+                    </div>
+                    <div class="toolbar-row mt-2">
+                        <div class="stat-chips">
+                            <span class="stat-chip" id="transfer-requests-pending-chip">待确认请求 0</span>
+                        </div>
+                        <div class="section-note mb-0">直接创建任务会立即传输；发送请求则会让另一端以抽屉形式确认后再开始接收。</div>
                     </div>
                     <div class="toolbar-row mt-3">
                         <div class="stat-chips">
@@ -316,7 +334,7 @@
                             <i class="bi bi-trash3 me-1"></i>删除选中记录
                         </button>
                     </div>
-                    <p class="section-note mt-2 mb-0" id="relay-restore-hint">回流默认复用当前文件页的设备与目录</p>
+                    <p class="section-note mt-2 mb-0" id="relay-restore-hint">文字记录会写回当前文件页的 tmpSL 子目录，文件中继仍复用当前设备与目录</p>
                     <p class="section-note mb-0">删除记录只会移除中继记录与临时缓存，不会删除设备上的实际文件；直接删文件仍然只留给管理权限。</p>
                     <div class="row g-2 mt-1">
 
@@ -351,7 +369,7 @@
                             <span class="stat-chip" id="relay-failed-chip">失败 0</span>
                         </div>
                         <div class="filter-group">
-                            <input class="form-control form-control-sm" id="relay-search-input" placeholder="搜索任务ID / 源 / 目标 / 名称">
+                            <input class="form-control form-control-sm" id="relay-search-input" placeholder="搜索任务ID / 源 / 目标 / 文件">
                             <select class="form-select form-select-sm" id="relay-status-filter">
                                 <option value="all">全部状态</option>
                                 <option value="cached">cached</option>
@@ -499,43 +517,10 @@
                             <div class="col-md-8" data-capability="activeDiscovery">
                                 <label for="admin-discovery-advertise-ip" class="form-label">发现通告IP</label>
                                 <input type="text" class="form-control" id="admin-discovery-advertise-ip" placeholder="留空时自动优先选择局域网 IPv4">
-                                <div class="form-text">留空时按环境自动选择地址；Core 默认通过 UDP 广播做简易互发现。</div>
+                                <div class="form-text">留空时按环境自动选择地址；仅在支持主动发现的版本中生效。</div>
                             </div>
                             <div class="col-12">
-                                <div class="form-text" id="admin-discovery-mode-hint">Core 默认走 UDP 广播简易互发现，发现到的设备需手动记住后才会登记。</div>
-                            </div>
-                            <div class="col-12" id="admin-active-discovery-disabled-panel" style="display: none;">
-                                <div class="border rounded-3 p-3 bg-body-tertiary">
-                                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
-                                        <div>
-                                            <div class="fw-semibold">主动发现配置</div>
-                                            <div class="form-text mt-1">当前运行态未开放主动发现配置项时，请在上方发现状态卡复制本机端点或登记命令，发给其他设备手动接入。</div>
-                                        </div>
-                                        <span class="badge text-bg-secondary">当前运行态固定关闭</span>
-                                    </div>
-                                    <div class="row g-3 mt-1">
-                                        <div class="col-md-4">
-                                            <label class="form-label">UDP发现端口</label>
-                                            <input type="number" class="form-control" value="19090" disabled>
-                                            <div class="form-text">当前运行态未开放主动发现端口配置。</div>
-                                        </div>
-                                        <div class="col-md-8">
-                                            <label class="form-label">发现通告IP</label>
-                                            <input type="text" class="form-control" value="通过本机端点与登记命令对外提供" disabled>
-                                            <div class="form-text">系统仍会自动整理本机端点，供其他设备手动登记。</div>
-                                        </div>
-                                        <div class="col-12 d-flex flex-wrap gap-3">
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="checkbox" disabled>
-                                                <label class="form-check-label">启用 mDNS</label>
-                                            </div>
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="checkbox" disabled>
-                                                <label class="form-check-label">允许 UDP 广播被发现</label>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+                                <div class="form-text" id="admin-discovery-mode-hint">留空通告IP时，SoonLink 会自动优先选择局域网地址。</div>
                             </div>
                             <div class="col-md-4" data-capability="relay">
                                 <label for="admin-relay-retention-hours" class="form-label">中继保留时长（小时）</label>
@@ -577,7 +562,7 @@
                             </div>
                         </div>
                         <div class="mt-3 d-flex flex-wrap gap-3">
-                            <div class="form-check" data-capability="mdnsDiscovery">
+                            <div class="form-check" data-capability="activeDiscovery">
                                 <input class="form-check-input" type="checkbox" id="admin-enable-mdns">
                                 <label class="form-check-label" for="admin-enable-mdns">启用 mDNS</label>
                             </div>
@@ -607,9 +592,9 @@
                         </button>
                     </div>
                     <div class="mt-3 d-flex flex-wrap gap-2">
-                        <span class="stat-chip" id="admin-discovery-mode-chip">简易互发现</span>
-                        <span class="stat-chip" id="admin-discovery-broadcast-chip">UDP广播关闭</span>
-                        <span class="stat-chip" id="admin-discovery-mdns-chip">mDNS关闭</span>
+                        <span class="stat-chip" id="admin-discovery-mode-chip">主动发现</span>
+                        <span class="stat-chip" id="admin-discovery-broadcast-chip">UDP广播开启</span>
+                        <span class="stat-chip" id="admin-discovery-mdns-chip">mDNS开启</span>
                     </div>
                     <div class="row g-3 mt-1">
                         <div class="col-md-4">
@@ -653,7 +638,7 @@
                         </div>
                         <div class="form-text mt-2" id="admin-status-register-note">在另一台设备执行模板命令即可手动登记当前节点。</div>
                     </div>
-                    <div class="form-text mt-3" id="admin-status-discovery-note">Core 默认通过 UDP 广播对外可发现，但发现结果仍需手动记住后才会登记。</div>
+                    <div class="form-text mt-3" id="admin-status-discovery-note">当前节点会自动优先选择局域网地址并参与主动发现。</div>
                 </div>
                 <div class="app-card mt-3">
                     <div class="card-head">
@@ -879,8 +864,10 @@
                                                     <input type="text" class="form-control form-control-sm" id="transfer-target-path" value="/">
                                                 </div>
                                                 <div class="section-note mt-2" id="transfer-target-summary">目录任务会保留源目录树结构。</div>
+                                                <div class="section-note mt-2">想先让对端确认，再开始接收时，直接点下方“发送请求”。</div>
                                                 <div class="transfer-submit-row mt-3">
                                                     <button type="button" class="btn btn-outline-primary btn-sm" id="transfer-btn"><i class="bi bi-check-lg me-1"></i>创建任务</button>
+                                                    <button type="button" class="btn btn-primary btn-sm" id="transfer-request-btn"><i class="bi bi-send-check me-1"></i>发送请求</button>
                                                 </div>
                                             </form>
                                         </div>
@@ -896,6 +883,27 @@
                     </button>
                     <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="offcanvas offcanvas-end transfer-request-drawer" tabindex="-1" id="transfer-request-drawer" aria-labelledby="transfer-request-drawer-title">
+        <div class="offcanvas-header">
+            <div>
+                <h5 class="offcanvas-title mb-1" id="transfer-request-drawer-title">另一端发送文件请求</h5>
+                <div class="text-muted small">新的来向请求会自动从这里弹出，确认后才会真正登记为传输任务。</div>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        </div>
+        <div class="offcanvas-body">
+            <div class="transfer-request-drawer-head">
+                <span class="stat-chip" id="transfer-request-drawer-count">待确认 0</span>
+                <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="transfer-request-drawer-refresh-btn">
+                    <i class="bi bi-arrow-repeat me-1"></i>刷新
+                </button>
+            </div>
+            <div class="transfer-request-drawer-list mt-3" id="transfer-request-drawer-list">
+                <div class="transfer-request-empty">当前没有待确认的来向传输请求。</div>
             </div>
         </div>
     </div>
@@ -979,7 +987,7 @@
                                             <i class="bi bi-download me-1"></i>下载缓存
                                         </button>
                                         <button class="btn btn-sm btn-outline-primary pd-fl-cc" type="button" id="relay-text-station-restore-btn" disabled>
-                                            <i class="bi bi-arrow-down-square me-1"></i>回流到当前目录
+                                            <i class="bi bi-arrow-down-square me-1"></i>回流到当前目录/tmpSL
                                         </button>
                                         <button class="btn btn-sm btn-outline-danger pd-fl-cc" type="button" id="relay-text-station-delete-btn" disabled>
                                             <i class="bi bi-trash3 me-1"></i>删除记录
@@ -1025,6 +1033,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/js/icons.js"></script>
+    <script src="/static/js/pwa.js"></script>
     <script src="/static/js/main.js"></script>
 </body>
 </html>

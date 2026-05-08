@@ -31,6 +31,7 @@ public class RelayJob {
             .put("fileName", fileName)
             .putBool("cacheAvailable", cacheAvailable)
             .putInt("bytes", bytes)
+            .put("bytesText", formatBytes(bytes))
             .put("status", status)
             .putInt("attempts", attempts)
             .put("message", message)
