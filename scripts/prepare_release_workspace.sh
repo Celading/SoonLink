@@ -67,6 +67,70 @@ copy_tree() {
   )
 }
 
+package_name_from_manifest() {
+  manifest_path="$1"
+  sed -n 's/^  name = "\(.*\)"/\1/p' "$manifest_path" | head -n 1
+}
+
+resolve_package_dir() {
+  repo_dir="$1"
+  expected_package="$2"
+
+  if [ -f "$repo_dir/cjpm.toml" ] && [ "$(package_name_from_manifest "$repo_dir/cjpm.toml")" = "$expected_package" ]; then
+    printf '%s\n' "$repo_dir"
+    return 0
+  fi
+
+  found_dir=""
+  tmp_list="$(mktemp "${TMPDIR:-/tmp}/soonlink-package-dir.XXXXXX")"
+  find "$repo_dir" -maxdepth 3 -type f -name 'cjpm.toml' | sort | while IFS= read -r manifest_path; do
+    package_name="$(package_name_from_manifest "$manifest_path")"
+    [ "$package_name" = "$expected_package" ] || continue
+    printf '%s\n' "$(dirname "$manifest_path")"
+  done > "$tmp_list"
+
+  while IFS= read -r candidate_dir; do
+    [ -n "$candidate_dir" ] || continue
+    if [ -n "$found_dir" ] && [ "$found_dir" != "$candidate_dir" ]; then
+      rm -f "$tmp_list"
+      echo "multiple package roots found for $expected_package under $repo_dir" >&2
+      exit 1
+    fi
+    found_dir="$candidate_dir"
+  done < "$tmp_list"
+
+  rm -f "$tmp_list"
+
+  if [ -z "$found_dir" ]; then
+    echo "package root for $expected_package not found under $repo_dir" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$found_dir"
+}
+
+copy_package_tree() {
+  repo_dir="$1"
+  dest_dir="$2"
+  expected_package="$3"
+
+  package_dir="$(resolve_package_dir "$repo_dir" "$expected_package")"
+  copy_tree "$package_dir" "$dest_dir"
+}
+
+rewrite_dependency_path() {
+  manifest_path="$1"
+  dependency_name="$2"
+  dependency_path="$3"
+
+  if ! grep -q "^  $dependency_name = {" "$manifest_path"; then
+    echo "dependency $dependency_name not found in $manifest_path" >&2
+    exit 1
+  fi
+
+  sedi "s#^  $dependency_name = { .*#  $dependency_name = { path = \"$dependency_path\" }#" "$manifest_path"
+}
+
 ensure_windows_target() {
   manifest_path="$1"
   package_kind="$2"
@@ -126,15 +190,16 @@ done
 mkdir -p "$OUTPUT_DIR"
 
 copy_tree "$ROOT_DIR" "$OUTPUT_DIR/SoonLink-Core"
-copy_tree "$IGNITE_DIR" "$OUTPUT_DIR/Ignite0500"
-copy_tree "$LISI_DIR" "$OUTPUT_DIR/lisi"
-copy_tree "$JINGUISSL_DIR" "$OUTPUT_DIR/jinguiSSL"
+copy_package_tree "$IGNITE_DIR" "$OUTPUT_DIR/Ignite0500" "ignite"
+copy_package_tree "$LISI_DIR" "$OUTPUT_DIR/lisi" "lisi"
+copy_package_tree "$JINGUISSL_DIR" "$OUTPUT_DIR/jinguiSSL" "jinguissl"
 
 sh "$ROOT_DIR/scripts/apply_tls_dep_compat.sh" "$OUTPUT_DIR"
 
-sedi 's#^  ignite = { .*#  ignite = { path = "../Ignite0500" }#' "$OUTPUT_DIR/SoonLink-Core/cjpm.toml"
-sedi 's#^  lisi = { .*#  lisi = { path = "../lisi" }#' "$OUTPUT_DIR/SoonLink-Core/cjpm.toml"
-sedi 's#^  jinguissl = { .*#  jinguissl = { path = "../jinguiSSL" }#' "$OUTPUT_DIR/Ignite0500/cjpm.toml"
+rewrite_dependency_path "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "ignite" "../Ignite0500"
+rewrite_dependency_path "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "lisi" "../lisi"
+rewrite_dependency_path "$OUTPUT_DIR/Ignite0500/cjpm.toml" "lisi" "../lisi"
+rewrite_dependency_path "$OUTPUT_DIR/Ignite0500/cjpm.toml" "jinguissl" "../jinguiSSL"
 
 ensure_windows_target "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "core"
 ensure_windows_target "$OUTPUT_DIR/Ignite0500/cjpm.toml" "ignite"

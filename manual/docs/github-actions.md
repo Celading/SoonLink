@@ -146,6 +146,7 @@ GitCode workflow 本身不会直接读取 GitHub 风格的 repository variables 
 - `scripts/prepare_release_workspace.sh`
   在 CI 中准备一份干净的 SoonLink + Ignite + lisi + jinguiSSL 工作副本，并把依赖改写为 `path` 形式。
   - 同时会排除 `cangjie-repo.toml`、`module-resolve.json`、`module-lock.json` 这类本地路径或本机解析缓存文件，避免把私有路径带进 CI 上下文。
+  - 现在会按实际 `cjpm.toml` 自动探测依赖包根；像 `lisi` 这类“仓根目录不等于包根目录”的仓，也会在投影后统一收口到稳定的 `path` 依赖结构。
 
 ## 备注
 
