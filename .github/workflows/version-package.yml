@@ -21,7 +21,7 @@ on:
       - scripts/prepare_release_workspace.sh
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   package-preview:
