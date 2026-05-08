@@ -96,6 +96,13 @@ copy_path() {
   fi
 }
 
+require_stage_path() {
+  if [ ! -e "$1" ]; then
+    echo "missing required packaged path: $1" >&2
+    exit 1
+  fi
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --target)
@@ -128,6 +135,14 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+case "$DIST_DIR" in
+  /*)
+    ;;
+  *)
+    DIST_DIR="$ROOT_DIR/$DIST_DIR"
+    ;;
+esac
 
 if [ -z "$VERSION_OVERRIDE" ]; then
   VERSION_OVERRIDE="$(awk -F '"' '/^[[:space:]]*version[[:space:]]*=/{print $2; exit}' "$ROOT_DIR/cjpm.toml")"
@@ -200,6 +215,16 @@ for public_path in \
 do
   copy_path "$public_path"
 done
+
+require_stage_path "$STAGE_DIR/web/views/index.html"
+require_stage_path "$STAGE_DIR/web/static/js/main.js"
+require_stage_path "$STAGE_DIR/web/static/js/pwa.js"
+require_stage_path "$STAGE_DIR/web/static/manifest.webmanifest"
+require_stage_path "$STAGE_DIR/web/static/service-worker.js"
+require_stage_path "$STAGE_DIR/web/static/offline.html"
+require_stage_path "$STAGE_DIR/web/static/icons/app-icon.svg"
+require_stage_path "$STAGE_DIR/config/soonlink.toml"
+require_stage_path "$STAGE_DIR/docker/entrypoint.sh"
 
 tar -czf "$TARBALL_PATH" -C "$DIST_DIR" "$STAGE_NAME"
 create_zip_archive "$ZIP_PATH" "$STAGE_NAME" "$DIST_DIR"

@@ -41,10 +41,6 @@ public class DeviceMaster {
         server.setDeviceTrustState(deviceId, state)
     }
 
-    public func remember(deviceId: String): Device {
-        server.rememberDiscoveredDevice(deviceId)
-    }
-
     public func startPinPairing(deviceId: String): DevicePinPairingSession {
         server.startPinPairing(deviceId)
     }
@@ -139,6 +135,40 @@ public class TaskMaster {
     public func cancel(id: String): Bool {
         server.cancelTask(id)
     }
+
+    public func listRequests(): ArrayList<TransferRequest> {
+        server.listTransferRequests()
+    }
+
+    public func getRequest(id: String): ?TransferRequest {
+        server.getTransferRequest(id)
+    }
+
+    public func sendRequest(
+        sourceDevice: String,
+        targetDevice: String,
+        filePath: String,
+        targetPath: String,
+        note: String
+    ): TransferRequest {
+        server.sendTransferRequest(sourceDevice, targetDevice, filePath, targetPath, note)
+    }
+
+    public func ingestRequest(request: TransferRequest): TransferRequest {
+        server.ingestTransferRequest(request)
+    }
+
+    public func acceptRequest(id: String, targetPath: String): TransferTask {
+        server.acceptTransferRequest(id, targetPath)
+    }
+
+    public func rejectRequest(id: String, reason: String): ?TransferRequest {
+        server.rejectTransferRequest(id, reason)
+    }
+
+    public func cancelRequest(id: String, reason: String): ?TransferRequest {
+        server.cancelTransferRequest(id, reason)
+    }
 }
 
 public class PeerMaster {
@@ -204,6 +234,10 @@ public class RelayMaster {
 
     public func createText(sourceDevice: String, fileName: String, content: String): RelayJob {
         server.createRelayTextRecord(sourceDevice, fileName, content)
+    }
+
+    public func createText(sourceDevice: String, fileName: String, content: String, targetPath: String): RelayJob {
+        server.createRelayTextRecord(sourceDevice, fileName, content, targetPath)
     }
 
     public func retry(jobId: String): ?RelayJob {

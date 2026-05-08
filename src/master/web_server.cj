@@ -284,6 +284,39 @@ public class WebServer {
         let s = server
         let m = masters
 
+        app.get("/manifest.webmanifest", { ctx: Ctx =>
+            try {
+                let _ = ctx.setHeader("Content-Type", "application/manifest+json; charset=utf-8")
+                let _ = ctx.setHeader("Cache-Control", "public, max-age=300")
+                ctx.send(stringToBytes(readFileAsString("./web/static/manifest.webmanifest")))
+            } catch (_: Exception) {
+                let _ = ctx.setHeader("Content-Type", "application/json; charset=utf-8")
+                ctx.status(404)
+                ctx.send(stringToBytes("{}"))
+            }
+        }, option: RouteOption()
+            .withSummary("Web App Manifest")
+            .withTag("页面")
+            .asHidden()
+        )
+
+        app.get("/service-worker.js", { ctx: Ctx =>
+            try {
+                let _ = ctx.setHeader("Content-Type", "application/javascript; charset=utf-8")
+                let _ = ctx.setHeader("Cache-Control", "no-cache")
+                let _ = ctx.setHeader("Service-Worker-Allowed", "/")
+                ctx.send(stringToBytes(readFileAsString("./web/static/service-worker.js")))
+            } catch (_: Exception) {
+                let _ = ctx.setHeader("Content-Type", "application/javascript; charset=utf-8")
+                ctx.status(404)
+                ctx.send(stringToBytes("self.addEventListener('install', () => self.skipWaiting())\n"))
+            }
+        }, option: RouteOption()
+            .withSummary("Web App Service Worker")
+            .withTag("页面")
+            .asHidden()
+        )
+
         // ── 首页 ──
         app.get("/", { ctx: Ctx =>
             try {
@@ -303,7 +336,7 @@ public class WebServer {
                 let html = renderTemplate("./web/views/login.html", [("Title", "SoonLink 登录入口")])
                 ctx.html(html)
             } catch (_: Exception) {
-                ctx.html("<h1>SoonLink 登录入口</h1><p>当前运行态仅提供能力占位，不启用远程提权。</p>")
+                ctx.html("<h1>SoonLink 登录入口</h1><p>Core 版本仅提供能力占位，不启用远程提权。</p>")
             }
         }, option: RouteOption()
             .withSummary("登录入口（能力预留）")
@@ -427,7 +460,7 @@ public class WebServer {
                     updated.securityMode = s.setSecurityMode(v)
                 }
             }
-            if (s.profile.supportsMdnsDiscovery) {
+            if (s.profile.supportsActiveDiscovery) {
                 if (let Some(v) <- parseJsonString(body, "enableMdns")) {
                     updated.enableMdns = v == "true"
                 }
@@ -614,6 +647,28 @@ public class WebServer {
             ctx.json(buildSessionContextPayload(s, access).toString())
         }, option: RouteOption()
             .withSummary("获取当前访问上下文")
+            .withTag("会话")
+        )
+
+        api.get("/session/handshake", { ctx: Ctx =>
+            let access = resolveWebAccessContext(
+                ctx.ip,
+                ctx.header("x-forwarded-for") ?? "",
+                s.config.localAuthTrustProxyHeaders
+            )
+            let primaryIp = s.refreshLocalDeviceAddress()
+            ctx.json(JsonObject()
+                .putBool("success", true)
+                .putInt("timestamp", currentTimestamp())
+                .put("nodeId", s.config.nodeId)
+                .put("displayName", resolveRuntimeDisplayName(s.profile))
+                .put("version", currentProductVersion())
+                .put("accessMode", access.accessMode)
+                .putObj("product", productProfileToJson(s.profile))
+                .putObj("discovery", buildAdminDiscoveryPayload(s, primaryIp))
+                .toString())
+        }, option: RouteOption()
+            .withSummary("执行页面握手探测")
             .withTag("会话")
         )
 
@@ -850,39 +905,6 @@ public class WebServer {
             .withParam(ParamSpec("id", Path, description: "设备ID", required: true))
         )
 
-        devices.post("/:id/remember", { ctx: Ctx =>
-            if (!requireLocalApiAdmin(ctx, s.config)) {
-                return
-            }
-
-            let deviceId = ctx.params("id").trimAscii()
-            if (deviceId.size == 0) {
-                ctx.status(400).json(JsonObject()
-                    .putBool("success", false)
-                    .put("error", "设备ID不能为空")
-                    .toString())
-                return
-            }
-
-            try {
-                let device = m.devices.remember(deviceId)
-                ctx.json(JsonObject()
-                    .putBool("success", true)
-                    .putObj("device", device.toJson())
-                    .put("message", "设备已记住")
-                    .toString())
-            } catch (e: Exception) {
-                ctx.status(400).json(JsonObject()
-                    .putBool("success", false)
-                    .put("error", e.message)
-                    .toString())
-            }
-        }, option: RouteOption()
-            .withSummary("记住已发现设备")
-            .withTag("设备")
-            .withParam(ParamSpec("id", Path, description: "设备ID", required: true))
-        )
-
         devices.post("/:id/pairing/pin", { ctx: Ctx =>
             if (!requireLocalApiAdmin(ctx, s.config)) {
                 return
@@ -1030,9 +1052,26 @@ public class WebServer {
                     return
                 }
 
-                let sourceDevice = ctx.formValue("sourceDevice") ?? "unknown"
-                let fileName = ctx.formValue("fileName") ?? ""
-                let content = ctx.formValue("content") ?? ""
+                let isJsonRequest = strContains((ctx.header("content-type") ?? "").toLower(), "application/json")
+                let body = if (isJsonRequest) { ctx.bodyString() } else { "" }
+                let sourceDevice = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "sourceDevice") ?? "" } else { "" },
+                    ctx.formValue("sourceDevice") ?? "",
+                    "unknown",
+                ])
+                let fileName = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "fileName") ?? "" } else { "" },
+                    ctx.formValue("fileName") ?? "",
+                ])
+                let content = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "content") ?? "" } else { "" },
+                    ctx.formValue("content") ?? "",
+                ])
+                let targetPath = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "targetPath") ?? "" } else { "" },
+                    ctx.formValue("targetPath") ?? "",
+                    "/tmpSL",
+                ])
                 if (content.size == 0) {
                     ctx.status(400).json(JsonObject()
                         .putBool("success", false)
@@ -1042,7 +1081,7 @@ public class WebServer {
                 }
 
                 try {
-                    let job = m.relay.createText(sourceDevice, fileName, content)
+                    let job = m.relay.createText(sourceDevice, fileName, content, targetPath)
                     ctx.status(200).json(JsonObject()
                         .putBool("success", true)
                         .putObj("job", job.toJson())
@@ -2008,6 +2047,196 @@ public class WebServer {
             .withParam(ParamSpec("id", Path, description: "任务ID", required: true))
         )
 
+        let requestGroup = api.group("/transfer-requests")
+
+        requestGroup.get("/", { ctx: Ctx =>
+            let requestList = m.tasks.listRequests()
+            let arr = JsonArray()
+            for (request in requestList) {
+                arr.addObj(request.toJson())
+            }
+            ctx.json(arr.toString())
+        }, option: RouteOption()
+            .withSummary("列出当前节点的传输请求")
+            .withTag("传输请求")
+        )
+
+        requestGroup.post("/send", { ctx: Ctx =>
+            let body = ctx.bodyString()
+            let sourceDevice = parseJsonString(body, "sourceDevice") ?? ""
+            let targetDevice = parseJsonString(body, "targetDevice") ?? ""
+            let filePath = parseJsonString(body, "filePath") ?? ""
+            let targetPath = parseJsonString(body, "targetPath") ?? "/"
+            let note = parseJsonString(body, "note") ?? ""
+
+            if (sourceDevice.size == 0) {
+                ctx.status(400).json(JsonObject()
+                    .putBool("success", false)
+                    .put("error", "源设备ID不能为空")
+                    .put("code", "MISSING_SOURCE_DEVICE")
+                    .toString())
+                return
+            }
+            if (targetDevice.size == 0) {
+                ctx.status(400).json(JsonObject()
+                    .putBool("success", false)
+                    .put("error", "目标设备ID不能为空")
+                    .put("code", "MISSING_TARGET_DEVICE")
+                    .toString())
+                return
+            }
+            if (filePath.size == 0) {
+                ctx.status(400).json(JsonObject()
+                    .putBool("success", false)
+                    .put("error", "文件路径不能为空")
+                    .put("code", "MISSING_FILE_PATH")
+                    .toString())
+                return
+            }
+
+            try {
+                let request = m.tasks.sendRequest(sourceDevice, targetDevice, filePath, targetPath, note)
+                ctx.json(JsonObject()
+                    .putBool("success", true)
+                    .putObj("request", request.toJson())
+                    .put("message", "传输请求已送达对端，等待确认")
+                    .toString())
+            } catch (e: Exception) {
+                ctx.status(400).json(JsonObject()
+                    .putBool("success", false)
+                    .put("error", e.message)
+                    .put("code", "TRANSFER_REQUEST_REJECTED")
+                    .toString())
+            }
+        }, option: RouteOption()
+            .withSummary("向另一节点发送传输请求")
+            .withTag("传输请求")
+        )
+
+        requestGroup.post("/ingest", { ctx: Ctx =>
+            let body = ctx.bodyString()
+            let request = TransferRequest()
+            request.id = parseJsonString(body, "id") ?? ""
+            request.requesterDeviceId = parseJsonString(body, "requesterDeviceId") ?? ""
+            request.requesterName = parseJsonString(body, "requesterName") ?? ""
+            request.requesterHost = parseJsonString(body, "requesterHost") ?? ""
+            request.requesterPort = parseJsonIntField(body, "requesterPort")
+            request.sourceDevice = parseJsonString(body, "sourceDevice") ?? ""
+            request.sourceName = parseJsonString(body, "sourceName") ?? ""
+            request.filePath = parseJsonString(body, "filePath") ?? ""
+            request.targetPath = parseJsonString(body, "targetPath") ?? "/"
+            request.sourceIsDir = parseJsonBoolField(body, "sourceIsDir")
+            request.totalEntries = parseJsonIntField(body, "totalEntries")
+            request.totalBytes = parseJsonIntField(body, "totalBytes")
+            request.note = parseJsonString(body, "note") ?? ""
+            request.createdAt = parseJsonIntField(body, "createdAt")
+            request.metadata.name = parseJsonString(body, "fileName") ?? ""
+            request.metadata.mimeType = parseJsonString(body, "mimeType") ?? ""
+            request.metadata.path = request.filePath
+            request.metadata.size = parseJsonIntField(body, "sourceSize")
+            request.metadata.modified = parseJsonIntField(body, "sourceModified")
+            request.metadata.isDir = request.sourceIsDir
+
+            if (request.sourceDevice.size == 0 || request.filePath.size == 0) {
+                ctx.status(400).json(JsonObject()
+                    .putBool("success", false)
+                    .put("error", "请求缺少 sourceDevice 或 filePath")
+                    .put("code", "MISSING_REQUEST_FIELDS")
+                    .toString())
+                return
+            }
+
+            try {
+                let stored = m.tasks.ingestRequest(request)
+                ctx.json(JsonObject()
+                    .putBool("success", true)
+                    .putObj("request", stored.toJson())
+                    .toString())
+            } catch (e: Exception) {
+                ctx.status(400).json(JsonObject()
+                    .putBool("success", false)
+                    .put("error", e.message)
+                    .put("code", "TRANSFER_REQUEST_INGEST_REJECTED")
+                    .toString())
+            }
+        }, option: RouteOption()
+            .withSummary("接收入站传输请求")
+            .withTag("传输请求")
+        )
+
+        requestGroup.post("/:id/accept", { ctx: Ctx =>
+            let body = ctx.bodyString()
+            let requestId = ctx.params("id")
+            let targetPath = parseJsonString(body, "targetPath") ?? ""
+
+            try {
+                let task = m.tasks.acceptRequest(requestId, targetPath)
+                ctx.json(JsonObject()
+                    .putBool("success", true)
+                    .putObj("task", task.toJson())
+                    .put("message", "已接受传输请求，并创建任务")
+                    .toString())
+            } catch (e: Exception) {
+                ctx.status(400).json(JsonObject()
+                    .putBool("success", false)
+                    .put("error", e.message)
+                    .put("code", "TRANSFER_REQUEST_ACCEPT_REJECTED")
+                    .toString())
+            }
+        }, option: RouteOption()
+            .withSummary("接受传输请求")
+            .withTag("传输请求")
+            .withParam(ParamSpec("id", Path, description: "请求ID", required: true))
+        )
+
+        requestGroup.post("/:id/reject", { ctx: Ctx =>
+            let body = ctx.bodyString()
+            let requestId = ctx.params("id")
+            let reason = parseJsonString(body, "reason") ?? ""
+            match (m.tasks.rejectRequest(requestId, reason)) {
+                case Some(request) =>
+                    ctx.json(JsonObject()
+                        .putBool("success", true)
+                        .putObj("request", request.toJson())
+                        .put("message", "已拒绝传输请求")
+                        .toString())
+                case None =>
+                    ctx.status(404).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", "传输请求不存在")
+                        .put("code", "TRANSFER_REQUEST_NOT_FOUND")
+                        .toString())
+            }
+        }, option: RouteOption()
+            .withSummary("拒绝传输请求")
+            .withTag("传输请求")
+            .withParam(ParamSpec("id", Path, description: "请求ID", required: true))
+        )
+
+        requestGroup.post("/:id/cancel", { ctx: Ctx =>
+            let body = ctx.bodyString()
+            let requestId = ctx.params("id")
+            let reason = parseJsonString(body, "reason") ?? ""
+            match (m.tasks.cancelRequest(requestId, reason)) {
+                case Some(request) =>
+                    ctx.json(JsonObject()
+                        .putBool("success", true)
+                        .putObj("request", request.toJson())
+                        .put("message", "已取消传输请求")
+                        .toString())
+                case None =>
+                    ctx.status(404).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", "传输请求不存在")
+                        .put("code", "TRANSFER_REQUEST_NOT_FOUND")
+                        .toString())
+            }
+        }, option: RouteOption()
+            .withSummary("取消传输请求")
+            .withTag("传输请求")
+            .withParam(ParamSpec("id", Path, description: "请求ID", required: true))
+        )
+
         // ── P2P / Security API ──
         if (s.profile.supportsPeerTransfer) {
             let peer = api.group("/peer")
@@ -2339,7 +2568,7 @@ func buildSessionContextPayload(server: CoreServer, access: WebAccessContext): J
         .putBool("isLocalAdmin", access.isLocalAdmin)
         .put("accessMode", access.accessMode)
         .put("themeVariant", access.themeVariant)
-        .putObj("product", runtimeProfileToJson(server.profile))
+        .putObj("product", productProfileToJson(server.profile))
         .putObj("auth", JsonObject()
             .put("policy", "local_trust")
             .put("provider", auth.provider)
@@ -2352,8 +2581,9 @@ func buildSessionContextPayload(server: CoreServer, access: WebAccessContext): J
             .putBool("trustedProxyHeaders", server.config.localAuthTrustProxyHeaders))
 }
 
-func runtimeProfileToJson(profile: RuntimeProfile): JsonObject {
+func productProfileToJson(profile: RuntimeProfile): JsonObject {
     JsonObject()
+        .put("edition", "runtime")
         .put("productName", profile.productName)
         .put("displayName", resolveRuntimeDisplayName(profile))
         .put("version", currentProductVersion())
@@ -2373,6 +2603,7 @@ func appConfigToJson(config: AppConfig, profile: RuntimeProfile): JsonObject {
     out.put("logDir", config.logDir)
     out.put("localRootDir", config.localRootDir)
     out.putBool("localAuthTrustProxyHeaders", config.localAuthTrustProxyHeaders)
+    out.put("edition", "runtime")
     out.put("productName", profile.productName)
     out.put("displayName", resolveRuntimeDisplayName(profile))
     out.put("version", currentProductVersion())
@@ -2430,6 +2661,7 @@ func buildAdminSystemPayload(server: CoreServer, masters: MasterBundle): JsonObj
 
     JsonObject()
         .putBool("success", true)
+        .put("edition", "runtime")
         .put("productName", server.profile.productName)
         .put("displayName", resolveRuntimeDisplayName(server.profile))
         .put("version", currentProductVersion())
@@ -2465,7 +2697,6 @@ func buildAdminDiscoveryPayload(server: CoreServer, primaryIp: String): JsonObje
         .put("mode", mode)
         .put("nodeId", server.config.nodeId)
         .putBool("supportsActiveDiscovery", server.profile.supportsActiveDiscovery)
-        .putBool("supportsMdnsDiscovery", server.profile.supportsMdnsDiscovery)
         .putBool("udpBroadcastEnabled", server.config.discoveryBroadcastEnabled)
         .putBool("mdnsEnabled", server.config.enableMdns)
         .putInt("udpPort", server.config.discoveryUdpPort)
@@ -2474,7 +2705,6 @@ func buildAdminDiscoveryPayload(server: CoreServer, primaryIp: String): JsonObje
         .put("effectiveAdvertiseIp", effectiveAdvertiseIp)
         .put("primaryIp", primaryIp)
         .put("localEndpoint", endpointText)
-        .putBool("rememberRequiresConfirmation", true)
         .put("registerDeviceCommand", buildAdminRegisterDeviceCommand(server.config.nodeId, endpointHost, endpointPort))
         .putBool("discoverable", server.profile.supportsActiveDiscovery &&
             (server.config.discoveryBroadcastEnabled || server.config.enableMdns))
@@ -2724,16 +2954,7 @@ func jsonObjectFloat(obj: JsonObject, field: String): Float64 {
 }
 
 func formatBytesText(bytes: Int64): String {
-    if (bytes < 1024) {
-        return "${bytes} B"
-    }
-    if (bytes < 1024 * 1024) {
-        return "${bytes / 1024} KB"
-    }
-    if (bytes < 1024 * 1024 * 1024) {
-        return "${bytes / (1024 * 1024)} MB"
-    }
-    "${bytes / (1024 * 1024 * 1024)} GB"
+    formatBytes(bytes)
 }
 
 func filterVisibleEntries(entries: ArrayList<FileEntry>, currentPath: String): ArrayList<FileEntry> {
@@ -2850,8 +3071,6 @@ func buildManagedDeviceRecordFromJson(body: String, fallbackId: String, defaultP
     record.name = parseJsonString(body, "name") ?? ""
     record.deviceType = parseJsonString(body, "deviceType") ?? (parseJsonString(body, "type") ?? "")
     record.connectorType = parseJsonString(body, "connectorType") ?? (parseJsonString(body, "connector") ?? "")
-    record.endpointScheme = parseJsonString(body, "endpointScheme") ?? (parseJsonString(body, "scheme") ?? "")
-    record.endpointBasePath = parseJsonString(body, "endpointBasePath") ?? (parseJsonString(body, "basePath") ?? "")
     record.ip = parseJsonString(body, "ip") ?? (parseJsonString(body, "host") ?? "")
 
     let portRaw = parseJsonString(body, "port") ?? ""
@@ -2917,17 +3136,13 @@ func firstNonEmpty(values: Array<String>): String {
 
 func buildConnectorBindingJson(server: CoreServer, device: Device): JsonObject {
     let resolvedType = defaultConnectorTypeForDevice(device)
-    let endpoint = buildDeviceEndpoint(device)
     let out = JsonObject()
         .put("id", device.id)
         .put("name", device.name)
         .put("deviceType", device.deviceType)
         .put("connectorType", resolvedType)
-        .put("endpointScheme", endpoint.scheme)
-        .put("endpointBasePath", endpoint.basePath)
         .put("ip", device.ip)
         .putInt("port", device.port)
-        .putObj("endpoint", endpoint.toJson())
         .putBool("online", device.online)
     match (server.describeConnector(resolvedType)) {
         case Some(descriptor) =>
@@ -3098,6 +3313,7 @@ func buildFilePreviewPayload(
         .put("name", if (info.name.size > 0) { info.name } else { basenameFromPreviewPath(path) })
         .put("path", if (info.path.size > 0) { info.path } else { path })
         .putInt("size", info.size)
+        .put("sizeText", formatBytes(info.size))
         .putInt("modified", info.modified)
         .putBool("isDir", info.isDir)
         .put("mimeType", mimeType)
@@ -3169,6 +3385,7 @@ func buildRelayPreviewPayload(job: RelayJob, cachePath: String): JsonObject {
         .put("recordKind", job.recordKind)
         .put("name", job.fileName)
         .putInt("size", info.size)
+        .put("sizeText", formatBytes(info.size))
         .put("mimeType", mimeType)
         .put("kind", kind)
         .put("downloadUrl", "/api/relay/jobs/${job.id}/cache")
@@ -3602,4 +3819,17 @@ func splitJsonObjectsLoose(raw: String): ArrayList<String> {
         }
     }
     result
+}
+
+func parseJsonIntField(json: String, field: String): Int64 {
+    let raw = parseJsonString(json, field) ?? "0"
+    try {
+        Int64.parse(raw.trimAscii())
+    } catch (_: Exception) {
+        0
+    }
+}
+
+func parseJsonBoolField(json: String, field: String): Bool {
+    (parseJsonString(json, field) ?? "false").trimAscii().toLower() == "true"
 }

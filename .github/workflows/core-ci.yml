@@ -155,6 +155,16 @@ jobs:
           set -euo pipefail
           chmod +x ./scripts/prepare_container_bundle.sh
           ./scripts/prepare_container_bundle.sh --bin ./target/release/bin/main
+          test -f ./dist/soonlnk
+          test -f ./dist/config/soonlink.toml
+          test -f ./dist/web/views/index.html
+          test -f ./dist/web/static/js/main.js
+          test -f ./dist/web/static/js/pwa.js
+          test -f ./dist/web/static/manifest.webmanifest
+          test -f ./dist/web/static/service-worker.js
+          test -f ./dist/web/static/offline.html
+          test -f ./dist/web/static/icons/app-icon.svg
+          test -f ./dist/docker/entrypoint.sh
 
       - name: Build runtime image
         if: ${{ steps.sdk.outputs.enabled == 'true' }}

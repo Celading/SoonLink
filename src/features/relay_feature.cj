@@ -71,6 +71,10 @@ public class RelayFeature {
     }
 
     public func createTextRecord(sourceDevice: String, fileName: String, content: String): RelayJob {
+        createTextRecord(sourceDevice, fileName, content, "/tmpSL")
+    }
+
+    public func createTextRecord(sourceDevice: String, fileName: String, content: String, targetPath: String): RelayJob {
         let payload = stringToBytes(content)
         if (payload.size == 0) {
             throw Exception("文本内容不能为空")
@@ -78,7 +82,7 @@ public class RelayFeature {
         if (payload.size > relayTextRecordMaxBytes) {
             throw Exception("临时文本缓存最多支持 256 KiB，请改走文件中转")
         }
-        createRelayRecord("text", sourceDevice, "", "/", normalizeRelayTextRecordName(fileName), payload, false)
+        createRelayRecord("text", sourceDevice, "", normalizeRelayTextTargetPath(targetPath), normalizeRelayTextRecordName(fileName), payload, false)
     }
 
     func createRelayRecord(
@@ -95,7 +99,13 @@ public class RelayFeature {
         job.recordKind = recordKind
         job.sourceDevice = if (sourceDevice.size > 0) { sourceDevice } else { "unknown" }
         job.targetDevice = if (attemptDispatch) { targetDevice } else { "" }
-        job.targetPath = if (attemptDispatch) { normalizeRelayPath(targetPath) } else { "/" }
+        job.targetPath = if (recordKind == "text") {
+            normalizeRelayTextTargetPath(targetPath)
+        } else if (attemptDispatch) {
+            normalizeRelayPath(targetPath)
+        } else {
+            "/"
+        }
         job.fileName = if (recordKind == "text") { normalizeRelayTextRecordName(fileName) } else { normalizeFileName(fileName) }
         job.createdAt = currentTimestamp()
         job.updatedAt = job.createdAt
@@ -682,12 +692,20 @@ func normalizeRelayPath(path: String): String {
 
 func normalizeRelayTextRecordName(raw: String): String {
     let trimmed = raw.trimAscii()
-    var base = if (trimmed.size > 0) { normalizeFileName(trimmed) } else { "text-${currentTimestamp()}.txt" }
+    var base = if (trimmed.size > 0) { normalizeFileName(trimmed) } else { "tmpTXT-${currentTimestamp() * 1000}.txt" }
     let lower = base.toLower()
     if (!strEndsWith(lower, ".txt")) {
         base += ".txt"
     }
     base
+}
+
+func normalizeRelayTextTargetPath(path: String): String {
+    let normalized = normalizeRelayPath(path)
+    if (normalized == "/") {
+        return "/tmpSL"
+    }
+    normalized
 }
 
 func normalizeFileName(name: String): String {

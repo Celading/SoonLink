@@ -109,11 +109,11 @@ public func strSubstring(s: String, start: Int64, end: Int64): String {
 }
 
 public func stringToBytes(s: String): Array<UInt8> {
-    let runes = s.toRuneArray()
-    let bytes = Array<UInt8>(runes.size, repeat: 0)
-    for (i in 0..runes.size) {
-        let code = UInt32(runes[i])
-        bytes[i] = if (code <= UInt32(255)) { UInt8(code) } else { UInt8(63) }
+    let raw = s.toArray()
+    let bytes = Array<UInt8>(raw.size, repeat: 0)
+    for (i in 0..raw.size) {
+        let value = Int64(raw[i])
+        bytes[i] = if (value < 0) { UInt8(value + 256) } else { UInt8(value) }
     }
     bytes
 }

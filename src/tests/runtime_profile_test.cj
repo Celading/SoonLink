@@ -51,7 +51,7 @@ public class RuntimeProfile_test {
         @Assert(resolveRuntimeDisplayName(featureRichTestRuntime()), "SoonLink")
         @Assert(resolveRuntimeDisplayName(defaultRuntimeProfile()), "SoonLink")
         @Assert(resolveRuntimeDisplayName(RuntimeProfile()), "SoonLink")
-        @Assert(resolveProductVersion(""), "0.5.29")
+        @Assert(resolveProductVersion(""), "0.0.5")
         @Assert(resolveTechnicalPackageName(""), "soonlnk")
     }
 }

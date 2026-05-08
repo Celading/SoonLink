@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">SoonLink App Icon</title>
+  <desc id="desc">Rounded blue square with linked device nodes.</desc>
+  <defs>
+    <linearGradient id="bg" x1="64" y1="52" x2="448" y2="460" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="150" y1="120" x2="376" y2="362" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#eff6ff" stop-opacity="0.98"/>
+      <stop offset="1" stop-color="#bfdbfe" stop-opacity="0.9"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="448" height="448" rx="108" fill="url(#bg)"/>
+  <rect x="68" y="68" width="376" height="376" rx="92" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="8"/>
+  <path d="M154 176h86m28 0h90M176 176v160m160-160v160M176 336h160" stroke="url(#glow)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="176" cy="176" r="36" fill="#f8fafc"/>
+  <circle cx="352" cy="176" r="36" fill="#f8fafc"/>
+  <circle cx="176" cy="336" r="36" fill="#f8fafc"/>
+  <circle cx="352" cy="336" r="36" fill="#f8fafc"/>
+  <circle cx="176" cy="176" r="16" fill="#1d4ed8"/>
+  <circle cx="352" cy="176" r="16" fill="#1d4ed8"/>
+  <circle cx="176" cy="336" r="16" fill="#1d4ed8"/>
+  <circle cx="352" cy="336" r="16" fill="#1d4ed8"/>
+</svg>
