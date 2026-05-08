@@ -145,6 +145,7 @@ Both bundle formats include:
 - `scripts/prepare_release_workspace.sh`
   Prepares a clean SoonLink + Ignite + lisi + jinguiSSL workspace in CI and rewrites dependencies into local `path` references.
   - It also drops files such as `cangjie-repo.toml`, `module-resolve.json`, and `module-lock.json` so machine-local path hints do not leak into CI contexts.
+  - It now resolves package roots from the actual `cjpm.toml` layout, so repositories such as `lisi` still project into a stable local `path` dependency shape even when the repo root and package root differ.
 
 ## Notes
 

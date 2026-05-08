@@ -61,6 +61,7 @@ RUN case "$TARGETARCH" in \
     esac \
     && sed -i 's#^  ignite = { .*#  ignite = { path = "../Ignite0500" }#' /workspace/SoonLink-Core/cjpm.toml \
     && sed -i 's#^  lisi = { .*#  lisi = { path = "../lisi" }#' /workspace/SoonLink-Core/cjpm.toml \
+    && sed -i 's#^  lisi = { .*#  lisi = { path = "../lisi" }#' /workspace/Ignite0500/cjpm.toml \
     && sed -i 's#^  jinguissl = { .*#  jinguissl = { path = "../jinguiSSL" }#' /workspace/Ignite0500/cjpm.toml \
     && sed -i "s#linux_x86_64_llvm/static/stdx#linux_x86_64_cjnative/static/stdx#g" /workspace/SoonLink-Core/cjpm.toml /workspace/Ignite0500/cjpm.toml /workspace/lisi/cjpm.toml \
     && sed -i "s#linux_aarch64_llvm/static/stdx#linux_aarch64_cjnative/static/stdx#g" /workspace/SoonLink-Core/cjpm.toml /workspace/Ignite0500/cjpm.toml /workspace/lisi/cjpm.toml \
