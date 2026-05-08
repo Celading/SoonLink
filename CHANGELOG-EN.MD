@@ -20,6 +20,14 @@ Notes:
 
 ---
 
+## [0.5.56] - 2026-05-08
+
+- `=Chore` Synced the public package version, runtime fallback, visible version badges, and release examples to `0.5.56`
+- `=Docs` Brought troubleshooting, GitHub Actions version examples, and current public release notes back in line with `0.5.56`
+- `=Chore` Restored the public release lane to a continuous `0.5.x` cadence
+
+---
+
 ## [0.0.5] - 2026-05-08
 
 - `+Feature` StaticWeb is now installable as an app shell with a root-scope `service-worker`, `manifest.webmanifest`, offline fallback page, and a shared install launcher
