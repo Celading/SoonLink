@@ -40,4 +40,4 @@ Usually trust the runtime API and CLI first, then confirm:
 
 - whether the Web UI has fetched the latest `/api/session/context`
 - whether an old browser cache is still in play
-- whether the current node is actually running version `0.0.5`
+- whether the current node is actually running version `0.5.56`

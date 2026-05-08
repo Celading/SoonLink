@@ -1,6 +1,6 @@
 [package]
   cjc-version = "1.0.0"
-  version = "0.0.5"
+  version = "0.5.56"
   name = "soonlnk"
   output-type = "executable"
   src-dir = "src"
