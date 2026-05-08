@@ -18,6 +18,9 @@ SoonLink / 溯联的主要变更记录。
 
 ## [Unreleased]
 
+- `=工程` GitHub / GitCode 的 Linux 构建链统一切到共享依赖预装脚本，并补齐 `cmake`、`ninja`、`gcc/g++`、`pkg-config` 与 OpenSSL 开发头，避免 `stdx` 源码构建在 CMake 配置阶段缺原生工具链
+- `=工程` CI / Release 默认依赖源切到公开可拉取的 `Ignite / lisi / jinguiSSL` 线上仓地址，降低远端工作副本准备阶段在依赖克隆上的漂移
+
 ---
 
 ## [0.5.56] - 2026-05-08

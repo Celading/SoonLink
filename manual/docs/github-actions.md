@@ -83,11 +83,11 @@ SoonLink 现在同时维护 GitHub 与 GitCode 两套自动化入口：
 - `HOMEBREW_TAP_BRANCH`
   可选，默认 `main`。
 - `IGNITE_GIT_URL`
-  可选，默认 `https://gitcode.com/cinyu/ignite-cangjie.git`。
+  可选，默认 `https://atomgit.com/cinyu/ignite-cangjie.git`。
 - `LISI_GIT_URL`
-  可选，默认 `https://gitcode.com/cinyu/lisi`。
+  可选，默认 `https://atomgit.com/cinyu/lisi.git`。
 - `JINGUISSL_GIT_URL`
-  可选，默认 `https://atomgit.com/cinyu/jinguiSSL`。
+  可选，默认 `https://atomgit.com/cinyu/jinguiSSL.git`。
 
 ## 凭据
 
@@ -138,6 +138,7 @@ GitCode workflow 本身不会直接读取 GitHub 风格的 repository variables 
 - `scripts/install_ci_prerequisites.sh`
   给 GitHub / GitCode 共用的基础 runner 依赖安装脚本。
   - 已支持 `apt-get`、`dnf`、`yum` 三类 Linux 包管理器，主要用于 Euler runner 与 Ubuntu runner 的最小公共依赖准备。
+  - 现在会显式补齐 `cmake`、`ninja`、`gcc/g++`、`pkg-config` 与 OpenSSL 开发头，避免 `stdx` 源码构建在 CMake 配置阶段报“找不到 Ninja、编译器或 OpenSSL”。
 - `scripts/build_release_target.sh`
   统一执行“按目标构建 + 打包”。
 - `scripts/build_release_bundle.sh`
