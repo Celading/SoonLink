@@ -1,0 +1,26 @@
+name: Version Package Preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Optional package version override, defaults to cjpm.toml version
+        required: false
+        type: string
+  push:
+    branches:
+      - main
+      - core
+    paths:
+      - cjpm.toml
+
+permissions:
+  contents: read
+
+jobs:
+  package-preview:
+    uses: ./.github/workflows/release-artifacts.yml
+    with:
+      release_tag: ${{ github.event.inputs.release_tag || '' }}
+      publish_release: false
+    secrets: inherit
