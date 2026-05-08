@@ -18,6 +18,9 @@ Notes:
 
 ## [Unreleased]
 
+- `=Chore` Unified the GitHub / GitCode Linux build lane around the shared prerequisite bootstrap and explicitly installs `cmake`, `ninja`, `gcc/g++`, `pkg-config`, and OpenSSL development headers so `stdx` source builds do not fail during CMake configuration
+- `=Chore` Switched the default CI / release dependency sources to the public `Ignite / lisi / jinguiSSL` remote repositories so remote workspace projection no longer drifts on dependency clone setup
+
 ---
 
 ## [0.5.56] - 2026-05-08

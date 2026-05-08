@@ -41,6 +41,21 @@ jobs:
           chmod +x ./scripts/install_ci_prerequisites.sh
           ./scripts/install_ci_prerequisites.sh
 
+      - name: Show native build toolchain
+        run: |
+          set -eu
+          if command -v ninja >/dev/null 2>&1; then
+            NINJA_BIN="$(command -v ninja)"
+          else
+            NINJA_BIN="$(command -v ninja-build)"
+          fi
+          echo "cmake=$(command -v cmake)"
+          echo "gcc=$(command -v gcc)"
+          echo "g++=$(command -v g++)"
+          echo "ninja=${NINJA_BIN}"
+          echo "pkg-config=$(command -v pkg-config)"
+          pkg-config --modversion openssl
+
       - name: Configure dependency credentials
         run: |
           if [ -n "${GITCODE_USERNAME:-}" ] && [ -n "${GITCODE_TOKEN:-}" ]; then
@@ -86,9 +101,9 @@ jobs:
           rm -rf "${DEPS_ROOT}" "${WORKSPACE_ROOT}" "${RELEASE_ROOT}"
           mkdir -p "${DEPS_ROOT}" "${RELEASE_ROOT}"
 
-          git clone --depth 1 "${IGNITE_GIT_URL:-https://gitcode.com/cinyu/ignite-cangjie.git}" "${DEPS_ROOT}/Ignite0500"
-          git clone --depth 1 "${LISI_GIT_URL:-https://gitcode.com/cinyu/lisi}" "${DEPS_ROOT}/lisi"
-          git clone --depth 1 "${JINGUISSL_GIT_URL:-https://atomgit.com/cinyu/jinguiSSL}" "${DEPS_ROOT}/jinguiSSL"
+          git clone --depth 1 "${IGNITE_GIT_URL:-https://atomgit.com/cinyu/ignite-cangjie.git}" "${DEPS_ROOT}/Ignite0500"
+          git clone --depth 1 "${LISI_GIT_URL:-https://atomgit.com/cinyu/lisi.git}" "${DEPS_ROOT}/lisi"
+          git clone --depth 1 "${JINGUISSL_GIT_URL:-https://atomgit.com/cinyu/jinguiSSL.git}" "${DEPS_ROOT}/jinguiSSL"
 
           chmod +x ./scripts/install_cangjie_ci.sh ./scripts/prepare_release_workspace.sh ./scripts/build_release_target.sh ./scripts/build_release_bundle.sh
           ./scripts/install_cangjie_ci.sh \

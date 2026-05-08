@@ -82,11 +82,11 @@ That split keeps the repository validation path lightweight while leaving the fu
 - `HOMEBREW_TAP_BRANCH`
   Optional. Defaults to `main`.
 - `IGNITE_GIT_URL`
-  Optional. Defaults to `https://gitcode.com/cinyu/ignite-cangjie.git`.
+  Optional. Defaults to `https://atomgit.com/cinyu/ignite-cangjie.git`.
 - `LISI_GIT_URL`
-  Optional. Defaults to `https://gitcode.com/cinyu/lisi`.
+  Optional. Defaults to `https://atomgit.com/cinyu/lisi.git`.
 - `JINGUISSL_GIT_URL`
-  Optional. Defaults to `https://atomgit.com/cinyu/jinguiSSL`.
+  Optional. Defaults to `https://atomgit.com/cinyu/jinguiSSL.git`.
 
 ## Credentials
 
@@ -137,6 +137,7 @@ Both bundle formats include:
 - `scripts/install_ci_prerequisites.sh`
   Shared runner bootstrap script for GitHub and GitCode Linux jobs.
   - It currently supports `apt-get`, `dnf`, and `yum`, which keeps Ubuntu and Euler runners on the same minimal dependency contract.
+  - It now also installs `cmake`, `ninja`, `gcc/g++`, `pkg-config`, and OpenSSL development headers so `stdx` source builds do not fail during CMake configuration with missing Ninja, compiler, or OpenSSL checks.
 - `scripts/build_release_target.sh`
   Runs the target build and packaging flow end-to-end.
 - `scripts/build_release_bundle.sh`

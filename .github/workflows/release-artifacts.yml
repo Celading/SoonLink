@@ -35,9 +35,9 @@ env:
   CANGJIE_STDX_REPO: ${{ vars.CANGJIE_STDX_REPO != '' && vars.CANGJIE_STDX_REPO || 'https://gitcode.com/Cangjie/cangjie_stdx' }}
   CANGJIE_STDX_RELEASE_VERSION: ${{ vars.CANGJIE_STDX_RELEASE_VERSION }}
   CANGJIE_NIGHTLY_TAGS_API: ${{ vars.CANGJIE_NIGHTLY_TAGS_API != '' && vars.CANGJIE_NIGHTLY_TAGS_API || 'https://api.gitcode.com/api/v5/repos/Cangjie/nightly_build/tags?per_page=100' }}
-  IGNITE_GIT_URL: https://gitcode.com/cinyu/ignite-cangjie.git
-  LISI_GIT_URL: https://gitcode.com/cinyu/lisi
-  JINGUISSL_GIT_URL: https://atomgit.com/cinyu/jinguiSSL
+  IGNITE_GIT_URL: https://atomgit.com/cinyu/ignite-cangjie.git
+  LISI_GIT_URL: https://atomgit.com/cinyu/lisi.git
+  JINGUISSL_GIT_URL: https://atomgit.com/cinyu/jinguiSSL.git
 
 jobs:
   metadata:
@@ -276,8 +276,8 @@ jobs:
         if: ${{ steps.availability.outputs.enabled == 'true' && runner.os == 'Linux' }}
         shell: bash
         run: |
-          sudo apt-get update -o Acquire::Retries=5
-          sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl file git tar unzip zip
+          chmod +x ./scripts/install_ci_prerequisites.sh
+          ./scripts/install_ci_prerequisites.sh
 
       - name: Install macOS prerequisites
         if: ${{ steps.availability.outputs.enabled == 'true' && runner.os == 'macOS' }}
