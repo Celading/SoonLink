@@ -23,8 +23,53 @@ sedi() {
   fi
 }
 
+package_name_from_manifest() {
+  manifest_path="$1"
+  sed -n 's/^  name = "\(.*\)"/\1/p' "$manifest_path" | head -n 1
+}
+
+resolve_package_dir() {
+  repo_dir="$1"
+  expected_package="$2"
+
+  if [ -f "$repo_dir/cjpm.toml" ] && [ "$(package_name_from_manifest "$repo_dir/cjpm.toml")" = "$expected_package" ]; then
+    printf '%s\n' "$repo_dir"
+    return 0
+  fi
+
+  found_dir=""
+  tmp_list="$(mktemp "${TMPDIR:-/tmp}/soonlink-package-dir.XXXXXX")"
+  find "$repo_dir" -maxdepth 3 -type f -name 'cjpm.toml' | sort | while IFS= read -r manifest_path; do
+    package_name="$(package_name_from_manifest "$manifest_path")"
+    [ "$package_name" = "$expected_package" ] || continue
+    printf '%s\n' "$(dirname "$manifest_path")"
+  done > "$tmp_list"
+
+  while IFS= read -r candidate_dir; do
+    [ -n "$candidate_dir" ] || continue
+    if [ -n "$found_dir" ] && [ "$found_dir" != "$candidate_dir" ]; then
+      rm -f "$tmp_list"
+      echo "multiple package roots found for $expected_package under $repo_dir" >&2
+      exit 1
+    fi
+    found_dir="$candidate_dir"
+  done < "$tmp_list"
+
+  rm -f "$tmp_list"
+
+  if [ -z "$found_dir" ]; then
+    echo "package root for $expected_package not found under $repo_dir" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$found_dir"
+}
+
+LISI_DIR="$(resolve_package_dir "$WORKSPACE_DIR/lisi" "lisi")"
+IGNITE_DIR="$(resolve_package_dir "$WORKSPACE_DIR/Ignite0500" "ignite")"
+
 write_lisi_helper() {
-  file="$WORKSPACE_DIR/lisi/src/net/TlsTool/private_key_compat.cj"
+  file="$LISI_DIR/src/net/TlsTool/private_key_compat.cj"
   mkdir -p "$(dirname "$file")"
   cat > "$file" <<'EOF'
 package lisi.net.TlsTool
@@ -48,7 +93,7 @@ EOF
 }
 
 write_ignite_helper() {
-  file="$WORKSPACE_DIR/Ignite0500/src/api2/tls_private_key_compat.cj"
+  file="$IGNITE_DIR/src/api2/tls_private_key_compat.cj"
   mkdir -p "$(dirname "$file")"
   cat > "$file" <<'EOF'
 package ignite.api2
@@ -72,7 +117,7 @@ EOF
 }
 
 patch_lisi_tls_tool() {
-  file="$WORKSPACE_DIR/lisi/src/net/TlsTool/index.cj"
+  file="$LISI_DIR/src/net/TlsTool/index.cj"
   [ -f "$file" ] || return 0
 
   sedi '/import stdx.crypto.keys.GeneralPrivateKey/d' "$file"
@@ -82,7 +127,7 @@ patch_lisi_tls_tool() {
 }
 
 patch_ignite_tls_api() {
-  file="$WORKSPACE_DIR/Ignite0500/src/api2/tls.cj"
+  file="$IGNITE_DIR/src/api2/tls.cj"
   [ -f "$file" ] || return 0
 
   sedi '/import stdx.crypto.keys.GeneralPrivateKey/d' "$file"
