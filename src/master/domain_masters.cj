@@ -128,8 +128,22 @@ public class TaskMaster {
         server.getTask(id)
     }
 
-    public func createTask(sourceDevice: String, targetDevice: String, filePath: String, targetPath: String): TransferTask {
-        server.createTransferTask(sourceDevice, targetDevice, filePath, targetPath)
+    public func createTask(
+        sourceDevice: String,
+        targetDevice: String,
+        filePath: String,
+        targetPath: String,
+        protocolPreferences!: ArrayList<String> = ArrayList<String>(),
+        threads!: Int64 = 0
+    ): TransferTask {
+        server.createTransferTask(
+            sourceDevice,
+            targetDevice,
+            filePath,
+            targetPath,
+            protocolPreferences: protocolPreferences,
+            threads: threads
+        )
     }
 
     public func cancel(id: String): Bool {
@@ -149,9 +163,17 @@ public class TaskMaster {
         targetDevice: String,
         filePath: String,
         targetPath: String,
-        note: String
+        note: String,
+        protocolPreferences!: ArrayList<String> = ArrayList<String>()
     ): TransferRequest {
-        server.sendTransferRequest(sourceDevice, targetDevice, filePath, targetPath, note)
+        server.sendTransferRequest(
+            sourceDevice,
+            targetDevice,
+            filePath,
+            targetPath,
+            note,
+            protocolPreferences: protocolPreferences
+        )
     }
 
     public func ingestRequest(request: TransferRequest): TransferRequest {
