@@ -70,6 +70,8 @@ public class TwoNodeSmoke_test {
             let finalTaskA = waitForRemoteTask(serverA, taskA.id)
             @Assert(taskStatusToString(finalTaskA.status), "completed")
             @Assert(finalTaskA.sourceIsDir, true)
+            @Assert(finalTaskA.fileCategory, "directory")
+            @Assert(finalTaskA.protocolCandidates[0], "rsync")
 
             @Assert(fileMgr.readText(rootB + "/receiver/share/docs/readme.txt"), "hello-from-node-a")
             @Assert(FileInfo(rootB + "/receiver/share/empty-only").isDirectory(), true)
@@ -77,6 +79,8 @@ public class TwoNodeSmoke_test {
             let taskB = serverB.createTransferTask("node-a", "local", "/share/docs/readme.txt", "/pulled/readme.txt")
             let finalTaskB = waitForRemoteTask(serverB, taskB.id)
             @Assert(taskStatusToString(finalTaskB.status), "completed")
+            @Assert(finalTaskB.fileCategory, "text")
+            @Assert(finalTaskB.protocolCandidates[0], "http")
             @Assert(fileMgr.readText(rootB + "/pulled/readme.txt"), "hello-from-node-a")
         } finally {
             webA.stop()
@@ -143,10 +147,14 @@ public class TwoNodeSmoke_test {
             let pending = waitForTransferRequest(serverB, request.id)
             @Assert(transferRequestStatusToString(pending.status), "pending")
             @Assert(pending.sourceDevice, "node-a")
+            @Assert(pending.fileCategory, "text")
+            @Assert(pending.protocolCandidates[0], "http")
 
             let task = serverB.acceptTransferRequest(request.id, "/accepted")
             let finalTask = waitForRemoteTask(serverB, task.id)
             @Assert(taskStatusToString(finalTask.status), "completed")
+            @Assert(finalTask.fileCategory, "text")
+            @Assert(finalTask.protocolCandidates[0], "http")
             @Assert(fileMgr.readText(rootB + "/accepted/request.txt"), "hello-by-request")
 
             let accepted = waitForTransferRequest(serverB, request.id)

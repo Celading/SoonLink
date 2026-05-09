@@ -767,7 +767,10 @@ public class CoreServer {
         sourceDevice: String,
         targetDevice: String,
         filePath: String,
-        targetPath: String
+        targetPath: String,
+        fileCategory!: String = "",
+        protocolPreferences!: ArrayList<String> = ArrayList<String>(),
+        threads!: Int64 = 0
     ): TransferTask {
         ensureDeviceUsableForTransfer(sourceDevice, "transfer source")
         ensureDeviceUsableForTransfer(targetDevice, "transfer target")
@@ -780,9 +783,14 @@ public class CoreServer {
         task.targetPath = targetPath
         task.status = Pending
         task.createdAt = currentTimestamp()
+        task.protocolPreferences = sanitizeTransferProtocolPreferences(protocolPreferences)
+        task.threads = if (threads > 0) { threads } else { 0 }
 
         match (getFileInfo(sourceDevice, filePath)) {
             case Some(meta) =>
+                if (meta.category.trimAscii().size == 0) {
+                    meta.category = resolveTransferFileCategory(filePath, meta.mimeType, meta.isDir)
+                }
                 task.metadata = meta
                 task.sourceIsDir = meta.isDir
                 if (!meta.isDir) {
@@ -791,6 +799,18 @@ public class CoreServer {
                 }
             case None => ()
         }
+
+        task.fileCategory = resolveTransferTaskCategory(task, fileCategory)
+        if (task.metadata.category.trimAscii().size == 0) {
+            task.metadata.category = task.fileCategory
+        }
+        task.protocolCandidates = buildTransferProtocolCandidates(
+            task.fileCategory,
+            task.totalBytes,
+            task.protocolPreferences,
+            task.sourceIsDir || task.metadata.isDir,
+            task.threads
+        )
 
         synchronized(tasksMutex) {
             tasks.add(task.id, task)
@@ -857,6 +877,8 @@ public class CoreServer {
         if (request.metadata.name.size == 0) {
             request.metadata.name = extractVirtualBaseName(request.filePath)
         }
+        request.metadata.mimeType = resolvePreviewMimeType(request.metadata.mimeType, request.filePath, request.sourceIsDir)
+        request.metadata.category = resolveTransferRequestCategory(request)
         if (request.sourceName.trimAscii().size == 0) {
             request.sourceName = request.sourceDevice
         }
@@ -868,6 +890,19 @@ public class CoreServer {
         }
         if (request.totalBytes <= 0 && request.metadata.size > 0) {
             request.totalBytes = request.metadata.size
+        }
+        request.fileCategory = request.metadata.category
+        request.protocolPreferences = sanitizeTransferProtocolPreferences(request.protocolPreferences)
+        if (request.protocolCandidates.size == 0) {
+            request.protocolCandidates = buildTransferProtocolCandidates(
+                request.fileCategory,
+                request.totalBytes,
+                request.protocolPreferences,
+                request.sourceIsDir,
+                0
+            )
+        } else {
+            request.protocolCandidates = sanitizeTransferProtocolPreferences(request.protocolCandidates)
         }
         if (request.createdAt <= 0) {
             request.createdAt = now
@@ -889,12 +924,13 @@ public class CoreServer {
         targetDevice: String,
         filePath: String,
         targetPath: String,
-        note: String
+        note: String,
+        protocolPreferences!: ArrayList<String> = ArrayList<String>()
     ): TransferRequest {
         ensureDeviceUsableForTransfer(sourceDevice, "transfer request source")
         ensureDeviceUsableForTransfer(targetDevice, "transfer request target")
 
-        let request = buildTransferRequest(sourceDevice, filePath, targetPath, note)
+        let request = buildTransferRequest(sourceDevice, filePath, targetPath, note, protocolPreferences: protocolPreferences)
         if (targetDevice == "local") {
             return ingestTransferRequest(request)
         }
@@ -936,7 +972,14 @@ public class CoreServer {
             case Some(request) =>
                 let resolvedSource = resolveTransferRequestSourceDevice(request)
                 let resolvedTargetPath = normalizeVirtualPath(if (targetPath.trimAscii().size > 0) { targetPath } else { request.targetPath })
-                let task = createTransferTask(resolvedSource, "local", request.filePath, resolvedTargetPath)
+                let task = createTransferTask(
+                    resolvedSource,
+                    "local",
+                    request.filePath,
+                    resolvedTargetPath,
+                    fileCategory: request.fileCategory,
+                    protocolPreferences: request.protocolPreferences
+                )
                 let now = currentTimestamp()
                 synchronized(transferRequestsMutex) {
                     if (let Some(stored) <- transferRequests.get(requestId)) {
@@ -1542,7 +1585,8 @@ public class CoreServer {
         sourceDevice: String,
         filePath: String,
         targetPath: String,
-        note: String
+        note: String,
+        protocolPreferences!: ArrayList<String> = ArrayList<String>()
     ): TransferRequest {
         let normalizedSource = sourceDevice.trimAscii()
         let normalizedFilePath = normalizeVirtualPath(filePath)
@@ -1562,15 +1606,20 @@ public class CoreServer {
         request.totalEntries = plan.totalEntries
         request.totalBytes = plan.totalBytes
         request.note = note.trimAscii()
+        request.protocolPreferences = sanitizeTransferProtocolPreferences(protocolPreferences)
 
         match (getFileInfo(normalizedSource, normalizedFilePath)) {
             case Some(meta) =>
+                if (meta.category.trimAscii().size == 0) {
+                    meta.category = resolveTransferFileCategory(normalizedFilePath, meta.mimeType, meta.isDir)
+                }
                 request.metadata = meta
             case None =>
                 request.metadata.name = plan.rootName
                 request.metadata.path = normalizedFilePath
                 request.metadata.isDir = plan.sourceIsDir
                 request.metadata.size = plan.totalBytes
+                request.metadata.mimeType = resolvePreviewMimeType("", normalizedFilePath, plan.sourceIsDir)
         }
 
         if (request.metadata.path.size == 0) {
@@ -1579,10 +1628,55 @@ public class CoreServer {
         if (request.metadata.name.size == 0) {
             request.metadata.name = plan.rootName
         }
+        request.metadata.category = resolveTransferRequestCategory(request)
+        request.fileCategory = request.metadata.category
+        request.protocolCandidates = buildTransferProtocolCandidates(
+            request.fileCategory,
+            request.totalBytes,
+            request.protocolPreferences,
+            request.sourceIsDir,
+            0
+        )
         if (request.targetPath.size == 0) {
             request.targetPath = "/"
         }
         request
+    }
+
+    func resolveTransferTaskCategory(task: TransferTask, preferredCategory: String): String {
+        let normalizedPreferred = normalizeRequestedTransferCategory(preferredCategory)
+        if (normalizedPreferred.size > 0) {
+            return normalizedPreferred
+        }
+        if (task.metadata.category.trimAscii().size > 0) {
+            return task.metadata.category.trimAscii().toLower()
+        }
+        resolveTransferFileCategory(task.filePath, task.metadata.mimeType, task.sourceIsDir || task.metadata.isDir)
+    }
+
+    func resolveTransferRequestCategory(request: TransferRequest): String {
+        let normalizedRequested = normalizeRequestedTransferCategory(request.fileCategory)
+        if (normalizedRequested.size > 0) {
+            return normalizedRequested
+        }
+        if (request.metadata.category.trimAscii().size > 0) {
+            return request.metadata.category.trimAscii().toLower()
+        }
+        resolveTransferFileCategory(request.filePath, request.metadata.mimeType, request.sourceIsDir || request.metadata.isDir)
+    }
+
+    func normalizeRequestedTransferCategory(raw: String): String {
+        let normalized = raw.trimAscii().toLower()
+        if (normalized == "directory") { return "directory" }
+        if (normalized == "image") { return "image" }
+        if (normalized == "video") { return "video" }
+        if (normalized == "audio") { return "audio" }
+        if (normalized == "document") { return "document" }
+        if (normalized == "archive") { return "archive" }
+        if (normalized == "code") { return "code" }
+        if (normalized == "text") { return "text" }
+        if (normalized == "unknown") { return "unknown" }
+        ""
     }
 
     func resolveTransferRequestSourceDeviceId(sourceDevice: String): String {
@@ -1631,6 +1725,14 @@ public class CoreServer {
     }
 
     func buildTransferRequestIngressPayload(request: TransferRequest): String {
+        let preferences = JsonArray()
+        for (value in request.protocolPreferences) {
+            preferences.addStr(value)
+        }
+        let candidates = JsonArray()
+        for (value in request.protocolCandidates) {
+            candidates.addStr(value)
+        }
         JsonObject()
             .put("id", request.id)
             .put("requesterDeviceId", request.requesterDeviceId)
@@ -1643,11 +1745,14 @@ public class CoreServer {
             .put("targetPath", request.targetPath)
             .put("fileName", request.metadata.name)
             .put("mimeType", request.metadata.mimeType)
+            .put("fileCategory", request.fileCategory)
             .putInt("sourceSize", request.metadata.size)
             .putInt("sourceModified", request.metadata.modified)
             .putBool("sourceIsDir", request.sourceIsDir)
             .putInt("totalEntries", request.totalEntries)
             .putInt("totalBytes", request.totalBytes)
+            .putArr("protocolPreferences", preferences)
+            .putArr("protocolCandidates", candidates)
             .put("note", request.note)
             .putInt("createdAt", request.createdAt)
             .toString()

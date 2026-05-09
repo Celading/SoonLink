@@ -1178,6 +1178,129 @@ function buildTransferRequestRouteLabel(request) {
     return sourceName || requesterName;
 }
 
+function normalizeTransferCategoryName(rawCategory) {
+    const normalized = String(rawCategory || '').trim().toLowerCase();
+    switch (normalized) {
+        case 'directory':
+        case 'image':
+        case 'video':
+        case 'audio':
+        case 'document':
+        case 'archive':
+        case 'code':
+        case 'text':
+        case 'unknown':
+            return normalized;
+        default:
+            return '';
+    }
+}
+
+function getTransferCategoryLabel(category) {
+    switch (normalizeTransferCategoryName(category)) {
+        case 'directory':
+            return '目录';
+        case 'image':
+            return '图片';
+        case 'video':
+            return '视频';
+        case 'audio':
+            return '音频';
+        case 'document':
+            return '文档';
+        case 'archive':
+            return '压缩包';
+        case 'code':
+            return '代码';
+        case 'text':
+            return '文本';
+        case 'unknown':
+            return '未知';
+        default:
+            return '';
+    }
+}
+
+function normalizeTransferProtocolName(rawName) {
+    const normalized = String(rawName || '').trim().toLowerCase();
+    switch (normalized) {
+        case 'http':
+            return 'http';
+        case 'multi-thread-http':
+        case 'multi_thread_http':
+        case 'multithread-http':
+            return 'multi-thread-http';
+        case 'quic':
+            return 'quic';
+        case 'rsync':
+            return 'rsync';
+        case 'p2p':
+            return 'p2p';
+        default:
+            return '';
+    }
+}
+
+function uniqueTransferProtocolPreferences(values = []) {
+    const unique = [];
+    const seen = new Set();
+    (Array.isArray(values) ? values : []).forEach((item) => {
+        const normalized = normalizeTransferProtocolName(item);
+        if (!normalized || seen.has(normalized)) {
+            return;
+        }
+        seen.add(normalized);
+        unique.push(normalized);
+    });
+    return unique;
+}
+
+function getTransferProtocolLabel(protocolName) {
+    switch (normalizeTransferProtocolName(protocolName)) {
+        case 'multi-thread-http':
+            return '多线程 HTTP';
+        case 'quic':
+            return 'QUIC';
+        case 'rsync':
+            return 'RSync';
+        case 'p2p':
+            return 'P2P';
+        case 'http':
+            return 'HTTP';
+        default:
+            return String(protocolName || '').trim();
+    }
+}
+
+function buildTransferProtocolLabelSummary(values = [], limit = 4) {
+    const unique = uniqueTransferProtocolPreferences(values);
+    if (!unique.length) {
+        return '';
+    }
+    const visible = unique.slice(0, limit).map((item) => getTransferProtocolLabel(item));
+    if (unique.length > limit) {
+        visible.push(`+${unique.length - limit}`);
+    }
+    return visible.join(' / ');
+}
+
+function buildTransferProtocolMetaSummary(category, protocolPreferences = [], protocolCandidates = [], options = {}) {
+    const parts = [];
+    const categoryLabel = getTransferCategoryLabel(category);
+    if (categoryLabel) {
+        parts.push(`类别 ${categoryLabel}`);
+    }
+    const preferenceSummary = buildTransferProtocolLabelSummary(protocolPreferences, options.preferenceLimit || 4);
+    if (preferenceSummary) {
+        parts.push(`偏好 ${preferenceSummary}`);
+    }
+    const candidateSummary = buildTransferProtocolLabelSummary(protocolCandidates, options.candidateLimit || 5);
+    if (candidateSummary) {
+        parts.push(`候选 ${candidateSummary}`);
+    }
+    return parts.join(' · ');
+}
+
 function renderTransferRequestDrawer() {
     const list = document.getElementById('transfer-request-drawer-list');
     if (!list) {
@@ -1196,6 +1319,12 @@ function renderTransferRequestDrawer() {
         const fileName = request?.metadata?.name || basenamePath(request?.filePath || '/');
         const targetPath = getTransferRequestTargetDraft(requestId, request?.targetPath || '/');
         const targetDeviceLabel = getDeviceById('local')?.name || '本机';
+        const category = request?.fileCategory || request?.metadata?.category || (request?.sourceIsDir ? 'directory' : '');
+        const transferProfileSummary = buildTransferProtocolMetaSummary(
+            category,
+            request?.protocolPreferences || [],
+            request?.protocolCandidates || [],
+        );
         const metaParts = [
             `${request?.sourceIsDir ? '目录' : '文件'}`,
             formatSize(request?.totalBytes, request?.totalBytesText),
@@ -1219,6 +1348,7 @@ function renderTransferRequestDrawer() {
                     <span class="route-node"><i class="bi bi-inbox"></i>${escapeHtml(targetDeviceLabel)}</span>
                 </div>
                 <div class="transfer-request-source-path">源路径：${escapeHtml(request?.filePath || '/')}</div>
+                ${transferProfileSummary ? `<div class="transfer-request-protocols">${escapeHtml(transferProfileSummary)}</div>` : ''}
                 ${request?.note ? `<div class="transfer-request-note">说明：${escapeHtml(request.note)}</div>` : ''}
                 <div class="transfer-request-target">
                     <label class="form-label form-label-sm" for="transfer-request-target-${escapeAttr(requestId)}">接收目录</label>
@@ -5526,7 +5656,7 @@ function renderTaskList() {
         }
         const sourceBinding = getConnectorBinding(task.sourceDevice);
         const targetBinding = getConnectorBinding(task.targetDevice);
-        const target = `${task.id} ${task.sourceDevice} ${task.targetDevice} ${task.filePath} ${task.protocol || ''} ${sourceBinding.connectorType} ${targetBinding.connectorType}`.toLowerCase();
+        const target = `${task.id} ${task.sourceDevice} ${task.targetDevice} ${task.filePath} ${task.protocol || ''} ${task.fileCategory || ''} ${(Array.isArray(task.protocolPreferences) ? task.protocolPreferences.join(' ') : '')} ${(Array.isArray(task.protocolCandidates) ? task.protocolCandidates.join(' ') : '')} ${sourceBinding.connectorType} ${targetBinding.connectorType}`.toLowerCase();
         return target.includes(keyword);
     });
 
@@ -5540,12 +5670,18 @@ function renderTaskList() {
     filtered.forEach((task) => {
         const sourceBinding = getConnectorBinding(task.sourceDevice);
         const targetBinding = getConnectorBinding(task.targetDevice);
-        const protocolLabel = task.protocol || 'http';
+        const protocolLabel = getTransferProtocolLabel(task.protocol || 'http');
         const row = document.createElement('tr');
         const targetPath = task.targetPath ? `<div class="small text-muted mt-1">目标目录: ${escapeHtml(task.targetPath)}</div>` : '';
         const isDirTask = !!task.sourceIsDir;
         const canDownload = task.status === 'completed' && !isDirTask;
         const downloadPath = canDownload ? resolveTaskDownloadPath(task) : '';
+        const category = task.fileCategory || task?.metadata?.category || (isDirTask ? 'directory' : '');
+        const transferProfileSummary = buildTransferProtocolMetaSummary(
+            category,
+            task?.protocolPreferences || [],
+            task?.protocolCandidates || [],
+        );
         const progressMeta = isDirTask
             ? `${Number(task.completedEntries || 0)}/${Number(task.totalEntries || 0)} 项 · ${formatSize(task.transferredBytes, task.transferredBytesText)}${Number(task.totalBytes || 0) > 0 ? ` / ${formatSize(task.totalBytes, task.totalBytesText)}` : ''}`
             : `${formatSize(task.transferredBytes, task.transferredBytesText)}${Number(task.totalBytes || 0) > 0 ? ` / ${formatSize(task.totalBytes, task.totalBytesText)}` : ''}`;
@@ -5569,6 +5705,7 @@ function renderTaskList() {
             <td>
                 <span class="task-file-path">${escapeHtml(task.filePath)}</span>
                 <div class="task-kind-chip mt-1">${isDirTask ? '目录任务' : '文件任务'}</div>
+                ${transferProfileSummary ? `<div class="transfer-candidate-meta mt-1">${escapeHtml(transferProfileSummary)}</div>` : ''}
                 ${targetPath}
                 ${currentItem}
             </td>

@@ -17,9 +17,17 @@ public class FilePreview_test {
     public func resolvesInlineMediaPreviewKinds(): Unit {
         @Assert(resolvePreviewKind("/Pictures/demo.png", "", false), "image")
         @Assert(resolvePreviewMimeType("", "/Pictures/demo.png", false), "image/png")
+        @Assert(resolvePreviewMimeType("", "/Pictures/live.heic", false), "image/heic")
         @Assert(resolvePreviewKind("/Movies/clip.mp4", "", false), "video")
         @Assert(resolvePreviewKind("/Music/theme.mp3", "", false), "audio")
         @Assert(resolvePreviewKind("/Docs/file.pdf", "", false), "pdf")
+    }
+
+    @TestCase
+    public func resolvesDocumentAndArchiveMimeTypes(): Unit {
+        @Assert(resolvePreviewMimeType("", "/Docs/spec.yaml", false), "application/yaml")
+        @Assert(resolvePreviewMimeType("", "/Docs/table.xlsx", false), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        @Assert(resolvePreviewMimeType("", "/Downloads/backup.tar.gz", false), "application/gzip")
     }
 
     @TestCase

@@ -1927,6 +1927,7 @@ public class WebServer {
             let targetDevice = parseJsonString(body, "targetDevice") ?? ""
             let filePath = parseJsonString(body, "filePath") ?? ""
             let targetPath = parseJsonString(body, "targetPath") ?? ""
+            let protocolPreferences = parseJsonStringArray(body, "protocolPreferences")
 
             if (sourceDevice.size == 0) {
                 ctx.status(400).json(JsonObject()
@@ -1971,7 +1972,13 @@ public class WebServer {
             }
 
             try {
-                let task = m.tasks.createTask(sourceDevice, targetDevice, filePath, targetPath)
+                let task = m.tasks.createTask(
+                    sourceDevice,
+                    targetDevice,
+                    filePath,
+                    targetPath,
+                    protocolPreferences: protocolPreferences
+                )
                 ctx.json(JsonObject()
                     .putBool("success", true)
                     .putObj("task", task.toJson())
@@ -1996,6 +2003,7 @@ public class WebServer {
             let filePath = parseJsonString(body, "filePath") ?? ""
             let targetPath = parseJsonString(body, "targetPath") ?? ""
             let threadsStr = parseJsonString(body, "threads") ?? "4"
+            let protocolPreferences = parseJsonStringArray(body, "protocolPreferences")
             var threads: Int64 = 4
             try { threads = Int64.parse(threadsStr) } catch (_: Exception) {}
             if (threads <= 0) { threads = 4 }
@@ -2010,8 +2018,14 @@ public class WebServer {
             }
 
             try {
-                let task = m.tasks.createTask(sourceDevice, targetDevice, filePath, targetPath)
-                task.threads = threads
+                let task = m.tasks.createTask(
+                    sourceDevice,
+                    targetDevice,
+                    filePath,
+                    targetPath,
+                    protocolPreferences: protocolPreferences,
+                    threads: threads
+                )
 
                 ctx.json(JsonObject()
                     .putBool("success", true)
@@ -2068,6 +2082,7 @@ public class WebServer {
             let filePath = parseJsonString(body, "filePath") ?? ""
             let targetPath = parseJsonString(body, "targetPath") ?? "/"
             let note = parseJsonString(body, "note") ?? ""
+            let protocolPreferences = parseJsonStringArray(body, "protocolPreferences")
 
             if (sourceDevice.size == 0) {
                 ctx.status(400).json(JsonObject()
@@ -2095,7 +2110,14 @@ public class WebServer {
             }
 
             try {
-                let request = m.tasks.sendRequest(sourceDevice, targetDevice, filePath, targetPath, note)
+                let request = m.tasks.sendRequest(
+                    sourceDevice,
+                    targetDevice,
+                    filePath,
+                    targetPath,
+                    note,
+                    protocolPreferences: protocolPreferences
+                )
                 ctx.json(JsonObject()
                     .putBool("success", true)
                     .putObj("request", request.toJson())
@@ -2128,6 +2150,9 @@ public class WebServer {
             request.sourceIsDir = parseJsonBoolField(body, "sourceIsDir")
             request.totalEntries = parseJsonIntField(body, "totalEntries")
             request.totalBytes = parseJsonIntField(body, "totalBytes")
+            request.fileCategory = parseJsonString(body, "fileCategory") ?? ""
+            request.protocolPreferences = parseJsonStringArray(body, "protocolPreferences")
+            request.protocolCandidates = parseJsonStringArray(body, "protocolCandidates")
             request.note = parseJsonString(body, "note") ?? ""
             request.createdAt = parseJsonIntField(body, "createdAt")
             request.metadata.name = parseJsonString(body, "fileName") ?? ""
@@ -2136,6 +2161,7 @@ public class WebServer {
             request.metadata.size = parseJsonIntField(body, "sourceSize")
             request.metadata.modified = parseJsonIntField(body, "sourceModified")
             request.metadata.isDir = request.sourceIsDir
+            request.metadata.category = request.fileCategory
 
             if (request.sourceDevice.size == 0 || request.filePath.size == 0) {
                 ctx.status(400).json(JsonObject()

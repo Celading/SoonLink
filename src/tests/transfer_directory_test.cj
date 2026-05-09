@@ -33,6 +33,8 @@ public class TransferDirectory_test {
 
             @Assert(taskStatusToString(finalTask.status), "completed")
             @Assert(finalTask.sourceIsDir, true)
+            @Assert(finalTask.fileCategory, "directory")
+            @Assert(finalTask.protocolCandidates[0], "rsync")
             @Assert(finalTask.completedEntries, finalTask.totalEntries)
             @Assert(fileMgr.readText(rootDir + "/copies/source/readme.txt"), "root-file")
             @Assert(fileMgr.readText(rootDir + "/copies/source/docs/nested/readme.txt"), "nested-file")
@@ -64,6 +66,8 @@ public class TransferDirectory_test {
 
             @Assert(taskStatusToString(finalTask.status), "completed")
             @Assert(finalTask.sourceIsDir, false)
+            @Assert(finalTask.fileCategory, "text")
+            @Assert(finalTask.protocolCandidates[0], "http")
             @Assert(fileMgr.readText(rootDir + "/dest/demo.txt"), "demo")
         } finally {
             server.stop()

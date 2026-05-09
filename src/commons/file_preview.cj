@@ -17,6 +17,9 @@ public func resolvePreviewMimeType(rawMime: String, path: String, isDir: Bool): 
     if (ext == "png") { return "image/png" }
     if (ext == "gif") { return "image/gif" }
     if (ext == "webp") { return "image/webp" }
+    if (ext == "avif") { return "image/avif" }
+    if (ext == "heic") { return "image/heic" }
+    if (ext == "heif") { return "image/heif" }
     if (ext == "svg") { return "image/svg+xml" }
     if (ext == "bmp") { return "image/bmp" }
     if (ext == "ico") { return "image/x-icon" }
@@ -25,14 +28,34 @@ public func resolvePreviewMimeType(rawMime: String, path: String, isDir: Bool): 
     if (ext == "mov") { return "video/quicktime" }
     if (ext == "m4v") { return "video/x-m4v" }
     if (ext == "mkv") { return "video/x-matroska" }
+    if (ext == "avi") { return "video/x-msvideo" }
+    if (ext == "flv") { return "video/x-flv" }
     if (ext == "mp3") { return "audio/mpeg" }
     if (ext == "wav") { return "audio/wav" }
     if (ext == "ogg") { return "audio/ogg" }
     if (ext == "m4a") { return "audio/mp4" }
     if (ext == "flac") { return "audio/flac" }
+    if (ext == "aac") { return "audio/aac" }
+    if (ext == "opus") { return "audio/ogg" }
     if (ext == "pdf") { return "application/pdf" }
+    if (ext == "zip") { return "application/zip" }
+    if (ext == "7z") { return "application/x-7z-compressed" }
+    if (ext == "rar") { return "application/vnd.rar" }
+    if (ext == "tar") { return "application/x-tar" }
+    if (ext == "gz" || ext == "tgz") { return "application/gzip" }
+    if (ext == "bz2" || ext == "tbz2") { return "application/x-bzip2" }
+    if (ext == "xz" || ext == "txz") { return "application/x-xz" }
     if (ext == "json") { return "application/json" }
     if (ext == "xml") { return "application/xml" }
+    if (ext == "csv") { return "text/csv; charset=utf-8" }
+    if (ext == "tsv") { return "text/tab-separated-values; charset=utf-8" }
+    if (ext == "rtf") { return "application/rtf" }
+    if (ext == "doc") { return "application/msword" }
+    if (ext == "docx") { return "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }
+    if (ext == "xls") { return "application/vnd.ms-excel" }
+    if (ext == "xlsx") { return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
+    if (ext == "ppt") { return "application/vnd.ms-powerpoint" }
+    if (ext == "pptx") { return "application/vnd.openxmlformats-officedocument.presentationml.presentation" }
     if (ext == "html" || ext == "htm") { return "text/html; charset=utf-8" }
     if (ext == "css") { return "text/css; charset=utf-8" }
     if (ext == "js" || ext == "mjs" || ext == "cjs") { return "application/javascript" }
