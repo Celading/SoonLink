@@ -40,6 +40,7 @@ public class SoonLinkNodeClient {
             entry.isDir = parseJsonBoolNode(raw, "isDir")
             entry.size = parseJsonIntNode(raw, "size")
             entry.modified = parseJsonIntNode(raw, "modified")
+            entry.category = parseJsonString(raw, "category") ?? resolveTransferFileCategory(entry.path, entry.mimeType, entry.isDir)
             files.add(entry)
         }
         files
@@ -66,6 +67,7 @@ public class SoonLinkNodeClient {
         info.encrypted = parseJsonBoolNode(body, "encrypted")
         info.size = parseJsonIntNode(body, "size")
         info.modified = parseJsonIntNode(body, "modified")
+        info.category = parseJsonString(body, "category") ?? resolveTransferFileCategory(info.path, info.mimeType, info.isDir)
         Some(info)
     }
 

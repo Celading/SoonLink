@@ -907,6 +907,15 @@ letter-spacing: .1em;
     margin-top: 6px;
 }
 
+.transfer-request-protocols,
+.transfer-candidate-meta {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    margin-top: 8px;
+    word-break: break-word;
+}
+
 .task-kind-chip {
     display: inline-flex;
     align-items: center;

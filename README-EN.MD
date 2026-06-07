@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Cangjie-SoonLink-ff6b35?style=for-the-badge&labelColor=1a1a2e" alt="SoonLink" />
-  <img src="https://img.shields.io/badge/version-0.5.56-4f8cff?style=for-the-badge&labelColor=1a1a2e" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.5.57-4f8cff?style=for-the-badge&labelColor=1a1a2e" alt="Version" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-2ea043?style=for-the-badge&labelColor=1a1a2e" alt="License" />
 </p>
 

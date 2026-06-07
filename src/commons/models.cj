@@ -165,6 +165,7 @@ public class FileMetadata {
     public var path: String = ""
     public var size: Int64 = 0
     public var mimeType: String = ""
+    public var category: String = ""
     public var modified: Int64 = 0
     public var isDir: Bool = false
     public var checksum: String = ""
@@ -179,6 +180,7 @@ public class FileMetadata {
             .putInt("size", size)
             .put("sizeText", formatBytes(size))
             .put("mimeType", mimeType)
+            .put("category", category)
             .putInt("modified", modified)
             .putBool("isDir", isDir)
             .putBool("encrypted", encrypted)
@@ -196,6 +198,7 @@ public class FileEntry {
     public var modified: Int64 = 0
     public var isDir: Bool = false
     public var mimeType: String = ""
+    public var category: String = ""
 
     public init() {}
 
@@ -216,6 +219,7 @@ public class FileEntry {
             .putInt("modified", modified)
             .putBool("isDir", isDir)
             .put("mimeType", mimeType)
+            .put("category", category)
     }
 }
 
@@ -246,6 +250,9 @@ public class TransferTask {
     public var chunkProgress: ArrayList<ChunkProgress> = ArrayList<ChunkProgress>()
     public var speed: Int64 = 0
     public var eta: Int64 = 0
+    public var fileCategory: String = ""
+    public var protocolPreferences: ArrayList<String> = ArrayList<String>()
+    public var protocolCandidates: ArrayList<String> = ArrayList<String>()
 
     public init() {
         this.createdAt = currentTimestamp()
@@ -270,6 +277,9 @@ public class TransferTask {
             .putInt("createdAt", createdAt)
             .putInt("updatedAt", updatedAt)
             .put("protocol", protocol)
+            .put("fileCategory", fileCategory)
+            .putArr("protocolPreferences", stringListToJsonArray(protocolPreferences))
+            .putArr("protocolCandidates", stringListToJsonArray(protocolCandidates))
             .putBool("encrypted", encrypted)
             .putInt("threads", threads)
             .putInt("speed", speed)
@@ -312,6 +322,9 @@ public class TransferRequest {
     public var note: String = ""
     public var responseMessage: String = ""
     public var acceptedTaskId: String = ""
+    public var fileCategory: String = ""
+    public var protocolPreferences: ArrayList<String> = ArrayList<String>()
+    public var protocolCandidates: ArrayList<String> = ArrayList<String>()
 
     public init() {
         let now = currentTimestamp()
@@ -335,6 +348,9 @@ public class TransferRequest {
             .putInt("totalEntries", totalEntries)
             .putInt("totalBytes", totalBytes)
             .put("totalBytesText", formatBytes(totalBytes))
+            .put("fileCategory", fileCategory)
+            .putArr("protocolPreferences", stringListToJsonArray(protocolPreferences))
+            .putArr("protocolCandidates", stringListToJsonArray(protocolCandidates))
             .put("status", transferRequestStatusToString(status))
             .putInt("createdAt", createdAt)
             .putInt("updatedAt", updatedAt)
@@ -379,4 +395,12 @@ public class AccessLog {
 
 public func currentTimestamp(): Int64 {
     DateTime.now().toUnixTimeStamp().toSeconds()
+}
+
+func stringListToJsonArray(values: ArrayList<String>): JsonArray {
+    let arr = JsonArray()
+    for (value in values) {
+        arr.addStr(value)
+    }
+    arr
 }
