@@ -22,9 +22,11 @@ env:
   CANGJIE_NIGHTLY_TAGS_API: ${{ vars.CANGJIE_NIGHTLY_TAGS_API != '' && vars.CANGJIE_NIGHTLY_TAGS_API || 'https://api.gitcode.com/api/v5/repos/Cangjie/nightly_build/tags?per_page=100' }}
   CANGJIE_SDK_LINUX_AMD64_URL: ${{ vars.CANGJIE_SDK_LINUX_AMD64_URL }}
   DEVECO_CANGJIE_OHOS_AARCH64_URL: ${{ vars.DEVECO_CANGJIE_OHOS_AARCH64_URL }}
-  IGNITE_GIT_URL: https://atomgit.com/cinyu/ignite-cangjie.git
-  LISI_GIT_URL: https://atomgit.com/cinyu/lisi.git
-  JINGUISSL_GIT_URL: https://atomgit.com/cinyu/jinguiSSL.git
+  IGNITE_GIT_URL: https://gitcode.com/cinyu/ignite-cangjie.git
+  LISI_GIT_URL: https://gitcode.com/cinyu/lisi.git
+  JINGUISSL_GIT_URL: https://gitcode.com/cinyu/jinguiSSL.git
+  JINGUISSL_CORE_GIT_URL: https://gitcode.com/CjKu/JinguiCore.git
+  SEAJSON_GIT_URL: https://gitcode.com/CjKu/SeaJson.git
 
 jobs:
   boundary:
@@ -98,17 +100,6 @@ jobs:
 
           echo "GitCode credentials are not configured; continuing with public clone access."
 
-      - name: Configure AtomGit Credentials
-        if: ${{ steps.sdk.outputs.enabled == 'true' }}
-        shell: bash
-        run: |
-          if [[ -n "${{ secrets.ATOMGIT_USERNAME }}" && -n "${{ secrets.ATOMGIT_TOKEN }}" ]]; then
-            git config --global url."https://${{ secrets.ATOMGIT_USERNAME }}:${{ secrets.ATOMGIT_TOKEN }}@atomgit.com/".insteadOf "https://atomgit.com/"
-            exit 0
-          fi
-
-          echo "AtomGit credentials are not configured; continuing with public clone access."
-
       - name: Clone dependency repositories
         id: deps
         if: ${{ steps.sdk.outputs.enabled == 'true' }}
@@ -120,6 +111,8 @@ jobs:
           git clone --depth 1 "${IGNITE_GIT_URL}" "${deps_root}/Ignite0500"
           git clone --depth 1 "${LISI_GIT_URL}" "${deps_root}/lisi"
           git clone --depth 1 "${JINGUISSL_GIT_URL}" "${deps_root}/jinguiSSL"
+          git clone --depth 1 "${JINGUISSL_CORE_GIT_URL}" "${deps_root}/JinguiCore"
+          git clone --depth 1 "${SEAJSON_GIT_URL}" "${deps_root}/SeaJson"
           echo "root=${deps_root}" >> "${GITHUB_OUTPUT}"
 
       - name: Prepare CI workspace
@@ -134,7 +127,9 @@ jobs:
             --output "${workspace_root}" \
             --ignite "${{ steps.deps.outputs.root }}/Ignite0500" \
             --lisi "${{ steps.deps.outputs.root }}/lisi" \
-            --jinguissl "${{ steps.deps.outputs.root }}/jinguiSSL"
+            --jinguissl "${{ steps.deps.outputs.root }}/jinguiSSL" \
+            --jinguissl-core "${{ steps.deps.outputs.root }}/JinguiCore" \
+            --seajson "${{ steps.deps.outputs.root }}/SeaJson"
           {
             echo "root=${workspace_root}"
             echo "core_dir=${workspace_root}/SoonLink-Core"
@@ -281,17 +276,6 @@ jobs:
 
           echo "GitCode credentials are not configured; continuing with public clone access."
 
-      - name: Configure AtomGit Credentials
-        if: ${{ steps.ohos.outputs.enabled == 'true' }}
-        shell: bash
-        run: |
-          if [[ -n "${{ secrets.ATOMGIT_USERNAME }}" && -n "${{ secrets.ATOMGIT_TOKEN }}" ]]; then
-            git config --global url."https://${{ secrets.ATOMGIT_USERNAME }}:${{ secrets.ATOMGIT_TOKEN }}@atomgit.com/".insteadOf "https://atomgit.com/"
-            exit 0
-          fi
-
-          echo "AtomGit credentials are not configured; continuing with public clone access."
-
       - name: Clone dependency repositories
         id: deps_ohos
         if: ${{ steps.ohos.outputs.enabled == 'true' }}
@@ -303,6 +287,8 @@ jobs:
           git clone --depth 1 "${IGNITE_GIT_URL}" "${deps_root}/Ignite0500"
           git clone --depth 1 "${LISI_GIT_URL}" "${deps_root}/lisi"
           git clone --depth 1 "${JINGUISSL_GIT_URL}" "${deps_root}/jinguiSSL"
+          git clone --depth 1 "${JINGUISSL_CORE_GIT_URL}" "${deps_root}/JinguiCore"
+          git clone --depth 1 "${SEAJSON_GIT_URL}" "${deps_root}/SeaJson"
           echo "root=${deps_root}" >> "${GITHUB_OUTPUT}"
 
       - name: Prepare CI workspace
@@ -317,7 +303,9 @@ jobs:
             --output "${workspace_root}" \
             --ignite "${{ steps.deps_ohos.outputs.root }}/Ignite0500" \
             --lisi "${{ steps.deps_ohos.outputs.root }}/lisi" \
-            --jinguissl "${{ steps.deps_ohos.outputs.root }}/jinguiSSL"
+            --jinguissl "${{ steps.deps_ohos.outputs.root }}/jinguiSSL" \
+            --jinguissl-core "${{ steps.deps_ohos.outputs.root }}/JinguiCore" \
+            --seajson "${{ steps.deps_ohos.outputs.root }}/SeaJson"
           {
             echo "root=${workspace_root}"
             echo "core_dir=${workspace_root}/SoonLink-Core"

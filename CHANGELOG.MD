@@ -22,6 +22,7 @@ SoonLink / 溯联的主要变更记录。
 - `=修复` Release / Docker 构建链补回 `Ignite -> lisi` 的本地 `path` 改写，避免工作副本已经本地化后仍沿用旧相对路径
 - `=工程` GitHub / GitCode 的 Linux 构建链统一切到共享依赖预装脚本，并补齐 `cmake`、`ninja`、`gcc/g++`、`pkg-config` 与 OpenSSL 开发头，避免 `stdx` 源码构建在 CMake 配置阶段缺原生工具链
 - `=工程` CI / Release 默认依赖源切到公开可拉取的 `Ignite / lisi / jinguiSSL` 线上仓地址，降低远端工作副本准备阶段在依赖克隆上的漂移
+- `=工程` CI / Release / Docker 投影链补齐 `JinguiCore` 与 `SeaJson` 依赖克隆和本地 `path` 改写，并记录 GitCode 默认源与 GitHub 镜像源矩阵
 
 ---
 

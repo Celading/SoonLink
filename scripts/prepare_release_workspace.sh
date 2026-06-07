@@ -6,6 +6,8 @@ OUTPUT_DIR=""
 IGNITE_DIR=""
 LISI_DIR=""
 JINGUISSL_DIR=""
+JINGUISSL_CORE_DIR=""
+SEAJSON_DIR=""
 
 usage() {
   cat <<'EOF'
@@ -14,7 +16,9 @@ Usage:
     --output <dir> \
     --ignite <dir> \
     --lisi <dir> \
-    --jinguissl <dir>
+    --jinguissl <dir> \
+    --jinguissl-core <dir> \
+    --seajson <dir>
 EOF
   exit 1
 }
@@ -171,6 +175,14 @@ while [ "$#" -gt 0 ]; do
       JINGUISSL_DIR="${2:-}"
       shift 2
       ;;
+    --jinguissl-core)
+      JINGUISSL_CORE_DIR="${2:-}"
+      shift 2
+      ;;
+    --seajson)
+      SEAJSON_DIR="${2:-}"
+      shift 2
+      ;;
     *)
       echo "unknown argument: $1" >&2
       usage
@@ -182,10 +194,14 @@ done
 [ -n "$IGNITE_DIR" ] || usage
 [ -n "$LISI_DIR" ] || usage
 [ -n "$JINGUISSL_DIR" ] || usage
+[ -n "$JINGUISSL_CORE_DIR" ] || usage
+[ -n "$SEAJSON_DIR" ] || usage
 
 [ -d "$IGNITE_DIR" ] || { echo "ignite directory not found: $IGNITE_DIR" >&2; exit 1; }
 [ -d "$LISI_DIR" ] || { echo "lisi directory not found: $LISI_DIR" >&2; exit 1; }
 [ -d "$JINGUISSL_DIR" ] || { echo "jinguiSSL directory not found: $JINGUISSL_DIR" >&2; exit 1; }
+[ -d "$JINGUISSL_CORE_DIR" ] || { echo "jinguissl_core directory not found: $JINGUISSL_CORE_DIR" >&2; exit 1; }
+[ -d "$SEAJSON_DIR" ] || { echo "seajson directory not found: $SEAJSON_DIR" >&2; exit 1; }
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -193,11 +209,16 @@ copy_tree "$ROOT_DIR" "$OUTPUT_DIR/SoonLink-Core"
 copy_package_tree "$IGNITE_DIR" "$OUTPUT_DIR/Ignite0500" "ignite"
 copy_package_tree "$LISI_DIR" "$OUTPUT_DIR/lisi" "lisi"
 copy_package_tree "$JINGUISSL_DIR" "$OUTPUT_DIR/jinguiSSL" "jinguissl"
+copy_package_tree "$JINGUISSL_CORE_DIR" "$OUTPUT_DIR/JinguiCore" "jinguissl_core"
+copy_package_tree "$SEAJSON_DIR" "$OUTPUT_DIR/SeaJson" "seajson"
 
 sh "$ROOT_DIR/scripts/apply_tls_dep_compat.sh" "$OUTPUT_DIR"
 
 rewrite_dependency_path "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "ignite" "../Ignite0500"
 rewrite_dependency_path "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "lisi" "../lisi"
+rewrite_dependency_path "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "JinguiSSL" "../jinguiSSL"
+rewrite_dependency_path "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "jinguissl_core" "../JinguiCore"
+rewrite_dependency_path "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "seajson" "../SeaJson"
 rewrite_dependency_path "$OUTPUT_DIR/Ignite0500/cjpm.toml" "lisi" "../lisi"
 rewrite_dependency_path "$OUTPUT_DIR/Ignite0500/cjpm.toml" "jinguissl" "../jinguiSSL"
 

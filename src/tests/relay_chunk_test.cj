@@ -639,11 +639,11 @@ public class RelayChunk_test {
 
     @TestCase
     public func decodeChunkFileIdAcceptsPercentEncodedParam(): Unit {
-        let encoded = "local%7C~Users~tester~demo.txt"
+        let encoded = "local%7C~workspace~tester~demo.txt"
         match (decodeChunkFileId(encoded)) {
             case Some((deviceId, path)) =>
                 @Assert(deviceId, "local")
-                @Assert(path, "/Users/tester/demo.txt")
+                @Assert(path, "/workspace/tester/demo.txt")
             case None =>
                 @Assert(false)
         }

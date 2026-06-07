@@ -83,11 +83,17 @@ SoonLink 现在同时维护 GitHub 与 GitCode 两套自动化入口：
 - `HOMEBREW_TAP_BRANCH`
   可选，默认 `main`。
 - `IGNITE_GIT_URL`
-  可选，默认 `https://atomgit.com/cinyu/ignite-cangjie.git`。
+  可选，默认 `https://gitcode.com/cinyu/ignite-cangjie.git`。
 - `LISI_GIT_URL`
-  可选，默认 `https://atomgit.com/cinyu/lisi.git`。
+  可选，默认 `https://gitcode.com/cinyu/lisi.git`。
 - `JINGUISSL_GIT_URL`
-  可选，默认 `https://atomgit.com/cinyu/jinguiSSL.git`。
+  可选，默认 `https://gitcode.com/cinyu/jinguiSSL.git`。
+- `JINGUISSL_CORE_GIT_URL`
+  可选，默认 `https://gitcode.com/CjKu/JinguiCore.git`。
+- `SEAJSON_GIT_URL`
+  可选，默认 `https://gitcode.com/CjKu/SeaJson.git`。
+
+GitHub 镜像源可按需覆盖为：`IGNITE_GIT_URL=https://github.com/Celading/Ignite.git`、`JINGUISSL_GIT_URL=https://github.com/CangjieKu/JinGuiSSLCore.git`、`JINGUISSL_CORE_GIT_URL=https://github.com/CangjieKu/JinGuiSSL.git`、`SEAJSON_GIT_URL=https://github.com/CangjieKu/SeaJson.git`。
 
 ## 凭据
 

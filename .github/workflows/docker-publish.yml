@@ -32,8 +32,10 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       IMAGE_NAME: celading/soonlink
       IGNITE_GIT_URL: https://gitcode.com/cinyu/ignite-cangjie.git
-      LISI_GIT_URL: https://gitcode.com/cinyu/lisi
-      JINGUISSL_GIT_URL: https://atomgit.com/cinyu/jinguiSSL
+      LISI_GIT_URL: https://gitcode.com/cinyu/lisi.git
+      JINGUISSL_GIT_URL: https://gitcode.com/cinyu/jinguiSSL.git
+      JINGUISSL_CORE_GIT_URL: https://gitcode.com/CjKu/JinguiCore.git
+      SEAJSON_GIT_URL: https://gitcode.com/CjKu/SeaJson.git
       STDX_GIT_REF: v1.1.0-beta.25
       CANGJIE_VERSION: 1.1.0-beta.25
       CANGJIE_SDK_LINUX_ARM64_URL: https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-linux-aarch64-1.1.0-beta.25.tar.gz&objectKey=69cb74a76e8ed61e6e07fd45
@@ -119,17 +121,6 @@ jobs:
 
           echo "GitCode credentials are not configured; continuing with public clone access."
 
-      - name: Configure AtomGit Credentials
-        if: ${{ steps.availability.outputs.enabled == 'true' }}
-        shell: bash
-        run: |
-          if [[ -n "${{ secrets.ATOMGIT_USERNAME }}" && -n "${{ secrets.ATOMGIT_TOKEN }}" ]]; then
-            git config --global url."https://${{ secrets.ATOMGIT_USERNAME }}:${{ secrets.ATOMGIT_TOKEN }}@atomgit.com/".insteadOf "https://atomgit.com/"
-            exit 0
-          fi
-
-          echo "AtomGit credentials are not configured; continuing with public clone access."
-
       - name: Clone Dependency Repositories
         if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
@@ -139,6 +130,8 @@ jobs:
           git clone --depth 1 "${IGNITE_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/Ignite0500"
           git clone --depth 1 "${LISI_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/lisi"
           git clone --depth 1 "${JINGUISSL_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/jinguiSSL"
+          git clone --depth 1 "${JINGUISSL_CORE_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/JinguiCore"
+          git clone --depth 1 "${SEAJSON_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/SeaJson"
 
       - name: Prepare Docker Build Context
         if: ${{ steps.availability.outputs.enabled == 'true' }}
@@ -150,7 +143,9 @@ jobs:
             --output "${{ steps.vars.outputs.context_dir }}" \
             --ignite "${{ steps.vars.outputs.deps_dir }}/Ignite0500" \
             --lisi "${{ steps.vars.outputs.deps_dir }}/lisi" \
-            --jinguissl "${{ steps.vars.outputs.deps_dir }}/jinguiSSL"
+            --jinguissl "${{ steps.vars.outputs.deps_dir }}/jinguiSSL" \
+            --jinguissl-core "${{ steps.vars.outputs.deps_dir }}/JinguiCore" \
+            --seajson "${{ steps.vars.outputs.deps_dir }}/SeaJson"
 
       - name: Set Up QEMU
         if: ${{ steps.availability.outputs.enabled == 'true' }}

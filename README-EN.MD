@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Cangjie-SoonLink-ff6b35?style=for-the-badge&labelColor=1a1a2e" alt="SoonLink" />
-  <img src="https://img.shields.io/badge/version-0.5.57-4f8cff?style=for-the-badge&labelColor=1a1a2e" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.7.21-4f8cff?style=for-the-badge&labelColor=1a1a2e" alt="Version" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-2ea043?style=for-the-badge&labelColor=1a1a2e" alt="License" />
 </p>
 
@@ -39,7 +39,7 @@ Default entrypoints:
 
 ### Dependency note
 
-> The repository `cjpm.toml` is already aligned to the default Ignite and lisi sources. If your environment relies on local mirrors, private registries, or offline dependencies, replace those dependency sources to match your build environment.
+> The repository `cjpm.toml` is already aligned to the default Ignite, lisi, JinguiSSL, JinguiCore, and SeaJson sources. If your environment relies on local mirrors, private registries, or offline dependencies, replace those dependency sources to match your build environment.
 
 - Cangjie SDK environment [`cangjie-sdk`](https://cangjie-lang.cn/download) v1.1.0+
 - Cangjie standard extension library [`cangjie-stdx`](https://gitcode.com/Cangjie/cangjie_stdx/releases/v1.1.0-beta.24.1)
