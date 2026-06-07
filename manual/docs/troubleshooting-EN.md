@@ -13,7 +13,7 @@ Check these first:
 Common causes:
 
 - port `8081` is already occupied
-- `config/soonlink.toml` is malformed
+- `~/.soonlink/etc/sl-config.toml` or `./config/soonlink.toml` is malformed
 - the runtime directory cannot write `config/devices.json`, `logs/`, or `cache/`
 
 ## 3. The Web UI opens but actions fail

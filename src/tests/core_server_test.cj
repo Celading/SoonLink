@@ -4,6 +4,7 @@ import soonlnk.commons.*
 import soonlnk.features.*
 import soonlnk.master.*
 import soonlnk.product.*
+import std.collection.ArrayList
 import std.net.{UdpSocket, IPSocketAddress}
 import std.unittest.*
 import std.unittest.testmacro.*
@@ -71,6 +72,80 @@ public class CoreServer_test {
         }
         @Assert(foundLocal)
         @Assert(foundSoonLink)
+    }
+
+    @TestCase
+    public func rejectsManualRecordPointingAtCurrentSoonLinkEndpoint(): Unit {
+        let scope = testTempToken("soonlink_test_self_endpoint_registry")
+        var cfg = AppConfig()
+        cfg.webPort = 19181
+        cfg.discoveryAdvertiseIp = "10.88.0.5"
+        cfg.deviceRegistryFile = "/tmp/${scope}.json"
+        cfg.logDir = "/tmp/${scope}_logs"
+
+        let server = CoreServer(cfg, profile: defaultRuntimeProfile())
+
+        let record = DeviceRegistryRecord()
+        record.id = "shadow-self"
+        record.name = "Shadow Self"
+        record.deviceType = "remote"
+        record.ip = "10.88.0.5"
+        record.port = 19181
+
+        let error = server.validateManagedDeviceRecord(record)
+        @Assert(error.contains("本机端点"), true)
+    }
+
+    @TestCase
+    public func persistedSelfEndpointShadowIsRemovedOnStartup(): Unit {
+        let scope = testTempToken("soonlink_test_persisted_self_shadow")
+        var cfg = AppConfig()
+        cfg.nodeId = "self-main"
+        cfg.webPort = 19182
+        cfg.discoveryAdvertiseIp = "10.88.0.6"
+        cfg.discoveryUdpPort = Int64(pickTestPortSeed())
+        cfg.enableMdns = false
+        cfg.deviceRegistryFile = "/tmp/${scope}.json"
+        cfg.logDir = "/tmp/${scope}_logs"
+
+        let records = ArrayList<DeviceRegistryRecord>()
+        let shadow = DeviceRegistryRecord()
+        shadow.id = "shadow-self"
+        shadow.name = "Shadow Self"
+        shadow.deviceType = "node"
+        shadow.ip = "10.88.0.6"
+        shadow.port = 19182
+        records.add(shadow)
+
+        let peer = DeviceRegistryRecord()
+        peer.id = "peer-node"
+        peer.name = "Peer Node"
+        peer.deviceType = "node"
+        peer.ip = "10.88.0.7"
+        peer.port = 19183
+        records.add(peer)
+
+        let store = JsonDeviceRegistryStore(cfg.deviceRegistryFile)
+        store.save(records)
+
+        let server = CoreServer(cfg, profile: defaultRuntimeProfile())
+        server.setConsoleOutputEnabled(false)
+        try {
+            server.start()
+            match (server.getDevice("shadow-self")) {
+                case Some(_) => @Assert(false)
+                case None => @Assert(true)
+            }
+            let device = waitForDevice(server, "peer-node")
+            @Assert(device.ip, "10.88.0.7")
+        } finally {
+            server.stop()
+        }
+
+        let loaded = store.load()
+        for (record in loaded) {
+            @Assert(record.id != "shadow-self")
+        }
     }
 
     @TestCase
@@ -294,10 +369,13 @@ func sendDiscoveryPacket(port: UInt16, packet: DiscoveryPacket): Unit {
     try (udpSocket = UdpSocket(bindAt: 0)) {
         udpSocket.sendTimeout = Duration.second * 1
         udpSocket.bind()
-        udpSocket.sendTo(
-            IPSocketAddress("127.0.0.1", port),
-            stringToBytes(packet.toJson().toString())
-        )
+        let payload = stringToBytes(packet.toJson().toString())
+        for (idx in 0..4) {
+            udpSocket.sendTo(IPSocketAddress("127.0.0.1", port), payload)
+            if (idx < 3) {
+                sleep(Duration.millisecond * 25)
+            }
+        }
     }
 }
 

@@ -25,14 +25,15 @@ public class LocalFileSystem <: FileSystemProvider {
 
     public func listDir(dirPath: String): ArrayList<FileEntry> {
         let entries = ArrayList<FileEntry>()
-        let fullPath = joinPaths(rootDir, dirPath)
+        let safeDirPath = normalizeSafeVirtualPath(dirPath)
+        let fullPath = resolveRootedPath(rootDir, safeDirPath)
         try {
             let items: Array<FileInfo> = Directory.readFrom(fullPath)
             for (item in items) {
                 let fe = FileEntry()
                 let p = item.path
                 fe.name = p.fileName.toString()
-                fe.path = joinPaths(dirPath, fe.name)
+                fe.path = joinPaths(safeDirPath, fe.name)
                 fe.isDir = item.isDirectory()
                 fe.size = if (fe.isDir) { 0 } else { item.size }
                 fe.mimeType = resolvePreviewMimeType("", fe.path, fe.isDir)
@@ -48,7 +49,7 @@ public class LocalFileSystem <: FileSystemProvider {
     }
 
     public func readFile(filePath: String, offset: Int64, length: Int64): Array<UInt8> {
-        let fullPath = joinPaths(rootDir, filePath)
+        let fullPath = resolveRootedPath(rootDir, filePath)
         let file = File(fullPath, OpenMode.Read)
         if (offset > 0) {
             var remainingSkip = offset
@@ -82,7 +83,7 @@ public class LocalFileSystem <: FileSystemProvider {
     }
 
     public func writeFile(filePath: String, data: Array<UInt8>, offset: Int64): Unit {
-        let fullPath = joinPaths(rootDir, filePath)
+        let fullPath = resolveRootedPath(rootDir, filePath)
         ensureFileTargetPath(fullPath)
         ensureParentDir(fullPath)
         let mode = if (offset == 0) { OpenMode.Write } else { OpenMode.Append }
@@ -92,25 +93,26 @@ public class LocalFileSystem <: FileSystemProvider {
     }
 
     public func getFileInfo(filePath: String): FileMetadata {
-        let fullPath = joinPaths(rootDir, filePath)
+        let safeFilePath = normalizeSafeVirtualPath(filePath)
+        let fullPath = resolveRootedPath(rootDir, safeFilePath)
         let info = FileInfo(fullPath)
         let metadata = FileMetadata()
-        metadata.name = extractFileName(filePath)
-        metadata.path = filePath
+        metadata.name = extractFileName(safeFilePath)
+        metadata.path = safeFilePath
         metadata.size = info.size
         metadata.isDir = info.isDirectory()
-        metadata.mimeType = resolvePreviewMimeType("", filePath, metadata.isDir)
-        metadata.category = resolveTransferFileCategory(filePath, metadata.mimeType, metadata.isDir)
+        metadata.mimeType = resolvePreviewMimeType("", safeFilePath, metadata.isDir)
+        metadata.category = resolveTransferFileCategory(safeFilePath, metadata.mimeType, metadata.isDir)
         metadata
     }
 
     public func deleteFile(filePath: String): Unit {
-        let fullPath = joinPaths(rootDir, filePath)
+        let fullPath = resolveRootedPath(rootDir, filePath)
         remove(fullPath)
     }
 
     public func createDir(dirPath: String): Unit {
-        let fullPath = joinPaths(rootDir, dirPath)
+        let fullPath = resolveRootedPath(rootDir, dirPath)
         if (pathExistsAsDirectory(fullPath)) {
             return
         }
@@ -199,6 +201,73 @@ public class FileSystemManager {
             provider.createDir(path)
         }
     }
+}
+
+func resolveRootedPath(rootDir: String, virtualPath: String): String {
+    let root = trimTrailingSlash(rootDir.trimAscii())
+    if (root.size == 0) {
+        throw Exception("unsafe path: root directory is empty")
+    }
+    let safePath = normalizeSafeVirtualPath(virtualPath)
+    if (safePath == "/") {
+        return root
+    }
+    joinPaths(root, safePath)
+}
+
+func normalizeSafeVirtualPath(path: String): String {
+    let trimmed = path.trimAscii()
+    if (trimmed.size == 0 || trimmed == "/") {
+        return "/"
+    }
+    let runes = trimmed.toRuneArray()
+    for (r in runes) {
+        if (r == r'\\') {
+            throw Exception("unsafe path: backslash is not allowed")
+        }
+    }
+
+    var current = ""
+    var segment = ""
+    for (i in 0..runes.size) {
+        if (runes[i] == r'/') {
+            current = appendSafePathSegment(segment, current)
+            segment = ""
+        } else {
+            segment += runes[i].toString()
+        }
+    }
+    current = appendSafePathSegment(segment, current)
+    if (current.size == 0) {
+        return "/"
+    }
+    "/" + current
+}
+
+func appendSafePathSegment(segment: String, current: String): String {
+    let value = segment.trimAscii()
+    if (value.size == 0 || value == ".") {
+        return current
+    }
+    if (value == "..") {
+        throw Exception("unsafe path: parent traversal is not allowed")
+    }
+    if (current.size > 0) {
+        return current + "/" + value
+    }
+    value
+}
+
+func trimTrailingSlash(path: String): String {
+    if (path.size <= 1) {
+        return path
+    }
+    let runes = path.toRuneArray()
+    var end = runes.size
+    while (end > 1 && runes[end - 1] == r'/') {
+        end -= 1
+    }
+    strSubstring(path, 0, end)
 }
 
 func joinPaths(base: String, relative: String): String {

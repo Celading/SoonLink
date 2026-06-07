@@ -184,6 +184,7 @@ public class FileMetadata {
             .putInt("modified", modified)
             .putBool("isDir", isDir)
             .putBool("encrypted", encrypted)
+            .put("category", category)
         if (checksum.size > 0) {
             obj.put("checksum", checksum)
         }
@@ -243,6 +244,9 @@ public class TransferTask {
     public var completedAt: Int64 = 0
     public var error: String = ""
     public var protocol: String = ""
+    public var fileCategory: String = ""
+    public var protocolPreferences: ArrayList<String> = ArrayList<String>()
+    public var protocolCandidates: ArrayList<String> = ArrayList<String>()
     public var encrypted: Bool = false
     public var tempPath: String = ""
     public var threads: Int64 = 0
@@ -250,9 +254,6 @@ public class TransferTask {
     public var chunkProgress: ArrayList<ChunkProgress> = ArrayList<ChunkProgress>()
     public var speed: Int64 = 0
     public var eta: Int64 = 0
-    public var fileCategory: String = ""
-    public var protocolPreferences: ArrayList<String> = ArrayList<String>()
-    public var protocolCandidates: ArrayList<String> = ArrayList<String>()
 
     public init() {
         this.createdAt = currentTimestamp()
@@ -315,6 +316,9 @@ public class TransferRequest {
     public var sourceIsDir: Bool = false
     public var totalEntries: Int64 = 0
     public var totalBytes: Int64 = 0
+    public var fileCategory: String = ""
+    public var protocolPreferences: ArrayList<String> = ArrayList<String>()
+    public var protocolCandidates: ArrayList<String> = ArrayList<String>()
     public var status: TransferRequestStatus = RequestPending
     public var createdAt: Int64 = 0
     public var updatedAt: Int64 = 0
@@ -322,9 +326,6 @@ public class TransferRequest {
     public var note: String = ""
     public var responseMessage: String = ""
     public var acceptedTaskId: String = ""
-    public var fileCategory: String = ""
-    public var protocolPreferences: ArrayList<String> = ArrayList<String>()
-    public var protocolCandidates: ArrayList<String> = ArrayList<String>()
 
     public init() {
         let now = currentTimestamp()

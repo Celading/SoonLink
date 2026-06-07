@@ -250,6 +250,66 @@ public class RelayMaster {
         server.getRelayJob(jobId)
     }
 
+    public func rooms(): ArrayList<RelayRoom> {
+        server.listRelayRooms()
+    }
+
+    public func messages(roomId: String, limit: Int64): ArrayList<RelayMessage> {
+        server.listRelayRoomMessages(roomId, limit)
+    }
+
+    public func channelAdapters(): ArrayList<ChannelAdapter> {
+        server.listRelayChannelAdapters()
+    }
+
+    public func createAdapterMessage(message: ChannelAdapterMessage): RelayJob {
+        server.createRelayAdapterTextMessage(message)
+    }
+
+    public func recordLocalSendPeerRegistration(info: LocalSendPeerInfo, body: String): ?RelayJob {
+        server.recordLocalSendPeerRegistration(info, body)
+    }
+
+    public func createRoomMessage(roomId: String, sourceDevice: String, fileName: String, content: String): RelayJob {
+        server.createRelayRoomTextMessage(roomId, sourceDevice, fileName, content)
+    }
+
+    public func prepareLocalSendUpload(raw: String, endpoint: String): LocalSendSession {
+        server.prepareLocalSendUpload(raw, endpoint)
+    }
+
+    public func receiveLocalSendUpload(sessionId: String, fileId: String, token: String, payload: Array<UInt8>): RelayJob {
+        server.receiveLocalSendUpload(sessionId, fileId, token, payload)
+    }
+
+    public func cancelLocalSendUpload(sessionId: String): Bool {
+        server.cancelLocalSendUpload(sessionId)
+    }
+
+    public func prepareLocalSendDownload(jobId: String): LocalSendSession {
+        server.prepareLocalSendDownload(jobId)
+    }
+
+    public func localSendDownloadCacheDescriptor(sessionId: String, fileId: String, token: String): ?(String, String) {
+        server.localSendDownloadCacheDescriptor(sessionId, fileId, token)
+    }
+
+    public func sendLocalSendJobToPeer(endpoint: String, jobId: String, alias: String, fingerprint: String, deviceModel: String, deviceType: String): LocalSendOutboundResult {
+        server.sendLocalSendJobToPeer(endpoint, jobId, alias, fingerprint, deviceModel, deviceType)
+    }
+
+    public func pullLocalSendFileFromPeer(endpoint: String, sessionId: String, fileId: String, token: String, fileName: String, peerDisplayName: String): LocalSendOutboundResult {
+        server.pullLocalSendFileFromPeer(endpoint, sessionId, fileId, token, fileName, peerDisplayName)
+    }
+
+    public func localSendPolicySnapshot(): JsonObject {
+        server.localSendPolicySnapshot()
+    }
+
+    public func configureLocalSendAcceptPolicy(policy: String, defaultSaveDir: String, whitelist: String, blacklist: String): Unit {
+        server.configureLocalSendAcceptPolicy(policy, defaultSaveDir, whitelist, blacklist)
+    }
+
     public func cacheDescriptor(jobId: String): ?(String, String) {
         server.relayCacheDescriptor(jobId)
     }
@@ -260,6 +320,10 @@ public class RelayMaster {
 
     public func createText(sourceDevice: String, fileName: String, content: String, targetPath: String): RelayJob {
         server.createRelayTextRecord(sourceDevice, fileName, content, targetPath)
+    }
+
+    public func createText(sourceDevice: String, fileName: String, content: String, targetPath: String, sessionId: String): RelayJob {
+        server.createRelayTextRecord(sourceDevice, fileName, content, targetPath, sessionId)
     }
 
     public func retry(jobId: String): ?RelayJob {

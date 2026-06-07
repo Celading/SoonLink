@@ -279,6 +279,9 @@
                             <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-open-text-station-btn">
                                 <i class="bi bi-chat-dots"></i> 文字站
                             </button>
+                            <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-open-localsend-policy-btn">
+                                <i class="bi bi-broadcast-pin"></i> LocalSend
+                            </button>
                             <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-select-visible-btn">
                                 <i class="bi bi-check2-square"></i> 选择可见
                             </button>
@@ -415,6 +418,9 @@
                             <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-preview-download-btn" hidden>
                                 <i class="bi bi-download me-1"></i>下载缓存
                             </button>
+                            <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-preview-copy-btn" hidden>
+                                <i class="bi bi-copy me-1"></i>复制原文
+                            </button>
                             <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-preview-clear-btn" hidden>
                                 <i class="bi bi-x-lg me-1"></i>清空预览
                             </button>
@@ -469,6 +475,101 @@
                         </div>
                         <button type="submit" class="btn btn-primary">保存</button>
                     </form>
+                </div>
+                <div class="app-card mt-3" id="soonlink-pwa-settings-card">
+                    <h2>应用壳</h2>
+                    <p class="text-muted mb-0">桌面浏览器可直接安装为独立应用窗口；手机与平板不再显示全局浮层，统一在这里查看状态与安装指引。</p>
+                    <div id="soonlink-pwa-shell" class="soonlink-pwa-shell soonlink-pwa-settings-shell mt-3">
+                        <div class="soonlink-pwa-surface-copy">
+                            <div id="soonlink-pwa-status" class="soonlink-pwa-status" aria-live="polite"></div>
+                            <p id="soonlink-pwa-note" class="soonlink-pwa-note">正在检查当前浏览器的安装能力与离线壳状态。</p>
+                        </div>
+                        <button type="button" class="btn btn-primary soonlink-pwa-install-btn" id="soonlink-pwa-install-btn">安装应用</button>
+                    </div>
+                </div>
+                <div class="app-card mt-3" id="localsend-policy-settings-card" data-capability="relay">
+                    <div class="card-head stacked-mobile">
+                        <div>
+                            <h2>LocalSend 中转接收</h2>
+                            <p class="text-muted mb-0">LocalSend 文件会先进入中转站缓存，并在 Messenger 文字站里显示为协议频道消息。</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="localsend-policy-refresh-btn">
+                            <i class="bi bi-arrow-clockwise"></i>刷新
+                        </button>
+                    </div>
+                    <div class="stat-chips mt-3">
+                        <span class="stat-chip" id="localsend-policy-status-chip">状态 待加载</span>
+                        <span class="stat-chip" id="localsend-policy-mode-chip">策略 -</span>
+                        <span class="stat-chip" id="localsend-policy-save-chip">保存目录 -</span>
+                    </div>
+                    <form id="localsend-policy-form" class="mt-3">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label for="localsend-accept-policy" class="form-label">接收策略</label>
+                                <select class="form-select" id="localsend-accept-policy">
+                                    <option value="manual">manual - 只缓存，手动确认</option>
+                                    <option value="whitelist">whitelist - 白名单自动保存</option>
+                                    <option value="auto">auto - 非黑名单自动保存</option>
+                                    <option value="reject">reject - 全部拒绝</option>
+                                </select>
+                            </div>
+                            <div class="col-md-8">
+                                <label for="localsend-default-save-dir" class="form-label">默认保存目录</label>
+                                <input class="form-control" id="localsend-default-save-dir" placeholder="/tmpSL">
+                                <div class="form-text">白名单或 auto 策略命中后，会保存到这个目录；否则只留在中转缓存等待手动处理。</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="localsend-whitelist" class="form-label">白名单</label>
+                                <textarea class="form-control" id="localsend-whitelist" rows="3" placeholder="fingerprint、alias、endpoint，逗号或换行分隔"></textarea>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="localsend-blacklist" class="form-label">黑名单</label>
+                                <textarea class="form-control" id="localsend-blacklist" rows="3" placeholder="命中后始终拒绝，优先级高于白名单和 auto"></textarea>
+                            </div>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 mt-3">
+                            <button class="btn btn-primary" type="submit" id="localsend-policy-save-btn">保存策略</button>
+                            <button class="btn btn-outline-secondary" type="button" id="localsend-policy-copy-info-btn">复制 info 接口</button>
+                        </div>
+                    </form>
+                    <div class="lanzig-feed-meta mt-3">
+                        <div><span>发现</span><strong id="localsend-discovery-route">UDP 224.0.0.167:53317</strong></div>
+                        <div><span>Info</span><strong id="localsend-info-route">/api/localsend/v2/info</strong></div>
+                        <div><span>聊天室</span><strong id="localsend-room-route">adapter-localsend-&lt;peer&gt;</strong></div>
+                    </div>
+                    <p class="section-note mt-3 mb-0" id="localsend-policy-note">如果 LocalSend 没发现 SoonLink，先确认本机服务监听地址、LocalSend announce 已启用，以及系统防火墙/多播接口没有拦截。</p>
+                </div>
+                <div class="app-card mt-3" id="lanzig-feed-settings-card">
+                    <div class="card-head stacked-mobile">
+                        <div>
+                            <h2>Lanzig Feed</h2>
+                            <p class="text-muted mb-0">只读 Markdown feed 托管面；用于手动导入，不代表被动同步或写回。</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="lanzig-feed-refresh-btn">
+                            <i class="bi bi-arrow-clockwise"></i>刷新
+                        </button>
+                    </div>
+                    <div class="stat-chips mt-3">
+                        <span class="stat-chip" id="lanzig-feed-status-chip">状态 待加载</span>
+                        <span class="stat-chip" id="lanzig-feed-count-chip">条目 -</span>
+                        <span class="stat-chip" id="lanzig-feed-mode-chip">只读 / 非同步</span>
+                    </div>
+                    <div class="mt-3">
+                        <label for="lanzig-feed-url" class="form-label">Feed URL</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="lanzig-feed-url" readonly value="等待加载...">
+                            <button class="btn btn-outline-secondary" type="button" id="lanzig-feed-copy-btn">
+                                <i class="bi bi-copy me-1"></i>复制
+                            </button>
+                            <button class="btn btn-outline-primary" type="button" id="lanzig-feed-open-btn">打开</button>
+                        </div>
+                    </div>
+                    <div class="lanzig-feed-meta mt-3">
+                        <div><span>协议</span><strong id="lanzig-feed-protocol">-</strong></div>
+                        <div><span>源目录</span><strong id="lanzig-feed-source-path">/lanzig-feed</strong></div>
+                        <div><span>正文路由</span><strong id="lanzig-feed-markdown-route">/api/lanzig/md/:noteId</strong></div>
+                    </div>
+                    <p class="section-note mt-3 mb-0" id="lanzig-feed-note">把 Markdown 文件放入 `/lanzig-feed` 后刷新即可发布到只读 feed。</p>
                 </div>
             </section>
 
@@ -961,8 +1062,8 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <div>
-                        <h5 class="modal-title mb-1">文字中转站</h5>
-                        <div class="text-muted small">像短信会话一样查看、发送、下载、回流与删记录。</div>
+                        <h5 class="modal-title mb-1">Messenger 文字中转站</h5>
+                        <div class="text-muted small">按会话查看文字、来向传输请求和自提确认；默认会话会追加到同一个 txt。</div>
                     </div>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -970,8 +1071,8 @@
                     <div class="relay-text-station-layout">
                         <div class="relay-text-station-sidebar">
                             <div class="preview-head">
-                                <span>文字记录</span>
-                                <span class="text-muted small" id="relay-text-station-count">0 条</span>
+                                <span>会话 / 文字记录</span>
+                                <span class="text-muted small" id="relay-text-station-count">0 个</span>
                             </div>
                             <div class="relay-text-station-list" id="relay-text-station-list"></div>
                         </div>
@@ -986,6 +1087,9 @@
                                         <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-text-station-download-btn" disabled>
                                             <i class="bi bi-download me-1"></i>下载缓存
                                         </button>
+                                        <button class="btn btn-sm btn-outline-secondary pd-fl-cc" type="button" id="relay-text-station-copy-btn" disabled>
+                                            <i class="bi bi-copy me-1"></i>复制原文
+                                        </button>
                                         <button class="btn btn-sm btn-outline-primary pd-fl-cc" type="button" id="relay-text-station-restore-btn" disabled>
                                             <i class="bi bi-arrow-down-square me-1"></i>回流到当前目录/tmpSL
                                         </button>
@@ -995,11 +1099,7 @@
                                     </div>
                                 </div>
                                 <div class="relay-text-station-stream" id="relay-text-station-stream">
-                                    <div class="transfer-preview-empty relay-text-station-empty" id="relay-text-station-empty">选择左侧记录后，会在这里按会话气泡展示内容；超过预览阈值时可直接下载。</div>
-                                    <div class="relay-text-bubble" id="relay-text-station-bubble" hidden>
-                                        <div class="relay-text-bubble-meta" id="relay-text-station-bubble-meta"></div>
-                                        <pre class="relay-text-bubble-text" id="relay-text-station-bubble-text"></pre>
-                                    </div>
+                                    <div class="transfer-preview-empty relay-text-station-empty">选择左侧记录后，会在这里按会话气泡展示内容；传输请求会作为系统气泡出现，接受后由本节点 HTTP 自提。</div>
                                 </div>
                             </div>
                             <div class="relay-text-compose">
@@ -1009,12 +1109,12 @@
                                         <select class="form-select form-select-sm" id="relay-modal-source-device"></select>
                                     </div>
                                     <div class="col-md-8">
-                                        <label for="relay-modal-text-name" class="form-label">记录名</label>
-                                        <input class="form-control form-control-sm" id="relay-modal-text-name" placeholder="留空则自动生成 tmpTXT-{毫秒}.txt">
+                                        <label for="relay-modal-text-name" class="form-label">会话文件名</label>
+                                        <input class="form-control form-control-sm" id="relay-modal-text-name" placeholder="留空则使用 soonlink-room.txt">
                                     </div>
                                     <div class="col-12">
                                         <label for="relay-modal-text-content" class="form-label">文字内容</label>
-                                        <textarea class="form-control form-control-sm" id="relay-modal-text-content" rows="5" placeholder="像发短信一样输入文本，发送后默认按当前目录的 tmpSL/tmpTXT-{毫秒}.txt 处理。"></textarea>
+                                        <textarea class="form-control form-control-sm" id="relay-modal-text-content" rows="5" placeholder="像发短信一样输入文本；发送后追加到默认会话 txt，而不是每条都新建一个 txt。"></textarea>
                                     </div>
                                 </div>
                                 <div class="d-flex gap-2 align-items-center justify-content-between flex-wrap mt-2">

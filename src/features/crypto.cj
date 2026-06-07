@@ -43,20 +43,28 @@ public class CryptoManager {
         }
     }
 
+    public func cleanupExpiredSessionsAt(now: Int64): Int64 {
+        synchronized(mutex) {
+            let expired = ArrayList<String>()
+            for ((id, session) in sessions) {
+                if (now > session.expireAt) {
+                    expired.add(id)
+                }
+            }
+            for (id in expired) {
+                sessions.remove(id)
+            }
+            expired.size
+        }
+    }
+
     func cleanupLoop(): Unit {
         while (true) {
             sleep(Duration.minute * 10)
-            let now = currentTimestamp()
-            synchronized(mutex) {
-                let expired = ArrayList<String>()
-                for ((id, session) in sessions) {
-                    if (now > session.expireAt) {
-                        expired.add(id)
-                    }
-                }
-                for (id in expired) {
-                    sessions.remove(id)
-                }
+            try {
+                _ = cleanupExpiredSessionsAt(currentTimestamp())
+            } catch (e: Exception) {
+                println("[CryptoManager] cleanup tick failed, continuing: ${e.message}")
             }
         }
     }

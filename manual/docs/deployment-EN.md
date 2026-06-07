@@ -40,6 +40,6 @@ Relevant scripts:
 ## Confirm Before Deploying
 
 - `CANGJIE_STDX_PATH` is set correctly
-- `config/soonlink.toml` is valid
+- `~/.soonlink/etc/sl-config.toml` is readable and writable, or `./config/soonlink.toml` is readable and writable
 - `config/devices.json` and the log directory are writable
 - port `8081` is not already occupied

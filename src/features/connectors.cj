@@ -269,6 +269,8 @@ public func normalizeConnectorType(raw: String): String {
         case "soonlink-node" => "soonlink-http"
         case "soonlink-http" => "soonlink-http"
         case "soonlnk-http" => "soonlink-http"
+        case "soonlink-lite" => "soonlink-lite"
+        case "soonlnk-lite" => "soonlink-lite"
         case _ => normalized
     }
 }

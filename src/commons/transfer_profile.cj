@@ -241,10 +241,10 @@ func isArchiveTransferType(mimeType: String, ext: String, normalizedPath: String
         ext == "rar" ||
         ext == "tar" ||
         ext == "gz" ||
-        ext == "tgz" ||
         ext == "bz2" ||
-        ext == "tbz2" ||
         ext == "xz" ||
+        ext == "tgz" ||
+        ext == "tbz2" ||
         ext == "txz" ||
         strEndsWithTransfer(normalizedPath, ".tar.gz") ||
         strEndsWithTransfer(normalizedPath, ".tar.bz2") ||

@@ -40,6 +40,6 @@ cjpm test
 ## 部署前确认
 
 - `CANGJIE_STDX_PATH` 正确
-- `config/soonlink.toml` 可用
+- `~/.soonlink/etc/sl-config.toml` 可读写，或 `./config/soonlink.toml` 可读写
 - `config/devices.json` 与日志目录有可写权限
 - 端口 `8081` 未被占用

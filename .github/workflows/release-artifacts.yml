@@ -35,9 +35,11 @@ env:
   CANGJIE_STDX_REPO: ${{ vars.CANGJIE_STDX_REPO != '' && vars.CANGJIE_STDX_REPO || 'https://gitcode.com/Cangjie/cangjie_stdx' }}
   CANGJIE_STDX_RELEASE_VERSION: ${{ vars.CANGJIE_STDX_RELEASE_VERSION }}
   CANGJIE_NIGHTLY_TAGS_API: ${{ vars.CANGJIE_NIGHTLY_TAGS_API != '' && vars.CANGJIE_NIGHTLY_TAGS_API || 'https://api.gitcode.com/api/v5/repos/Cangjie/nightly_build/tags?per_page=100' }}
-  IGNITE_GIT_URL: https://atomgit.com/cinyu/ignite-cangjie.git
-  LISI_GIT_URL: https://atomgit.com/cinyu/lisi.git
-  JINGUISSL_GIT_URL: https://atomgit.com/cinyu/jinguiSSL.git
+  IGNITE_GIT_URL: https://gitcode.com/cinyu/ignite-cangjie.git
+  LISI_GIT_URL: https://gitcode.com/cinyu/lisi.git
+  JINGUISSL_GIT_URL: https://gitcode.com/cinyu/jinguiSSL.git
+  JINGUISSL_CORE_GIT_URL: https://gitcode.com/CjKu/JinguiCore.git
+  SEAJSON_GIT_URL: https://gitcode.com/CjKu/SeaJson.git
 
 jobs:
   metadata:
@@ -231,17 +233,6 @@ jobs:
 
           echo "GitCode credentials are not configured; continuing with public clone access."
 
-      - name: Configure AtomGit Credentials
-        if: ${{ steps.availability.outputs.enabled == 'true' }}
-        shell: bash
-        run: |
-          if [[ -n "${{ secrets.ATOMGIT_USERNAME }}" && -n "${{ secrets.ATOMGIT_TOKEN }}" ]]; then
-            git config --global url."https://${{ secrets.ATOMGIT_USERNAME }}:${{ secrets.ATOMGIT_TOKEN }}@atomgit.com/".insteadOf "https://atomgit.com/"
-            exit 0
-          fi
-
-          echo "AtomGit credentials are not configured; continuing with public clone access."
-
       - name: Clone dependency repositories
         if: ${{ steps.availability.outputs.enabled == 'true' }}
         shell: bash
@@ -252,6 +243,8 @@ jobs:
           git clone --depth 1 "${IGNITE_GIT_URL}" "${deps_root}/Ignite0500"
           git clone --depth 1 "${LISI_GIT_URL}" "${deps_root}/lisi"
           git clone --depth 1 "${JINGUISSL_GIT_URL}" "${deps_root}/jinguiSSL"
+          git clone --depth 1 "${JINGUISSL_CORE_GIT_URL}" "${deps_root}/JinguiCore"
+          git clone --depth 1 "${SEAJSON_GIT_URL}" "${deps_root}/SeaJson"
 
       - name: Prepare release workspace
         id: workspace
@@ -266,7 +259,9 @@ jobs:
             --output "${workspace_root}" \
             --ignite "${deps_root}/Ignite0500" \
             --lisi "${deps_root}/lisi" \
-            --jinguissl "${deps_root}/jinguiSSL"
+            --jinguissl "${deps_root}/jinguiSSL" \
+            --jinguissl-core "${deps_root}/JinguiCore" \
+            --seajson "${deps_root}/SeaJson"
           {
             echo "root=${workspace_root}"
             echo "core_dir=${workspace_root}/SoonLink-Core"

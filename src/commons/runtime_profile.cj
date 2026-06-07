@@ -45,6 +45,10 @@ public func normalizeAppConfigForRuntime(config: AppConfig, profile: RuntimeProf
     }
     if (!profile.supportsRelay) {
         out.relayEnabled = false
+        out.localSendEnabled = false
+        out.localSendDiscoveryEnabled = false
+        out.localSendAnnounceEnabled = false
+        out.localSendDownloadEnabled = false
     }
     out
 }

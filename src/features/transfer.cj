@@ -111,6 +111,20 @@ public class TransferEngine {
     }
 
     func selectBestProtocol(task: TransferTask): String {
+        if (task.protocolCandidates.size > 0) {
+            task.protocolCandidates = sanitizeTransferProtocolPreferences(task.protocolCandidates)
+            for (protocolName in task.protocolCandidates) {
+                if (!isRuntimeReadyTransferProtocol(protocolName)) {
+                    continue
+                }
+                synchronized(mutex) {
+                    if (let Some(_protocol) <- protocols.get(protocolName)) {
+                        return protocolName
+                    }
+                }
+            }
+        }
+
         if (task.fileCategory.trimAscii().size == 0) {
             task.fileCategory = resolveTransferFileCategory(
                 task.filePath,

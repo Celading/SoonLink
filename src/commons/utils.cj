@@ -156,18 +156,71 @@ public func escapeJsonString(s: String): String {
     result
 }
 
+func byteUnitLabel(index: Int64): String {
+    match (index) {
+        case 0 => "B"
+        case 1 => "KB"
+        case 2 => "MB"
+        case 3 => "GB"
+        case 4 => "TB"
+        case 5 => "PB"
+        case _ => "PB"
+    }
+}
+
+func byteDisplayDigits(whole: Int64): Int64 {
+    if (whole >= 100) {
+        return 0
+    }
+    if (whole >= 10) {
+        return 1
+    }
+    2
+}
+
+func formatScaledDecimal(value: Int64, digits: Int64): String {
+    if (digits <= 0) {
+        return value.toString()
+    }
+    let scale = if (digits == 1) { 10 } else { 100 }
+    let whole = value / scale
+    let fraction = value % scale
+    if (fraction == 0) {
+        return whole.toString()
+    }
+    if (digits == 1) {
+        return "${whole}.${fraction}"
+    }
+    if (fraction % 10 == 0) {
+        return "${whole}.${fraction / 10}"
+    }
+    if (fraction < 10) {
+        return "${whole}.0${fraction}"
+    }
+    "${whole}.${fraction}"
+}
+
 public func formatBytes(bytes: Int64): String {
-    if (bytes < 1024) {
-        return "${bytes} B"
+    if (bytes <= 0) {
+        return "0 B"
     }
-    if (bytes < 1024 * 1024) {
-        let kb = bytes / 1024
-        return "${kb} KB"
+
+    var unitIndex: Int64 = 0
+    var divisor: Int64 = 1
+    while (unitIndex < 5 && bytes / divisor >= 1024) {
+        divisor *= 1024
+        unitIndex += 1
     }
-    if (bytes < 1024 * 1024 * 1024) {
-        let mb = bytes / (1024 * 1024)
-        return "${mb} MB"
+
+    if (unitIndex == 0) {
+        return "${bytes} ${byteUnitLabel(unitIndex)}"
     }
-    let gb = bytes / (1024 * 1024 * 1024)
-    "${gb} GB"
+
+    let whole = bytes / divisor
+    let remainder = bytes % divisor
+    let digits = byteDisplayDigits(whole)
+    let scale = if (digits == 1) { 10 } else if (digits == 2) { 100 } else { 1 }
+    let rounded = (remainder * scale + divisor / 2) / divisor
+    let scaledValue = whole * scale + rounded
+    "${formatScaledDecimal(scaledValue, digits)} ${byteUnitLabel(unitIndex)}"
 }

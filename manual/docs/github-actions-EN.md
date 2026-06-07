@@ -82,11 +82,17 @@ That split keeps the repository validation path lightweight while leaving the fu
 - `HOMEBREW_TAP_BRANCH`
   Optional. Defaults to `main`.
 - `IGNITE_GIT_URL`
-  Optional. Defaults to `https://atomgit.com/cinyu/ignite-cangjie.git`.
+  Optional. Defaults to `https://gitcode.com/cinyu/ignite-cangjie.git`.
 - `LISI_GIT_URL`
-  Optional. Defaults to `https://atomgit.com/cinyu/lisi.git`.
+  Optional. Defaults to `https://gitcode.com/cinyu/lisi.git`.
 - `JINGUISSL_GIT_URL`
-  Optional. Defaults to `https://atomgit.com/cinyu/jinguiSSL.git`.
+  Optional. Defaults to `https://gitcode.com/cinyu/jinguiSSL.git`.
+- `JINGUISSL_CORE_GIT_URL`
+  Optional. Defaults to `https://gitcode.com/CjKu/JinguiCore.git`.
+- `SEAJSON_GIT_URL`
+  Optional. Defaults to `https://gitcode.com/CjKu/SeaJson.git`.
+
+GitHub mirrors can be supplied when needed: `IGNITE_GIT_URL=https://github.com/Celading/Ignite.git`, `JINGUISSL_GIT_URL=https://github.com/CangjieKu/JinGuiSSLCore.git`, `JINGUISSL_CORE_GIT_URL=https://github.com/CangjieKu/JinGuiSSL.git`, and `SEAJSON_GIT_URL=https://github.com/CangjieKu/SeaJson.git`.
 
 ## Credentials
 

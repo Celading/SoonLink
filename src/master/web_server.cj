@@ -8,8 +8,7 @@ import std.convert.*
 import std.unicode.*
 import std.sync.Mutex
 import std.fs.{File, FileInfo, OpenMode}
-import stdx.net.http.HttpResponseWriter
-import ignite.{App, Ctx, Config, FormFile, Handler, Group, RouteOption, ResponseSpec, ParamSpec, ParamLocation, SwaggerInfo}
+import ignite.{App, Ctx, Config, FileSegmentInputStream, FormFile, Handler, Group, RouteOption, ResponseSpec, ParamSpec, ParamLocation, SwaggerInfo}
 import ignite.middleware.{loggerMiddleware, corsMiddleware, recoverMiddleware, CorsConfig}
 import ignite.api2.GetData
 
@@ -24,6 +23,8 @@ let listDirCacheTTLSeconds: Int64 = 2
 let previewTextMaxBytes: Int64 = 256 * 1024
 let relayPreviewTextMaxBytes: Int64 = 128 * 1024
 let relayPreviewInlineMaxLines: Int64 = 240
+let lanzigFeedPath: String = "/lanzig-feed"
+let lanzigFeedVersion: String = "lanzig.feed.v0"
 
 public class ListDirCacheEntry {
     public let entries: ArrayList<FileEntry>
@@ -109,39 +110,247 @@ public func resolveWebAccessContext(
     )
 }
 
-func buildLocalOnlyMiddleware(config: AppConfig): Handler {
+public struct AdminAccessDecision {
+    public var allowed: Bool = false
+    public var authenticated: Bool = false
+    public var statusCode: UInt16 = 403
+    public var code: String = "ADMIN_ACCESS_DENIED"
+    public var error: String = "Admin access denied"
+    public var policy: String = "local_trust"
+
+    public init(
+        allowed!: Bool = false,
+        authenticated!: Bool = false,
+        statusCode!: UInt16 = 403,
+        code!: String = "ADMIN_ACCESS_DENIED",
+        error!: String = "Admin access denied",
+        policy!: String = "local_trust"
+    ) {
+        this.allowed = allowed
+        this.authenticated = authenticated
+        this.statusCode = statusCode
+        this.code = code
+        this.error = error
+        this.policy = policy
+    }
+}
+
+let adminSessionCookieName: String = "soonlink_admin_session"
+
+public func resolveAdminAccessDecision(
+    access: WebAccessContext,
+    auth: AuthProvider,
+    authorizationHeader: String,
+    cookieHeader: String
+): AdminAccessDecision {
+    let descriptor = auth.descriptor()
+    if (descriptor.passwordConfigured) {
+        let bearer = extractBearerToken(authorizationHeader)
+        if (bearer.size > 0 && auth.verifyBearerToken(bearer)) {
+            return AdminAccessDecision(
+                allowed: true,
+                authenticated: true,
+                statusCode: 200,
+                code: "ADMIN_AUTH_OK",
+                error: "",
+                policy: "bearer_token"
+            )
+        }
+
+        let sessionToken = extractCookieValue(cookieHeader, adminSessionCookieName)
+        if (sessionToken.size > 0 && auth.verifySessionToken(sessionToken)) {
+            return AdminAccessDecision(
+                allowed: true,
+                authenticated: true,
+                statusCode: 200,
+                code: "ADMIN_AUTH_OK",
+                error: "",
+                policy: "admin_session"
+            )
+        }
+
+        return AdminAccessDecision(
+            allowed: false,
+            authenticated: false,
+            statusCode: 401,
+            code: "ADMIN_AUTH_REQUIRED",
+            error: "Admin password/session token required",
+            policy: "session_required"
+        )
+    }
+
+    if (access.isLocalAdmin) {
+        return AdminAccessDecision(
+            allowed: true,
+            authenticated: false,
+            statusCode: 200,
+            code: "ADMIN_LOCAL_TRUST_OK",
+            error: "",
+            policy: "local_trust"
+        )
+    }
+
+    AdminAccessDecision(
+        allowed: false,
+        authenticated: false,
+        statusCode: 403,
+        code: "ADMIN_ACCESS_DENIED",
+        error: "Access denied - Admin panel only accessible from localhost unless admin auth is configured",
+        policy: "local_trust"
+    )
+}
+
+func buildAdminAuthMiddleware(config: AppConfig, auth: AuthProvider): Handler {
     { ctx: Ctx =>
         let access = resolveWebAccessContext(
             ctx.ip,
             ctx.header("x-forwarded-for") ?? "",
             config.localAuthTrustProxyHeaders
         )
-        if (access.isLocalAdmin) {
+        let decision = resolveAdminAccessDecision(
+            access,
+            auth,
+            ctx.header("authorization") ?? "",
+            ctx.header("cookie") ?? ""
+        )
+        if (decision.allowed) {
             ctx.next()
             return
         }
-        ctx.status(403).json(JsonObject()
-            .put("error", "Access denied - Admin panel only accessible from localhost")
-            .put("code", "ADMIN_ACCESS_DENIED")
+        if (decision.statusCode == 401) {
+            let _ = ctx.setHeader("WWW-Authenticate", "Bearer realm=\"SoonLink Admin\"")
+        }
+        ctx.status(decision.statusCode).json(JsonObject()
+            .put("error", decision.error)
+            .put("code", decision.code)
             .toString())
     }
 }
 
-func requireLocalApiAdmin(ctx: Ctx, config: AppConfig): Bool {
+func requireAdminApiAccess(ctx: Ctx, config: AppConfig, auth: AuthProvider): Bool {
     let access = resolveWebAccessContext(
         ctx.ip,
         ctx.header("x-forwarded-for") ?? "",
         config.localAuthTrustProxyHeaders
     )
-    if (access.isLocalAdmin) {
+    let decision = resolveAdminAccessDecision(
+        access,
+        auth,
+        ctx.header("authorization") ?? "",
+        ctx.header("cookie") ?? ""
+    )
+    if (decision.allowed) {
         return true
     }
-    ctx.status(403).json(JsonObject()
+    if (decision.statusCode == 401) {
+        let _ = ctx.setHeader("WWW-Authenticate", "Bearer realm=\"SoonLink Admin\"")
+    }
+    ctx.status(decision.statusCode).json(JsonObject()
         .putBool("success", false)
-        .put("error", "仅本机管理员可维护手动节点")
-        .put("code", "ADMIN_ACCESS_DENIED")
+        .put("error", if (decision.statusCode == 401) { "需要管理员密码会话或 Bearer Token" } else { "仅本机管理员可维护手动节点" })
+        .put("code", decision.code)
         .toString())
     false
+}
+
+func extractBearerToken(raw: String): String {
+    let trimmed = raw.trimAscii()
+    if (strStartsWith(trimmed.toLower(), "bearer ")) {
+        return strSubstring(trimmed, 7, trimmed.size).trimAscii()
+    }
+    ""
+}
+
+func extractCookieValue(header: String, name: String): String {
+    let target = name + "="
+    let runes = header.toRuneArray()
+    var segment = ""
+    var i: Int64 = 0
+    while (i <= runes.size) {
+        if (i == runes.size || runes[i] == r';') {
+            let trimmed = segment.trimAscii()
+            if (strStartsWith(trimmed, target)) {
+                return strSubstring(trimmed, target.size, trimmed.size).trimAscii()
+            }
+            segment = ""
+        } else {
+            segment += runes[i].toString()
+        }
+        i += 1
+    }
+    ""
+}
+
+func validatedAdminConfigPath(ctx: Ctx, field: String, raw: String): ?String {
+    let value = raw.trimAscii()
+    match (adminConfigPathError(field, value)) {
+        case Some(message) =>
+            ctx.status(400).json(JsonObject()
+                .putBool("success", false)
+                .put("error", message)
+                .put("field", field)
+                .toString())
+            None
+        case None =>
+            Some(value)
+    }
+}
+
+func adminConfigPathError(field: String, value: String): ?String {
+    if (value.size == 0) {
+        return Some("${field} cannot be empty")
+    }
+    let runes = value.toRuneArray()
+    var segment = ""
+    for (i in 0..runes.size) {
+        if (runes[i] == r'\\') {
+            return Some("${field} must use / path separators")
+        }
+        if (runes[i] == r'/') {
+            match (adminConfigPathSegmentError(field, segment)) {
+                case Some(message) => return Some(message)
+                case None => ()
+            }
+            segment = ""
+        } else {
+            segment += runes[i].toString()
+        }
+    }
+    match (adminConfigPathSegmentError(field, segment)) {
+        case Some(message) => return Some(message)
+        case None => ()
+    }
+    if (field == "localRootDir" && isProtectedLocalRoot(value)) {
+        return Some("localRootDir cannot point directly at a protected system root")
+    }
+    None
+}
+
+func adminConfigPathSegmentError(field: String, segment: String): ?String {
+    let value = segment.trimAscii()
+    if (value == "..") {
+        return Some("${field} cannot contain parent traversal")
+    }
+    None
+}
+
+func isProtectedLocalRoot(path: String): Bool {
+    let value = trimAdminPathTrailingSlash(path.trimAscii())
+    value == "/" || value == "/etc" || value == "/private/etc" || value == "/System" ||
+        value == "/Library" || value == "/Users" || value == "/usr" || value == "/bin" ||
+        value == "/sbin" || value == "/var" || value == "/private" || value == "/private/var"
+}
+
+func trimAdminPathTrailingSlash(path: String): String {
+    if (path.size <= 1) {
+        return path
+    }
+    let runes = path.toRuneArray()
+    var end = runes.size
+    while (end > 1 && runes[end - 1] == r'/') {
+        end -= 1
+    }
+    strSubstring(path, 0, end)
 }
 
 func extractFirstForwardedIP(forwardedFor: String): String {
@@ -410,9 +619,65 @@ public class WebServer {
             .withTag("系统")
         )
 
+        let lanzig = app.group("/api/lanzig")
+
+        lanzig.get("/status", { ctx: Ctx =>
+            let entries = m.files.listDir("local", lanzigFeedPath)
+            let baseUrl = resolvePublicBaseUrl(ctx)
+            let _ = ctx.setHeader("Content-Type", "application/json; charset=utf-8")
+            let _ = ctx.setHeader("Cache-Control", "no-store")
+            ctx.json(buildLanzigFeedStatusPayloadFromEntries(baseUrl, entries).toString())
+        }, option: RouteOption()
+            .withSummary("获取 Lanzig feed 发布状态")
+            .withTag("Lanzig")
+        )
+
+        lanzig.get("/feed.json", { ctx: Ctx =>
+            let entries = m.files.listDir("local", lanzigFeedPath)
+            let baseUrl = resolvePublicBaseUrl(ctx)
+            let _ = ctx.setHeader("Content-Type", "application/json; charset=utf-8")
+            let _ = ctx.setHeader("Cache-Control", "public, max-age=60")
+            ctx.json(buildLanzigFeedPayloadFromEntries(baseUrl, entries).toString())
+        }, option: RouteOption()
+            .withSummary("获取 Lanzig 只读 Markdown feed")
+            .withTag("Lanzig")
+        )
+
+        lanzig.get("/md/:noteId", { ctx: Ctx =>
+            let noteId = ctx.params("noteId")
+            match (resolveLanzigMarkdownPath(noteId)) {
+                case Some(path) =>
+                    match (m.files.getInfo("local", path)) {
+                        case Some(info) =>
+                            if (info.isDir) {
+                                ctx.status(400).json(JsonObject()
+                                    .putBool("success", false)
+                                    .put("error", "Lanzig markdown path cannot be a directory")
+                                    .toString())
+                                return
+                            }
+                            serveResolvedFileResponse(ctx, s, m, "local", path, info, false)
+                        case None =>
+                            ctx.status(404).json(JsonObject()
+                                .putBool("success", false)
+                                .put("error", "Lanzig markdown note not found")
+                                .toString())
+                    }
+                case None =>
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", "Invalid Lanzig markdown note id")
+                        .toString())
+            }
+        }, option: RouteOption()
+            .withSummary("读取 Lanzig Markdown 正文")
+            .withTag("Lanzig")
+            .withParam(ParamSpec("noteId", Path, description: "Markdown 文件名，例如 demo.md", required: true))
+        )
+
         // ── 管理员路由组 ──
         let admin = app.group("/admin")
-        admin.use(buildLocalOnlyMiddleware(s.config))
+        admin.use(buildAdminAuthMiddleware(s.config, s.authProvider))
 
         admin.get("/", { ctx: Ctx =>
             try {
@@ -444,16 +709,31 @@ public class WebServer {
             var updated = s.config
 
             if (let Some(v) <- parseJsonString(body, "tempDir")) {
-                if (v.size > 0) { updated.tempDir = v }
+                if (v.size > 0) {
+                    match (validatedAdminConfigPath(ctx, "tempDir", v)) {
+                        case Some(path) => updated.tempDir = path
+                        case None => return
+                    }
+                }
             }
             if (let Some(v) <- parseJsonString(body, "maxConnections")) {
                 try { updated.maxConnections = Int64.parse(v) } catch (_: Exception) {}
             }
             if (let Some(v) <- parseJsonString(body, "logDir")) {
-                if (v.size > 0) { updated.logDir = v }
+                if (v.size > 0) {
+                    match (validatedAdminConfigPath(ctx, "logDir", v)) {
+                        case Some(path) => updated.logDir = path
+                        case None => return
+                    }
+                }
             }
             if (let Some(v) <- parseJsonString(body, "localRootDir")) {
-                if (v.size > 0) { updated.localRootDir = v }
+                if (v.size > 0) {
+                    match (validatedAdminConfigPath(ctx, "localRootDir", v)) {
+                        case Some(path) => updated.localRootDir = path
+                        case None => return
+                    }
+                }
             }
             if (s.profile.supportsPeerTransfer) {
                 if (let Some(v) <- parseJsonString(body, "securityMode")) {
@@ -490,7 +770,12 @@ public class WebServer {
             }
             if (s.profile.supportsRelay) {
                 if (let Some(v) <- parseJsonString(body, "relayCacheDir")) {
-                    if (v.size > 0) { updated.relayCacheDir = v }
+                    if (v.size > 0) {
+                        match (validatedAdminConfigPath(ctx, "relayCacheDir", v)) {
+                            case Some(path) => updated.relayCacheDir = path
+                            case None => return
+                        }
+                    }
                 }
             }
             if (s.profile.supportsRelay) {
@@ -513,6 +798,47 @@ public class WebServer {
                     try { updated.relayLimitPercent = Int64.parse(v) } catch (_: Exception) {}
                 }
             }
+            if (s.profile.supportsRelay) {
+                if (let Some(v) <- parseJsonString(body, "localSendEnabled")) {
+                    updated.localSendEnabled = v == "true"
+                }
+                if (let Some(v) <- parseJsonString(body, "localSendDiscoveryEnabled")) {
+                    updated.localSendDiscoveryEnabled = v == "true"
+                }
+                if (let Some(v) <- parseJsonString(body, "localSendAnnounceEnabled")) {
+                    updated.localSendAnnounceEnabled = v == "true"
+                }
+                if (let Some(v) <- parseJsonString(body, "localSendAnnounceIntervalSeconds")) {
+                    try { updated.localSendAnnounceIntervalSeconds = Int64.parse(v) } catch (_: Exception) {}
+                }
+                if (let Some(v) <- parseJsonString(body, "localSendAlias")) {
+                    updated.localSendAlias = v
+                }
+                if (let Some(v) <- parseJsonString(body, "localSendFingerprint")) {
+                    updated.localSendFingerprint = v
+                }
+                if (let Some(v) <- parseJsonString(body, "localSendDeviceModel")) {
+                    updated.localSendDeviceModel = v
+                }
+                if (let Some(v) <- parseJsonString(body, "localSendDeviceType")) {
+                    updated.localSendDeviceType = v
+                }
+                if (let Some(v) <- parseJsonString(body, "localSendDownloadEnabled")) {
+                    updated.localSendDownloadEnabled = v == "true"
+                }
+                if (let Some(v) <- parseJsonString(body, "localSendAcceptPolicy")) {
+                    updated.localSendAcceptPolicy = normalizeLocalSendAcceptPolicy(v)
+                }
+                if (let Some(v) <- parseJsonString(body, "localSendDefaultSaveDir")) {
+                    updated.localSendDefaultSaveDir = if (v.trimAscii().size > 0) { v.trimAscii() } else { "/tmpSL" }
+                }
+                if (let Some(v) <- parseJsonString(body, "localSendWhitelist")) {
+                    updated.localSendWhitelist = v
+                }
+                if (let Some(v) <- parseJsonString(body, "localSendBlacklist")) {
+                    updated.localSendBlacklist = v
+                }
+            }
             if (s.profile.supportsFavorites) {
                 if (let Some(v) <- parseJsonString(body, "favoritesStoreMode")) {
                     if (v == "cache" || v == "toml") { updated.favoritesStoreMode = v }
@@ -520,17 +846,33 @@ public class WebServer {
             }
             if (s.profile.supportsFavorites) {
                 if (let Some(v) <- parseJsonString(body, "favoritesTomlFile")) {
-                    if (v.size > 0) { updated.favoritesTomlFile = v }
+                    if (v.size > 0) {
+                        match (validatedAdminConfigPath(ctx, "favoritesTomlFile", v)) {
+                            case Some(path) => updated.favoritesTomlFile = path
+                            case None => return
+                        }
+                    }
                 }
             }
             if (s.profile.supportsWhitelist) {
                 if (let Some(v) <- parseJsonString(body, "whitelistTomlFile")) {
-                    if (v.size > 0) { updated.whitelistTomlFile = v }
+                    if (v.size > 0) {
+                        match (validatedAdminConfigPath(ctx, "whitelistTomlFile", v)) {
+                            case Some(path) => updated.whitelistTomlFile = path
+                            case None => return
+                        }
+                    }
                 }
             }
 
             updated = normalizeAppConfigForRuntime(updated, s.profile)
             saveAppConfig(updated)
+            m.relay.configureLocalSendAcceptPolicy(
+                updated.localSendAcceptPolicy,
+                updated.localSendDefaultSaveDir,
+                updated.localSendWhitelist,
+                updated.localSendBlacklist
+            )
 
             ctx.json(JsonObject()
                 .putBool("success", true)
@@ -644,9 +986,66 @@ public class WebServer {
                 ctx.header("x-forwarded-for") ?? "",
                 s.config.localAuthTrustProxyHeaders
             )
-            ctx.json(buildSessionContextPayload(s, access).toString())
+            ctx.json(buildSessionContextPayload(
+                s,
+                access,
+                ctx.header("authorization") ?? "",
+                ctx.header("cookie") ?? ""
+            ).toString())
         }, option: RouteOption()
             .withSummary("获取当前访问上下文")
+            .withTag("会话")
+        )
+
+        api.post("/session/login", { ctx: Ctx =>
+            let descriptor = s.authProvider.descriptor()
+            if (!descriptor.passwordConfigured) {
+                ctx.status(400).json(JsonObject()
+                    .putBool("success", false)
+                    .put("error", "管理员密码未配置，当前仍使用本机信任兼容策略")
+                    .put("code", "ADMIN_PASSWORD_NOT_CONFIGURED")
+                    .toString())
+                return
+            }
+
+            let body = ctx.bodyString()
+            let password = parseJsonString(body, "password") ?? ""
+            if (!s.authProvider.verifyPassword(password)) {
+                ctx.status(401).json(JsonObject()
+                    .putBool("success", false)
+                    .put("error", "管理员密码不正确")
+                    .put("code", "ADMIN_PASSWORD_INVALID")
+                    .toString())
+                return
+            }
+
+            let token = s.authProvider.issueSessionToken()
+            let ttl = s.authProvider.sessionTtlSeconds()
+            let expiresAt = currentTimestamp() + ttl
+            let _ = ctx.setHeader("Set-Cookie", "${adminSessionCookieName}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${ttl}")
+            ctx.json(JsonObject()
+                .putBool("success", true)
+                .put("token", token)
+                .putInt("expiresAt", expiresAt)
+                .put("policy", "admin_session")
+                .toString())
+        }, option: RouteOption()
+            .withSummary("管理员密码登录")
+            .withTag("会话")
+        )
+
+        api.post("/session/logout", { ctx: Ctx =>
+            let sessionToken = extractCookieValue(ctx.header("cookie") ?? "", adminSessionCookieName)
+            if (sessionToken.size > 0) {
+                s.authProvider.revokeSessionToken(sessionToken)
+            }
+            let _ = ctx.setHeader("Set-Cookie", "${adminSessionCookieName}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
+            ctx.json(JsonObject()
+                .putBool("success", true)
+                .put("message", "管理员会话已退出")
+                .toString())
+        }, option: RouteOption()
+            .withSummary("管理员退出登录")
             .withTag("会话")
         )
 
@@ -737,7 +1136,7 @@ public class WebServer {
         )
 
         devices.post("/register", { ctx: Ctx =>
-            if (!requireLocalApiAdmin(ctx, s.config)) {
+            if (!requireAdminApiAccess(ctx, s.config, s.authProvider)) {
                 return
             }
             let body = ctx.bodyString()
@@ -763,7 +1162,7 @@ public class WebServer {
         )
 
         devices.put("/:id", { ctx: Ctx =>
-            if (!requireLocalApiAdmin(ctx, s.config)) {
+            if (!requireAdminApiAccess(ctx, s.config, s.authProvider)) {
                 return
             }
 
@@ -809,7 +1208,7 @@ public class WebServer {
         )
 
         devices.delete("/:id", { ctx: Ctx =>
-            if (!requireLocalApiAdmin(ctx, s.config)) {
+            if (!requireAdminApiAccess(ctx, s.config, s.authProvider)) {
                 return
             }
 
@@ -871,7 +1270,7 @@ public class WebServer {
         )
 
         devices.post("/:id/trust", { ctx: Ctx =>
-            if (!requireLocalApiAdmin(ctx, s.config)) {
+            if (!requireAdminApiAccess(ctx, s.config, s.authProvider)) {
                 return
             }
 
@@ -906,7 +1305,7 @@ public class WebServer {
         )
 
         devices.post("/:id/pairing/pin", { ctx: Ctx =>
-            if (!requireLocalApiAdmin(ctx, s.config)) {
+            if (!requireAdminApiAccess(ctx, s.config, s.authProvider)) {
                 return
             }
 
@@ -939,7 +1338,7 @@ public class WebServer {
         )
 
         devices.post("/:id/pairing/confirm", { ctx: Ctx =>
-            if (!requireLocalApiAdmin(ctx, s.config)) {
+            if (!requireAdminApiAccess(ctx, s.config, s.authProvider)) {
                 return
             }
 
@@ -977,6 +1376,274 @@ public class WebServer {
         if (s.profile.supportsRelay) {
             let relay = api.group("/relay")
             let relayJobs = relay.group("/jobs")
+            let localSendV2 = api.group("/localsend/v2")
+
+            localSendV2.get("/info", { ctx: Ctx =>
+                let protocol = if (s.config.certFile.trimAscii().size > 0 && s.config.keyFile.trimAscii().size > 0) { "https" } else { "http" }
+                ctx.json(JsonObject()
+                    .put("alias", firstNonEmpty([
+                        s.config.localSendAlias,
+                        s.config.nodeId,
+                        "SoonLink Relay",
+                    ]))
+                    .put("version", "2.1")
+                    .put("deviceModel", if (s.config.localSendDeviceModel.trimAscii().size > 0) { s.config.localSendDeviceModel } else { "SoonLink" })
+                    .put("deviceType", if (s.config.localSendDeviceType.trimAscii().size > 0) { s.config.localSendDeviceType } else { "desktop" })
+                    .put("fingerprint", firstNonEmpty([
+                        s.config.localSendFingerprint,
+                        s.config.nodeId,
+                        "soonlink-relay",
+                    ]))
+                    .put("protocol", protocol)
+                    .putInt("port", Int64(s.config.webPort))
+                    .putBool("download", s.config.localSendDownloadEnabled)
+                    .toString())
+            }, option: RouteOption().withSummary("LocalSend v2 节点信息").withTag("LocalSend"))
+
+            localSendV2.post("/register", { ctx: Ctx =>
+                let body = ctx.bodyString()
+                let endpoint = resolveLocalSendPeerEndpointFromEnvelope(body, ctx.ip, resolvePublicBaseUrl(ctx))
+                match (parseLocalSendPeerInfoFromEnvelope(body, endpoint, "v2")) {
+                    case Some(info) =>
+                        let template = buildLocalSendInfoChannelAdapterMessage(info, "LocalSend peer registered")
+                        let payload = JsonObject()
+                            .putBool("success", true)
+                            .putObj("peerInfo", info.toJson())
+                            .putObj("messageTemplate", template.toJson())
+                        match (m.relay.recordLocalSendPeerRegistration(info, "LocalSend peer registered")) {
+                            case Some(job) =>
+                                payload.putBool("projected", true)
+                                    .putObj("projectedJob", job.toJson())
+                            case None =>
+                                payload.putBool("projected", false)
+                        }
+                        ctx.status(200).json(payload.toString())
+                    case None =>
+                        ctx.status(400).json(JsonObject()
+                            .putBool("success", false)
+                            .put("error", "LocalSend register payload invalid")
+                            .toString())
+                }
+            }, option: RouteOption().withSummary("LocalSend v2 register 兼容入口").withTag("LocalSend"))
+
+            localSendV2.post("/prepare-upload", { ctx: Ctx =>
+                let body = ctx.bodyString()
+                try {
+                    let endpoint = resolveLocalSendPeerEndpointFromEnvelope(body, ctx.ip, resolvePublicBaseUrl(ctx))
+                    let session = m.relay.prepareLocalSendUpload(body, endpoint)
+                    ctx.status(200).json(session.toPrepareUploadJson().toString())
+                } catch (e: Exception) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", e.message)
+                        .toString())
+                }
+            }, option: RouteOption().withSummary("LocalSend v2 prepare-upload").withTag("LocalSend"))
+
+            localSendV2.post("/upload", { ctx: Ctx =>
+                let sessionId = ctx.queryDefault("sessionId", "")
+                let fileId = ctx.queryDefault("fileId", "")
+                let token = ctx.queryDefault("token", "")
+                try {
+                    let job = m.relay.receiveLocalSendUpload(sessionId, fileId, token, ctx.bodyBytes())
+                    ctx.status(200).json(JsonObject()
+                        .putBool("success", true)
+                        .putObj("job", job.toJson())
+                        .toString())
+                } catch (e: Exception) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", e.message)
+                        .toString())
+                }
+            }, option: RouteOption().withSummary("LocalSend v2 upload").withTag("LocalSend"))
+
+            localSendV2.post("/cancel", { ctx: Ctx =>
+                let sessionId = ctx.queryDefault("sessionId", firstNonEmpty([
+                    parseJsonString(ctx.bodyString(), "sessionId") ?? "",
+                ]))
+                let ok = m.relay.cancelLocalSendUpload(sessionId)
+                ctx.status(if (ok) { 200 } else { 404 }).json(JsonObject()
+                    .putBool("success", ok)
+                    .put("sessionId", sessionId)
+                    .toString())
+            }, option: RouteOption().withSummary("LocalSend v2 cancel").withTag("LocalSend"))
+
+            localSendV2.post("/prepare-download", { ctx: Ctx =>
+                let body = ctx.bodyString()
+                let jobId = firstNonEmpty([
+                    parseJsonString(body, "jobId") ?? "",
+                    ctx.queryDefault("jobId", ""),
+                ])
+                try {
+                    let session = m.relay.prepareLocalSendDownload(jobId)
+                    ctx.status(200).json(session.toPrepareUploadJson().toString())
+                } catch (e: Exception) {
+                    ctx.status(404).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", e.message)
+                        .toString())
+                }
+            }, option: RouteOption().withSummary("LocalSend v2 prepare-download").withTag("LocalSend"))
+
+            localSendV2.get("/download", { ctx: Ctx =>
+                let sessionId = ctx.queryDefault("sessionId", "")
+                let fileId = ctx.queryDefault("fileId", "")
+                let token = ctx.queryDefault("token", "")
+                match (m.relay.localSendDownloadCacheDescriptor(sessionId, fileId, token)) {
+                    case Some((cachePath, fileName)) =>
+                        let _ = ctx.download(cachePath, filename: fileName)
+                    case None =>
+                        ctx.status(404).json(JsonObject()
+                            .putBool("success", false)
+                            .put("error", "LocalSend download token invalid or cache unavailable")
+                            .toString())
+                }
+            }, option: RouteOption().withSummary("LocalSend v2 download").withTag("LocalSend"))
+
+            relay.get("/localsend/policy", { ctx: Ctx =>
+                ctx.json(JsonObject()
+                    .putBool("success", true)
+                    .putObj("policy", m.relay.localSendPolicySnapshot())
+                    .toString())
+            }, option: RouteOption().withSummary("读取 LocalSend 中转接收策略").withTag("中继"))
+
+            relay.post("/localsend/policy", { ctx: Ctx =>
+                if (!requireAdminApiAccess(ctx, s.config, s.authProvider)) {
+                    return
+                }
+                let isJsonRequest = strContains((ctx.header("content-type") ?? "").toLower(), "application/json")
+                let body = if (isJsonRequest) { ctx.bodyString() } else { "" }
+                let policy = normalizeLocalSendAcceptPolicy(firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "acceptPolicy") ?? "" } else { "" },
+                    if (isJsonRequest) { parseJsonString(body, "policy") ?? "" } else { "" },
+                    ctx.formValue("acceptPolicy") ?? "",
+                    ctx.formValue("policy") ?? "",
+                    s.config.localSendAcceptPolicy,
+                ]))
+                let defaultSaveDir = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "defaultSaveDir") ?? "" } else { "" },
+                    if (isJsonRequest) { parseJsonString(body, "saveDir") ?? "" } else { "" },
+                    ctx.formValue("defaultSaveDir") ?? "",
+                    ctx.formValue("saveDir") ?? "",
+                    s.config.localSendDefaultSaveDir,
+                    "/tmpSL",
+                ])
+                let whitelist = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "whitelist") ?? "" } else { "" },
+                    ctx.formValue("whitelist") ?? "",
+                    s.config.localSendWhitelist,
+                ])
+                let blacklist = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "blacklist") ?? "" } else { "" },
+                    ctx.formValue("blacklist") ?? "",
+                    s.config.localSendBlacklist,
+                ])
+
+                var updated = s.config
+                updated.localSendAcceptPolicy = policy
+                updated.localSendDefaultSaveDir = if (defaultSaveDir.trimAscii().size > 0) { defaultSaveDir.trimAscii() } else { "/tmpSL" }
+                updated.localSendWhitelist = whitelist
+                updated.localSendBlacklist = blacklist
+                saveAppConfig(updated)
+                m.relay.configureLocalSendAcceptPolicy(policy, updated.localSendDefaultSaveDir, whitelist, blacklist)
+
+                ctx.status(200).json(JsonObject()
+                    .putBool("success", true)
+                    .put("message", "LocalSend accept policy updated")
+                    .putObj("policy", m.relay.localSendPolicySnapshot())
+                    .toString())
+            }, option: RouteOption().withSummary("更新 LocalSend 中转接收策略").withTag("中继"))
+
+            relay.post("/localsend/send", { ctx: Ctx =>
+                if (!requireAdminApiAccess(ctx, s.config, s.authProvider)) {
+                    return
+                }
+                let isJsonRequest = strContains((ctx.header("content-type") ?? "").toLower(), "application/json")
+                let body = if (isJsonRequest) { ctx.bodyString() } else { "" }
+                let endpoint = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "endpoint") ?? "" } else { "" },
+                    ctx.formValue("endpoint") ?? "",
+                ])
+                let jobId = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "jobId") ?? "" } else { "" },
+                    ctx.formValue("jobId") ?? "",
+                ])
+                if (endpoint.trimAscii().size == 0 || jobId.trimAscii().size == 0) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", "endpoint 与 jobId 不能为空")
+                        .toString())
+                    return
+                }
+
+                try {
+                    let result = m.relay.sendLocalSendJobToPeer(
+                        endpoint,
+                        jobId,
+                        firstNonEmpty([s.config.localSendAlias, s.config.nodeId, "SoonLink Relay"]),
+                        firstNonEmpty([s.config.localSendFingerprint, s.config.nodeId, "soonlink-relay"]),
+                        s.config.localSendDeviceModel,
+                        s.config.localSendDeviceType
+                    )
+                    ctx.status(if (result.success) { 200 } else { 400 }).json(result.toJson().toString())
+                } catch (e: Exception) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", e.message)
+                        .toString())
+                }
+            }, option: RouteOption().withSummary("主动发送 relay cache 到 LocalSend 节点").withTag("中继"))
+
+            relay.post("/localsend/pull", { ctx: Ctx =>
+                if (!requireAdminApiAccess(ctx, s.config, s.authProvider)) {
+                    return
+                }
+                let isJsonRequest = strContains((ctx.header("content-type") ?? "").toLower(), "application/json")
+                let body = if (isJsonRequest) { ctx.bodyString() } else { "" }
+                let endpoint = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "endpoint") ?? "" } else { "" },
+                    ctx.formValue("endpoint") ?? "",
+                ])
+                let sessionId = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "sessionId") ?? "" } else { "" },
+                    ctx.formValue("sessionId") ?? "",
+                ])
+                let fileId = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "fileId") ?? "" } else { "" },
+                    ctx.formValue("fileId") ?? "",
+                ])
+                let token = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "token") ?? "" } else { "" },
+                    ctx.formValue("token") ?? "",
+                ])
+                let fileName = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "fileName") ?? "" } else { "" },
+                    ctx.formValue("fileName") ?? "",
+                ])
+                let peerDisplayName = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "peerDisplayName") ?? "" } else { "" },
+                    ctx.formValue("peerDisplayName") ?? "",
+                    "LocalSend Peer",
+                ])
+                if (endpoint.trimAscii().size == 0 || sessionId.trimAscii().size == 0 || fileId.trimAscii().size == 0 || token.trimAscii().size == 0) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", "endpoint、sessionId、fileId 与 token 不能为空")
+                        .toString())
+                    return
+                }
+
+                try {
+                    let result = m.relay.pullLocalSendFileFromPeer(endpoint, sessionId, fileId, token, fileName, peerDisplayName)
+                    ctx.status(if (result.success) { 200 } else { 400 }).json(result.toJson().toString())
+                } catch (e: Exception) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", e.message)
+                        .toString())
+                }
+            }, option: RouteOption().withSummary("从 LocalSend 节点自提文件到 relay cache").withTag("中继"))
 
             relayJobs.get("/", { ctx: Ctx =>
                 let jobs = m.relay.list()
@@ -997,6 +1664,202 @@ public class WebServer {
                     .putObj("stats", stats)
                     .toString())
             }, option: RouteOption().withSummary("中继任务统计").withTag("中继"))
+
+            relay.get("/rooms", { ctx: Ctx =>
+                let rooms = m.relay.rooms()
+                let arr = JsonArray()
+                for (room in rooms) {
+                    arr.addObj(room.toJson())
+                }
+                ctx.json(JsonObject()
+                    .putBool("success", true)
+                    .putArr("rooms", arr)
+                    .toString())
+            }, option: RouteOption().withSummary("列出中继频道窗口").withTag("中继"))
+
+            relay.get("/rooms/:id/messages", { ctx: Ctx =>
+                let roomId = ctx.params("id")
+                let limitStr = ctx.queryDefault("limit", "200")
+                var limit: Int64 = 200
+                try { limit = Int64.parse(limitStr) } catch (_: Exception) {}
+                let messages = m.relay.messages(roomId, limit)
+                let arr = JsonArray()
+                for (message in messages) {
+                    arr.addObj(message.toJson())
+                }
+                ctx.json(JsonObject()
+                    .putBool("success", true)
+                    .put("roomId", roomId)
+                    .putInt("limit", if (limit > 0) { limit } else { 200 })
+                    .putArr("messages", arr)
+                    .toString())
+            }, option: RouteOption().withSummary("读取中继频道消息").withTag("中继"))
+
+            relay.post("/rooms/:id/messages", { ctx: Ctx =>
+                if (!requireAdminApiAccess(ctx, s.config, s.authProvider)) {
+                    return
+                }
+                if (!s.config.relayEnabled) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", "relay disabled")
+                        .toString())
+                    return
+                }
+
+                let roomId = ctx.params("id")
+                let isJsonRequest = strContains((ctx.header("content-type") ?? "").toLower(), "application/json")
+                let body = if (isJsonRequest) { ctx.bodyString() } else { "" }
+                let sourceDevice = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "sourceDevice") ?? "" } else { "" },
+                    if (isJsonRequest) { parseJsonString(body, "sender") ?? "" } else { "" },
+                    ctx.formValue("sourceDevice") ?? "",
+                    ctx.formValue("sender") ?? "",
+                    "web-client",
+                ])
+                let fileName = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "fileName") ?? "" } else { "" },
+                    ctx.formValue("fileName") ?? "",
+                    roomId,
+                ])
+                let content = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "body") ?? "" } else { "" },
+                    if (isJsonRequest) { parseJsonString(body, "content") ?? "" } else { "" },
+                    ctx.formValue("body") ?? "",
+                    ctx.formValue("content") ?? "",
+                ])
+                if (content.size == 0) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", "文本内容不能为空")
+                        .toString())
+                    return
+                }
+
+                try {
+                    let job = m.relay.createRoomMessage(roomId, sourceDevice, fileName, content)
+                    ctx.status(200).json(JsonObject()
+                        .putBool("success", true)
+                        .put("roomId", roomId)
+                        .putObj("job", job.toJson())
+                        .toString())
+                } catch (e: Exception) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", e.message)
+                        .toString())
+                }
+            }, option: RouteOption().withSummary("写入中继频道消息").withTag("中继"))
+
+            relay.get("/channel-adapters", { ctx: Ctx =>
+                let adapters = m.relay.channelAdapters()
+                let arr = JsonArray()
+                for (adapter in adapters) {
+                    arr.addObj(adapter.toJson())
+                }
+                ctx.json(JsonObject()
+                    .putBool("success", true)
+                    .putArr("adapters", arr)
+                    .toString())
+            }, option: RouteOption().withSummary("列出频道适配器").withTag("中继"))
+
+            relay.post("/channel-adapters/localsend/peer-info", { ctx: Ctx =>
+                if (!requireAdminApiAccess(ctx, s.config, s.authProvider)) {
+                    return
+                }
+                let isJsonRequest = strContains((ctx.header("content-type") ?? "").toLower(), "application/json")
+                let body = if (isJsonRequest) { ctx.bodyString() } else { "" }
+                let endpoint = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "endpoint") ?? "" } else { "" },
+                    ctx.formValue("endpoint") ?? "",
+                ])
+                let apiVersion = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "apiVersion") ?? "" } else { "" },
+                    ctx.formValue("apiVersion") ?? "",
+                    "v2",
+                ])
+                let payload = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "info") ?? "" } else { "" },
+                    ctx.formValue("info") ?? "",
+                    if (isJsonRequest) { body } else { "" },
+                ])
+                match (parseLocalSendPeerInfoPayload(payload, endpoint, apiVersion)) {
+                    case Some(info) =>
+                        let template = buildLocalSendInfoChannelAdapterMessage(info, "")
+                        ctx.status(200).json(JsonObject()
+                            .putBool("success", true)
+                            .put("protocolId", "localsend")
+                            .putObj("peerInfo", info.toJson())
+                            .putObj("messageTemplate", template.toJson())
+                            .toString())
+                    case None =>
+                        ctx.status(400).json(JsonObject()
+                            .putBool("success", false)
+                            .put("error", "LocalSend peer info payload invalid")
+                            .toString())
+                }
+            }, option: RouteOption().withSummary("解析 LocalSend 节点信息").withTag("中继"))
+
+            relay.post("/channel-adapters/:protocolId/messages", { ctx: Ctx =>
+                if (!requireAdminApiAccess(ctx, s.config, s.authProvider)) {
+                    return
+                }
+                if (!s.config.relayEnabled) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", "relay disabled")
+                        .toString())
+                    return
+                }
+
+                let protocolId = ctx.params("protocolId")
+                let isJsonRequest = strContains((ctx.header("content-type") ?? "").toLower(), "application/json")
+                let body = if (isJsonRequest) { ctx.bodyString() } else { "" }
+                let message = ChannelAdapterMessage()
+                message.protocolId = protocolId
+                message.peerId = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "peerId") ?? "" } else { "" },
+                    ctx.formValue("peerId") ?? "",
+                ])
+                message.peerDisplayName = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "peerDisplayName") ?? "" } else { "" },
+                    ctx.formValue("peerDisplayName") ?? "",
+                    message.peerId,
+                ])
+                message.endpoint = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "endpoint") ?? "" } else { "" },
+                    ctx.formValue("endpoint") ?? "",
+                ])
+                message.body = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "body") ?? "" } else { "" },
+                    if (isJsonRequest) { parseJsonString(body, "content") ?? "" } else { "" },
+                    ctx.formValue("body") ?? "",
+                    ctx.formValue("content") ?? "",
+                ])
+                message.contentType = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "contentType") ?? "" } else { "" },
+                    ctx.formValue("contentType") ?? "",
+                    "text/plain",
+                ])
+                message.sourceRecordId = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "sourceRecordId") ?? "" } else { "" },
+                    ctx.formValue("sourceRecordId") ?? "",
+                ])
+                message.createdAt = if (isJsonRequest) { parseJsonIntField(body, "createdAt") } else { 0 }
+
+                try {
+                    let job = m.relay.createAdapterMessage(message)
+                    ctx.status(200).json(JsonObject()
+                        .putBool("success", true)
+                        .putObj("job", job.toJson())
+                        .toString())
+                } catch (e: Exception) {
+                    ctx.status(400).json(JsonObject()
+                        .putBool("success", false)
+                        .put("error", e.message)
+                        .toString())
+                }
+            }, option: RouteOption().withSummary("接入频道适配器文本消息").withTag("中继"))
 
             relayJobs.post("/", { ctx: Ctx =>
                 if (!s.config.relayEnabled) {
@@ -1072,6 +1935,10 @@ public class WebServer {
                     ctx.formValue("targetPath") ?? "",
                     "/tmpSL",
                 ])
+                let sessionId = firstNonEmpty([
+                    if (isJsonRequest) { parseJsonString(body, "sessionId") ?? "" } else { "" },
+                    ctx.formValue("sessionId") ?? "",
+                ])
                 if (content.size == 0) {
                     ctx.status(400).json(JsonObject()
                         .putBool("success", false)
@@ -1081,7 +1948,7 @@ public class WebServer {
                 }
 
                 try {
-                    let job = m.relay.createText(sourceDevice, fileName, content, targetPath)
+                    let job = m.relay.createText(sourceDevice, fileName, content, targetPath, sessionId)
                     ctx.status(200).json(JsonObject()
                         .putBool("success", true)
                         .putObj("job", job.toJson())
@@ -2583,8 +3450,14 @@ public class WebServer {
     }
 }
 
-func buildSessionContextPayload(server: CoreServer, access: WebAccessContext): JsonObject {
+func buildSessionContextPayload(
+    server: CoreServer,
+    access: WebAccessContext,
+    authorizationHeader: String,
+    cookieHeader: String
+): JsonObject {
     let auth = server.authProvider.descriptor()
+    let adminAccess = resolveAdminAccessDecision(access, server.authProvider, authorizationHeader, cookieHeader)
     let authCaps = JsonArray()
     for (cap in auth.capabilities) {
         authCaps.addStr(cap)
@@ -2596,10 +3469,13 @@ func buildSessionContextPayload(server: CoreServer, access: WebAccessContext): J
         .put("themeVariant", access.themeVariant)
         .putObj("product", productProfileToJson(server.profile))
         .putObj("auth", JsonObject()
-            .put("policy", "local_trust")
+            .put("policy", adminAccess.policy)
             .put("provider", auth.provider)
+            .put("edition", "runtime")
             .putBool("supportsPassword", auth.supportsPassword)
             .putBool("passwordConfigured", auth.passwordConfigured)
+            .putBool("sessionAuthenticated", adminAccess.authenticated)
+            .putBool("adminAccessAllowed", adminAccess.allowed)
             .putArr("capabilities", authCaps))
         .putObj("network", JsonObject()
             .put("clientIp", access.clientIP)
@@ -2651,6 +3527,19 @@ func appConfigToJson(config: AppConfig, profile: RuntimeProfile): JsonObject {
         out.put("relayLimitMode", config.relayLimitMode)
         out.putInt("relayLimitBytes", config.relayLimitBytes)
         out.putInt("relayLimitPercent", config.relayLimitPercent)
+        out.putBool("localSendEnabled", config.localSendEnabled)
+        out.putBool("localSendDiscoveryEnabled", config.localSendDiscoveryEnabled)
+        out.putBool("localSendAnnounceEnabled", config.localSendAnnounceEnabled)
+        out.putInt("localSendAnnounceIntervalSeconds", config.localSendAnnounceIntervalSeconds)
+        out.put("localSendAlias", config.localSendAlias)
+        out.put("localSendFingerprint", config.localSendFingerprint)
+        out.put("localSendDeviceModel", config.localSendDeviceModel)
+        out.put("localSendDeviceType", config.localSendDeviceType)
+        out.putBool("localSendDownloadEnabled", config.localSendDownloadEnabled)
+        out.put("localSendAcceptPolicy", config.localSendAcceptPolicy)
+        out.put("localSendDefaultSaveDir", config.localSendDefaultSaveDir)
+        out.put("localSendWhitelist", config.localSendWhitelist)
+        out.put("localSendBlacklist", config.localSendBlacklist)
     }
     if (profile.supportsFavorites) {
         out.put("favoritesStoreMode", config.favoritesStoreMode)
@@ -3262,31 +4151,14 @@ func streamLocalFileResponse(
         let _ = ctx.setHeader("Content-Length", "${totalSize}")
     }
 
+    let length = end - start + 1
     try {
-        let file = File(fullPath, OpenMode.Read)
-        skipFileBytes(file, start)
-
-        let writer = HttpResponseWriter(ctx.httpContext())
-        var remaining = end - start + 1
-        while (remaining > 0) {
-            let chunkSize = if (remaining > 262144) { 262144 } else { remaining }
-            let buf = Array<UInt8>(chunkSize, repeat: 0)
-            let n = file.read(buf)
-            if (n <= 0) {
-                break
-            }
-            if (n == chunkSize) {
-                writer.write(buf)
-            } else {
-                let actual = Array<UInt8>(n, repeat: 0)
-                for (i in 0..n) {
-                    actual[i] = buf[i]
-                }
-                writer.write(actual)
-            }
-            remaining -= n
-        }
-        file.close()
+        let stream = FileSegmentInputStream(fullPath, start: start, length: length)
+        let _ = ctx.sendStream(
+            stream,
+            contentType: contentType,
+            contentLength: Some(length)
+        )
     } catch (e: Exception) {
         ctx.status(500).json(JsonObject()
             .put("error", "文件下载失败: ${e.message}")
@@ -3409,6 +4281,7 @@ func buildRelayPreviewPayload(job: RelayJob, cachePath: String): JsonObject {
         .putBool("success", true)
         .put("jobId", job.id)
         .put("recordKind", job.recordKind)
+        .put("sessionId", job.sessionId)
         .put("name", job.fileName)
         .putInt("size", info.size)
         .put("sizeText", formatBytes(info.size))
@@ -3435,6 +4308,136 @@ func buildRelayPreviewPayload(job: RelayJob, cachePath: String): JsonObject {
         payload.put("message", "文本超过内联预览阈值，请直接下载查看")
     }
     payload
+}
+
+public func buildLanzigFeedPayloadFromEntries(baseUrl: String, entries: ArrayList<FileEntry>): JsonObject {
+    let items = JsonArray()
+    for (entry in entries) {
+        if (entry.isDir) {
+            continue
+        }
+        if (!isLanzigMarkdownFileName(entry.name)) {
+            continue
+        }
+        if (!isSafeLanzigNoteId(entry.name)) {
+            continue
+        }
+
+        let markdownUrl = "${baseUrl}/api/lanzig/md/${urlEncodePreviewQueryValue(entry.name)}"
+        items.addObj(JsonObject()
+            .put("id", stripLanzigMarkdownExtension(entry.name))
+            .put("title", stripLanzigMarkdownExtension(entry.name))
+            .put("path", "./md/${urlEncodePreviewQueryValue(entry.name)}")
+            .put("markdownUrl", markdownUrl)
+            .put("book", "SoonLink")
+            .putInt("size", entry.size)
+            .put("sizeText", formatBytes(entry.size)))
+    }
+
+    JsonObject()
+        .put("version", lanzigFeedVersion)
+        .put("title", "SoonLink Lanzig Feed")
+        .put("description", "Read-only Markdown feed published from SoonLink ${lanzigFeedPath}.")
+        .put("feedUrl", "${baseUrl}/api/lanzig/feed.json")
+        .put("homeUrl", baseUrl)
+        .putInt("ttlMinutes", 30)
+        .putBool("readOnly", true)
+        .putBool("passiveSync", false)
+        .put("sourcePath", lanzigFeedPath)
+        .putArr("items", items)
+}
+
+public func buildLanzigFeedStatusPayloadFromEntries(baseUrl: String, entries: ArrayList<FileEntry>): JsonObject {
+    JsonObject()
+        .putBool("success", true)
+        .put("version", lanzigFeedVersion)
+        .put("protocol", lanzigFeedVersion)
+        .put("feedUrl", "${baseUrl}/api/lanzig/feed.json")
+        .put("markdownRoute", "${baseUrl}/api/lanzig/md/:noteId")
+        .put("sourcePath", lanzigFeedPath)
+        .putInt("itemCount", countLanzigFeedItems(entries))
+        .putBool("readOnly", true)
+        .putBool("passiveSync", false)
+        .put("message", "Ready: publish Markdown files under ${lanzigFeedPath}.")
+}
+
+func countLanzigFeedItems(entries: ArrayList<FileEntry>): Int64 {
+    var count: Int64 = 0
+    for (entry in entries) {
+        if (entry.isDir) {
+            continue
+        }
+        if (!isLanzigMarkdownFileName(entry.name)) {
+            continue
+        }
+        if (!isSafeLanzigNoteId(entry.name)) {
+            continue
+        }
+        count += 1
+    }
+    count
+}
+
+public func resolveLanzigMarkdownPath(noteId: String): ?String {
+    let normalized = normalizeLanzigNoteId(noteId)
+    if (!isSafeLanzigNoteId(normalized)) {
+        return None
+    }
+    if (!isLanzigMarkdownFileName(normalized)) {
+        return None
+    }
+    Some("${lanzigFeedPath}/${normalized}")
+}
+
+func normalizeLanzigNoteId(noteId: String): String {
+    let trimmed = noteId.trimAscii()
+    if (trimmed.size == 0) {
+        return ""
+    }
+    if (strEndsWith(trimmed.toLower(), ".md") || strEndsWith(trimmed.toLower(), ".markdown")) {
+        return trimmed
+    }
+    "${trimmed}.md"
+}
+
+func isLanzigMarkdownFileName(name: String): Bool {
+    let lower = name.trimAscii().toLower()
+    (strEndsWith(lower, ".md") || strEndsWith(lower, ".markdown")) && !strStartsWith(lower, ".")
+}
+
+func stripLanzigMarkdownExtension(name: String): String {
+    let trimmed = name.trimAscii()
+    let lower = trimmed.toLower()
+    if (strEndsWith(lower, ".markdown")) {
+        return strSubstring(trimmed, 0, trimmed.toRuneArray().size - 9)
+    }
+    if (strEndsWith(lower, ".md")) {
+        return strSubstring(trimmed, 0, trimmed.toRuneArray().size - 3)
+    }
+    trimmed
+}
+
+func isSafeLanzigNoteId(noteId: String): Bool {
+    let trimmed = noteId.trimAscii()
+    if (trimmed.size == 0) {
+        return false
+    }
+    if (strContains(trimmed, "/") || strContains(trimmed, "\\") || strContains(trimmed, "..")) {
+        return false
+    }
+    true
+}
+
+func resolvePublicBaseUrl(ctx: Ctx): String {
+    let forwardedProto = (ctx.header("x-forwarded-proto") ?? "").trimAscii()
+    let proto = if (forwardedProto.size > 0) { forwardedProto } else { "http" }
+    let forwardedHost = (ctx.header("x-forwarded-host") ?? "").trimAscii()
+    let host = firstNonEmpty([
+        forwardedHost,
+        (ctx.header("host") ?? "").trimAscii(),
+        "localhost",
+    ])
+    "${proto}://${host}"
 }
 
 func buildLocalTextPreviewSnippet(path: String, totalSize: Int64): TextPreviewSnippet {

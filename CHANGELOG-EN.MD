@@ -22,6 +22,7 @@ Notes:
 - `=Fix` The release and Docker build lanes now restore the missing local `Ignite -> lisi` path rewrite so the projected workspace does not keep stale relative dependency paths
 - `=Chore` Unified the GitHub / GitCode Linux build lane around the shared prerequisite bootstrap and explicitly installs `cmake`, `ninja`, `gcc/g++`, `pkg-config`, and OpenSSL development headers so `stdx` source builds do not fail during CMake configuration
 - `=Chore` Switched the default CI / release dependency sources to the public `Ignite / lisi / jinguiSSL` remote repositories so remote workspace projection no longer drifts on dependency clone setup
+- `=Chore` Added `JinguiCore` and `SeaJson` cloning plus local `path` rewrites to the CI / Release / Docker projection lanes, and documented the GitCode defaults with GitHub mirror overrides
 
 ---
 

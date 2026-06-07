@@ -1,6 +1,8 @@
 const SOONLINK_PWA = {
     deferredPrompt: null,
     installButton: null,
+    note: null,
+    shell: null,
     statusChip: null,
     registration: null,
 };
@@ -25,39 +27,25 @@ window.addEventListener('appinstalled', () => {
 });
 
 window.addEventListener('online', () => {
+    refreshPwaSurface();
     showPwaToast('网络已恢复，SoonLink 应用壳重新联通。', 'success');
 });
 
 window.addEventListener('offline', () => {
+    refreshPwaSurface();
     showPwaToast('网络暂时不可用，应用壳会保留最近打开的页面。', 'warning');
 });
 
 function mountPwaSurface() {
-    if (document.getElementById('soonlink-pwa-shell')) {
-        SOONLINK_PWA.installButton = document.getElementById('soonlink-pwa-install-btn');
-        SOONLINK_PWA.statusChip = document.getElementById('soonlink-pwa-status');
-        return;
+    SOONLINK_PWA.shell = document.getElementById('soonlink-pwa-shell');
+    SOONLINK_PWA.installButton = document.getElementById('soonlink-pwa-install-btn');
+    SOONLINK_PWA.statusChip = document.getElementById('soonlink-pwa-status');
+    SOONLINK_PWA.note = document.getElementById('soonlink-pwa-note');
+
+    if (SOONLINK_PWA.installButton && SOONLINK_PWA.installButton.dataset.bound !== 'true') {
+        SOONLINK_PWA.installButton.addEventListener('click', handlePwaInstallClick);
+        SOONLINK_PWA.installButton.dataset.bound = 'true';
     }
-
-    const shell = document.createElement('div');
-    shell.id = 'soonlink-pwa-shell';
-    shell.className = 'soonlink-pwa-shell';
-
-    const statusChip = document.createElement('div');
-    statusChip.id = 'soonlink-pwa-status';
-    statusChip.className = 'soonlink-pwa-status';
-    shell.appendChild(statusChip);
-
-    const installButton = document.createElement('button');
-    installButton.id = 'soonlink-pwa-install-btn';
-    installButton.type = 'button';
-    installButton.className = 'btn btn-primary btn-sm soonlink-pwa-install-btn';
-    installButton.addEventListener('click', handlePwaInstallClick);
-    shell.appendChild(installButton);
-
-    document.body.appendChild(shell);
-    SOONLINK_PWA.installButton = installButton;
-    SOONLINK_PWA.statusChip = statusChip;
 }
 
 function bindPwaDisplayModeWatcher() {
@@ -80,6 +68,20 @@ function isStandaloneMode() {
     return !!window.navigator.standalone;
 }
 
+function isIosFamily() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent || '');
+}
+
+function isCompactViewport() {
+    return !!(window.matchMedia && window.matchMedia('(max-width: 991.98px)').matches);
+}
+
+function updatePwaNote(message) {
+    if (SOONLINK_PWA.note) {
+        SOONLINK_PWA.note.textContent = String(message || '');
+    }
+}
+
 function refreshPwaSurface() {
     const button = SOONLINK_PWA.installButton;
     const statusChip = SOONLINK_PWA.statusChip;
@@ -91,15 +93,43 @@ function refreshPwaSurface() {
         statusChip.hidden = false;
         statusChip.textContent = '应用模式已启用';
         button.hidden = true;
+        updatePwaNote('当前已经在 SoonLink 应用模式中打开，可从桌面或主屏幕再次进入。');
         return;
     }
 
+    const canPromptInstall = !!SOONLINK_PWA.deferredPrompt;
+    const offline = !navigator.onLine;
+    const compactViewport = isCompactViewport();
+
     statusChip.hidden = false;
-    statusChip.textContent = navigator.onLine ? '可安装应用壳' : '离线中 · 可使用最近缓存';
+    if (offline) {
+        statusChip.textContent = '离线中 · 可使用最近缓存';
+    } else if (canPromptInstall) {
+        statusChip.textContent = '可安装应用壳';
+    } else if (isIosFamily()) {
+        statusChip.textContent = '可添加到主屏幕';
+    } else {
+        statusChip.textContent = '安装入口已收纳到设置页';
+    }
+
     button.hidden = false;
-    button.textContent = SOONLINK_PWA.deferredPrompt ? '安装应用' : '安装指引';
-    button.classList.toggle('btn-outline-secondary', !SOONLINK_PWA.deferredPrompt);
-    button.classList.toggle('btn-primary', !!SOONLINK_PWA.deferredPrompt);
+    button.textContent = canPromptInstall ? '安装应用' : (isIosFamily() ? '主屏安装指引' : '安装指引');
+    button.classList.toggle('btn-outline-secondary', !canPromptInstall);
+    button.classList.toggle('btn-primary', canPromptInstall);
+
+    if (offline) {
+        updatePwaNote('离线时会优先使用最近缓存的页面资源；联网恢复后会继续检查新版应用壳。');
+    } else if (canPromptInstall) {
+        updatePwaNote(compactViewport
+            ? '手机版和平板版不再显示全局浮层；如需安装，请在设置页点击“安装应用”。'
+            : '当前浏览器支持直接安装 SoonLink 应用壳，安装后可像独立应用一样打开。');
+    } else if (isIosFamily()) {
+        updatePwaNote('Safari 中请使用“分享”菜单里的“添加到主屏幕”；移动端安装入口已统一收纳到这里。');
+    } else {
+        updatePwaNote(compactViewport
+            ? '手机版和平板版不再显示全局浮层；浏览器若不弹出确认，请从菜单手动执行安装。'
+            : '如果浏览器没有弹出安装确认，请使用浏览器菜单中的“安装应用”或“添加到主屏幕”。');
+    }
 }
 
 async function handlePwaInstallClick() {
@@ -123,9 +153,7 @@ async function handlePwaInstallClick() {
 }
 
 function showPwaInstallGuide() {
-    const ua = navigator.userAgent || '';
-    const isIOS = /iphone|ipad|ipod/i.test(ua);
-    if (isIOS) {
+    if (isIosFamily()) {
         window.alert('Safari 中请使用“分享”菜单，再选择“添加到主屏幕”，即可把 SoonLink staticWeb 作为应用安装。');
         return;
     }
