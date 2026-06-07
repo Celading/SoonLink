@@ -51,7 +51,7 @@ public class ConfigStore_test {
 
     @TestCase
     public func defaultConfigPathUsesSoonlinkUserEntry(): Unit {
-        @Assert(strEndsWith(defaultSoonLinkConfigFile(), "/.soonlink/etc/sl-config.yaml"))
+        @Assert(strEndsWith(defaultSoonLinkConfigFile(), "/.soonlink/etc/sl-config.toml"))
         @Assert(fallbackSoonLinkConfigFile(), "./config/soonlink.toml")
     }
 

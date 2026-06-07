@@ -248,7 +248,7 @@ public func defaultSoonLinkConfigFile(): String {
     if (home.trimAscii().size == 0) {
         home = "/tmp"
     }
-    home + "/.soonlink/etc/sl-config.yaml"
+    home + "/.soonlink/etc/sl-config.toml"
 }
 
 public func fallbackSoonLinkConfigFile(): String {

@@ -1,6 +1,6 @@
-# SoonLinkFull API
+# SoonLink API
 
-SoonLinkFull carries the broadest server-side API surface. It is easiest to read in six groups.
+SoonLink exposes the server-side API surface. It is easiest to read in six groups.
 
 ## 1. Runtime and Session
 

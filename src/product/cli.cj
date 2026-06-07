@@ -269,7 +269,7 @@ public func renderCliHelp(): String {
     "  soonlnk help\n" +
     "\n" +
     "Common options:\n" +
-    "  -c, --config <path>     override config file (auto ~/.soonlink/etc/sl-config.yaml -> ./config/soonlink.toml)\n" +
+    "  -c, --config <path>     override config file (auto ~/.soonlink/etc/sl-config.toml -> ./config/soonlink.toml)\n" +
     "  -p, --port <port>       override web port\n" +
     "  --root-dir <path>       override local root dir\n" +
     "  --temp-dir <path>       override temp dir\n" +

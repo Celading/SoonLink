@@ -13,7 +13,7 @@
 常见原因：
 
 - `8081` 端口被占用
-- `~/.soonlink/etc/sl-config.yaml` 或 `./config/soonlink.toml` 格式错误
+- `~/.soonlink/etc/sl-config.toml` 或 `./config/soonlink.toml` 格式错误
 - 运行目录没有写入 `config/devices.json`、`logs/`、`cache/` 的权限
 
 ## 3. Web 能打开但操作失败

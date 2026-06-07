@@ -53,7 +53,7 @@ cjpm run
 
 ### 关于依赖
 
-> 首次运行会优先使用可读写的用户级配置 `~/.soonlink/etc/sl-config.yaml`；不可用时降级到 `./config/soonlink.toml`。`./config/devices.json` 若不存在会自动生成。
+> 首次运行会优先使用可读写的用户级配置 `~/.soonlink/etc/sl-config.toml`；不可用时降级到 `./config/soonlink.toml`。`./config/devices.json` 若不存在会自动生成。
 
 - 仓颉sdk环境 [`cangjie-sdk`](https://cangjie-lang.cn/download) v1.1.0+
 - 仓颉标准扩展库 [`cangjie-stdx`](https://gitcode.com/Cangjie/cangjie_stdx/releases/v1.1.0-beta.24.1)
@@ -74,7 +74,7 @@ cjpm run
 ### 首次运行
 
 默认读取以下内容(如果没有则创建)：
-- `~/.soonlink/etc/sl-config.yaml`（优先）
+- `~/.soonlink/etc/sl-config.toml`（优先）
 - `./config/soonlink.toml`（用户级配置不可读写时降级）
 - `./config/devices.json`
 

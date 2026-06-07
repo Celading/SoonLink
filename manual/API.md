@@ -1,6 +1,6 @@
-# SoonLinkFull API
+# SoonLink API
 
-SoonLinkFull 覆盖当前最完整的服务端接口面，可按六组理解。
+SoonLink 提供当前服务端接口面，可按六组理解。
 
 ## 1. 运行态与会话
 
