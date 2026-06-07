@@ -76,6 +76,28 @@ package_name_from_manifest() {
   sed -n 's/^[[:space:]]*name[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' "$manifest_path" | head -n 1
 }
 
+sedi() {
+  expr="$1"
+  file="$2"
+  if sed --version >/dev/null 2>&1; then
+    sed -i "$expr" "$file"
+  else
+    sed -i '' "$expr" "$file"
+  fi
+}
+
+rewrite_dependency_path_if_present() {
+  manifest_path="$1"
+  dependency_name="$2"
+  dependency_path="$3"
+
+  if ! grep -q "^  $dependency_name = {" "$manifest_path"; then
+    return 0
+  fi
+
+  sedi "s#^  $dependency_name = { .*#  $dependency_name = { path = \"$dependency_path\" }#" "$manifest_path"
+}
+
 resolve_package_dir() {
   repo_dir="$1"
   expected_package="$2"
@@ -166,5 +188,14 @@ copy_package_tree "$JINGUISSL_CORE_DIR" "$OUTPUT_DIR/JinguiCore" "jinguissl_core
 copy_package_tree "$SEAJSON_DIR" "$OUTPUT_DIR/SeaJson" "seajson"
 
 sh "$ROOT_DIR/scripts/apply_tls_dep_compat.sh" "$OUTPUT_DIR"
+rewrite_dependency_path_if_present "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "ignite" "../Ignite0500"
+rewrite_dependency_path_if_present "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "lisi" "../lisi"
+rewrite_dependency_path_if_present "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "JinguiSSL" "../jinguiSSL"
+rewrite_dependency_path_if_present "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "jinguissl_core" "../JinguiCore"
+rewrite_dependency_path_if_present "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "seajson" "../SeaJson"
+rewrite_dependency_path_if_present "$OUTPUT_DIR/Ignite0500/cjpm.toml" "JinguiSSL" "../jinguiSSL"
+rewrite_dependency_path_if_present "$OUTPUT_DIR/Ignite0500/cjpm.toml" "jinguissl_core" "../JinguiCore"
+rewrite_dependency_path_if_present "$OUTPUT_DIR/Ignite0500/cjpm.toml" "seajson" "../SeaJson"
+rewrite_dependency_path_if_present "$OUTPUT_DIR/jinguiSSL/cjpm.toml" "jinguissl_core" "../JinguiCore"
 
 printf '%s\n' "$OUTPUT_DIR"
