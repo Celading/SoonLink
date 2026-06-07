@@ -1,6 +1,6 @@
 [package]
   cjc-version = "1.0.0"
-  version = "0.5.56"
+  version = "0.7.21"
   name = "soonlnk"
   output-type = "executable"
   src-dir = "src"
@@ -8,8 +8,9 @@
   description = "SoonLink / 溯联 file transfer service powered by Ignite"
 
 [dependencies]
-  ignite = { git = "https://atomgit.com/cinyu/ignite-cangjie.git" }
-  lisi = { git = "https://atomgit.com/cinyu/lisi.git" }
+  ignite = { path = "../../Ignite/IgniteNEXT" }
+  lisi = { path = "../../lisi/lisi" }
+  jinguissl_contract = { path = "../../Cangku/JinguiSSL-contract" }
 
 [target.x86_64-w64-mingw32]
   link-option = "-lcrypt32"

@@ -25,14 +25,26 @@ public class SecurityChannel_test {
     }
 
     @TestCase
-    public func payloadProtectRoundTrip(): Unit {
+    public func encryptedModeFailsClosedWithoutProvider(): Unit {
         let channel = SecurityChannel(Encrypted)
         let token = channel.beginHandshake("peer-b")
         @Assert(channel.verifyHandshake(token))
 
         let src = stringToBytes("hello-soonlink")
+        try {
+            _ = channel.protectPayload(src)
+            @Fail("encrypted mode without provider should fail closed")
+        } catch (_: Exception) {}
+    }
+
+    @TestCase
+    public func payloadProtectRoundTripWithJinguiSslContractProvider(): Unit {
+        let provider = payloadProtectionProviderFromEncryptionKey("0123456789abcdef0123456789abcdef")
+        let channel = SecurityChannel(Encrypted, provider)
+
+        let src = stringToBytes("hello-soonlink")
         let enc = channel.protectPayload(src)
-        @Assert(enc.size, src.size)
+        @Assert(enc.size, src.size + 28)
 
         let dec = channel.unprotectPayload(enc)
         @Assert(String.fromUtf8(dec), "hello-soonlink")

@@ -2,8 +2,13 @@ package soonlnk.commons
 
 import std.collection.ArrayList
 import std.convert.*
-import std.net.{UdpSocket, IPSocketAddress}
+import std.net.{UdpSocket, IPSocketAddress, OptionLevel, OptionName}
 import std.unicode.*
+import jinguissl_contract.jinguissl.contract.*
+
+let DISCOVERY_AUTH_SCHEME_HMAC_SHA256_V1 = "hmac-sha256-v1"
+let LOCALSEND_UDP_MULTICAST_ADDRESS = "224.0.0.167"
+let LOCALSEND_DEFAULT_PORT: Int64 = 53317
 
 public class DiscoveryPacket {
     public var deviceId: String = ""
@@ -12,6 +17,8 @@ public class DiscoveryPacket {
     public var ip: String = ""
     public var port: Int64 = 0
     public var timestamp: Int64 = 0
+    public var authScheme: String = ""
+    public var signature: String = ""
 
     public init() {}
 
@@ -23,6 +30,8 @@ public class DiscoveryPacket {
             .put("ip", ip)
             .putInt("port", port)
             .putInt("timestamp", timestamp)
+            .put("authScheme", authScheme)
+            .put("signature", signature)
     }
 }
 
@@ -51,8 +60,48 @@ func discoveryPacketFromJson(raw: String): ?DiscoveryPacket {
     } catch (_: Exception) {
         packet.timestamp = currentTimestamp()
     }
+    packet.authScheme = parseJsonString(raw, "authScheme") ?? ""
+    packet.signature = parseJsonString(raw, "signature") ?? ""
 
     Some(packet)
+}
+
+public func discoveryPacketSign(packet: DiscoveryPacket, key: String): Unit {
+    let normalizedKey = key.trimAscii()
+    if (normalizedKey.size == 0) {
+        packet.authScheme = ""
+        packet.signature = ""
+        return
+    }
+    packet.authScheme = DISCOVERY_AUTH_SCHEME_HMAC_SHA256_V1
+    packet.signature = discoveryPacketSignature(packet, normalizedKey)
+}
+
+public func discoveryPacketVerify(packet: DiscoveryPacket, key: String): Bool {
+    let normalizedKey = key.trimAscii()
+    if (normalizedKey.size == 0) {
+        return true
+    }
+    if (packet.authScheme != DISCOVERY_AUTH_SCHEME_HMAC_SHA256_V1) {
+        return false
+    }
+    let expected = discoveryPacketSignature(packet, normalizedKey)
+    constantTimeStringEquals(packet.signature, expected)
+}
+
+func discoveryPacketSignature(packet: DiscoveryPacket, key: String): String {
+    let payload = discoveryPacketSigningPayload(packet)
+    contractBytesToHexLower(contractHmac(HashAlgorithm.SHA256, key.toArray(), payload.toArray()))
+}
+
+public func discoveryPacketSigningPayload(packet: DiscoveryPacket): String {
+    "soonlink-discovery-v1|" +
+        escapeDiscoverySigningPart(packet.deviceId) + "|" +
+        escapeDiscoverySigningPart(packet.name) + "|" +
+        escapeDiscoverySigningPart(packet.deviceType) + "|" +
+        escapeDiscoverySigningPart(packet.ip) + "|" +
+        "${packet.port}|" +
+        "${packet.timestamp}"
 }
 
 public interface DiscoveryTransport {
@@ -62,13 +111,129 @@ public interface DiscoveryTransport {
     func publishHeartbeat(packet: DiscoveryPacket): Unit
 }
 
+public func localSendUdpMulticastAddress(): String {
+    LOCALSEND_UDP_MULTICAST_ADDRESS
+}
+
+public func localSendDefaultPort(): Int64 {
+    LOCALSEND_DEFAULT_PORT
+}
+
+public func localSendDiscoveryPayload(
+    alias: String,
+    version: String,
+    deviceModel: String,
+    deviceType: String,
+    fingerprint: String,
+    protocol: String,
+    port: Int64,
+    download: Bool
+): String {
+    JsonObject()
+        .put("alias", alias)
+        .put("version", if (version.trimAscii().size > 0) { version } else { "2.1" })
+        .put("deviceModel", deviceModel)
+        .put("deviceType", deviceType)
+        .put("fingerprint", fingerprint)
+        .put("protocol", if (protocol.trimAscii().toLower() == "https") { "https" } else { "http" })
+        .putInt("port", if (port > 0) { port } else { LOCALSEND_DEFAULT_PORT })
+        .putBool("download", download)
+        .putBool("announcement", true)
+        .toString()
+}
+
+public class LocalSendUdpAnnouncer {
+    let multicastAddress: String
+    let multicastPort: Int64
+
+    public init() {
+        this.multicastAddress = LOCALSEND_UDP_MULTICAST_ADDRESS
+        this.multicastPort = LOCALSEND_DEFAULT_PORT
+    }
+
+    public init(multicastAddress: String, multicastPort: Int64) {
+        this.multicastAddress = if (multicastAddress.trimAscii().size > 0) { multicastAddress.trimAscii() } else { LOCALSEND_UDP_MULTICAST_ADDRESS }
+        this.multicastPort = if (multicastPort > 0) { multicastPort } else { LOCALSEND_DEFAULT_PORT }
+    }
+
+    public func targetAddress(): String {
+        multicastAddress
+    }
+
+    public func targetPort(): Int64 {
+        multicastPort
+    }
+
+    public func buildPayload(
+        alias: String,
+        version: String,
+        deviceModel: String,
+        deviceType: String,
+        fingerprint: String,
+        protocol: String,
+        port: Int64,
+        download: Bool
+    ): String {
+        localSendDiscoveryPayload(alias, version, deviceModel, deviceType, fingerprint, protocol, port, download)
+    }
+
+    public func publish(payload: String): Bool {
+        publishWithFallback(payload, "")
+    }
+
+    public func publishWithFallback(payload: String, localIp: String): Bool {
+        let normalized = payload.trimAscii()
+        if (normalized.size == 0) {
+            return false
+        }
+        let targets = buildLocalSendAnnounceTargets(multicastAddress, localIp)
+        var sent = false
+        try (udpSocket = UdpSocket(bindAt: 0)) {
+            udpSocket.sendTimeout = Duration.second * 2
+            enableBroadcastSendIfPossible(udpSocket)
+            udpSocket.bind()
+            let payloadBytes = stringToBytes(normalized)
+            for (target in targets) {
+                try {
+                    udpSocket.sendTo(IPSocketAddress(target, resolveLocalSendPort(multicastPort)), payloadBytes)
+                    sent = true
+                } catch (e: Exception) {
+                    println("[Discovery][LocalSend] UDP announce target ${target} failed: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            println("[Discovery][LocalSend] UDP announce failed: ${e.message}")
+        }
+        sent
+    }
+}
+
+public func buildLocalSendAnnounceTargets(multicastAddress: String, localIp: String): Array<String> {
+    let targets = ArrayList<String>()
+    addDiscoveryTarget(targets, if (multicastAddress.trimAscii().size > 0) { multicastAddress } else { LOCALSEND_UDP_MULTICAST_ADDRESS })
+
+    let directed = deriveDirectedBroadcast(localIp)
+    if (directed.size > 0) {
+        addDiscoveryTarget(targets, directed)
+    }
+    addDiscoveryTarget(targets, "255.255.255.255")
+    targets.toArray()
+}
+
 public class UdpDiscoveryTransport <: DiscoveryTransport {
     let listenPort: Int64
+    let authKey: String
     var running: Bool = false
     var onPacket: ?(DiscoveryPacket) -> Unit = None
 
     public init(listenPort: Int64) {
         this.listenPort = listenPort
+        this.authKey = ""
+    }
+
+    public init(listenPort: Int64, authKey: String) {
+        this.listenPort = listenPort
+        this.authKey = authKey.trimAscii()
     }
 
     public func mode(): String { "udp" }
@@ -102,6 +267,9 @@ public class UdpDiscoveryTransport <: DiscoveryTransport {
                     match (discoveryPacketFromJson(raw)) {
                         case Some(packet) =>
                             hydratePacketSourceIp(packet, clientAddr)
+                            if (!discoveryPacketVerify(packet, authKey)) {
+                                continue
+                            }
                             if (let Some(cb) <- this.onPacket) {
                                 cb(packet)
                             }
@@ -124,12 +292,16 @@ public class UdpDiscoveryTransport <: DiscoveryTransport {
 
     public func publishHeartbeat(packet: DiscoveryPacket): Unit {
         if (!running) { return }
+        if (authKey.size > 0) {
+            discoveryPacketSign(packet, authKey)
+        }
         let payload = stringToBytes(packet.toJson().toString())
         let port = resolveDiscoveryPort(listenPort)
         let targets = buildBroadcastTargets(packet.ip)
 
         try (udpSocket = UdpSocket(bindAt: 0)) {
             udpSocket.sendTimeout = Duration.second * 2
+            enableBroadcastSendIfPossible(udpSocket)
             udpSocket.bind()
             for (target in targets) {
                 try {
@@ -209,9 +381,43 @@ public class NoopDiscoveryTransport <: DiscoveryTransport {
     public func publishHeartbeat(_packet: DiscoveryPacket): Unit {}
 }
 
+func escapeDiscoverySigningPart(raw: String): String {
+    var out = ""
+    for (ch in raw.toRuneArray()) {
+        if (ch == r'\\') {
+            out += "\\\\"
+        } else if (ch == r'|') {
+            out += "\\|"
+        } else {
+            out += ch.toString()
+        }
+    }
+    out
+}
+
+func constantTimeStringEquals(a: String, b: String): Bool {
+    let left = a.toArray()
+    let right = b.toArray()
+    var diff: UInt8 = UInt8(left.size ^ right.size)
+    let maxSize = if (left.size > right.size) { left.size } else { right.size }
+    for (i in 0..maxSize) {
+        let lv = if (i < left.size) { left[i] } else { UInt8(0) }
+        let rv = if (i < right.size) { right[i] } else { UInt8(0) }
+        diff = diff | (lv ^ rv)
+    }
+    diff == UInt8(0)
+}
+
 func resolveDiscoveryPort(raw: Int64): UInt16 {
     if (raw <= 0 || raw > 65535) {
         return UInt16(19090)
+    }
+    UInt16(raw)
+}
+
+func resolveLocalSendPort(raw: Int64): UInt16 {
+    if (raw <= 0 || raw > 65535) {
+        return UInt16(LOCALSEND_DEFAULT_PORT)
     }
     UInt16(raw)
 }
@@ -305,6 +511,14 @@ func addDiscoveryTarget(targets: ArrayList<String>, raw: String): Unit {
         }
     }
     targets.add(target)
+}
+
+func enableBroadcastSendIfPossible(udpSocket: UdpSocket): Unit {
+    try {
+        udpSocket.setSocketOptionBool(OptionLevel.SOCKET, OptionName.SO_BROADCAST, true)
+    } catch (e: Exception) {
+        println("[Discovery][UDP] broadcast socket option unavailable: ${e.message}")
+    }
 }
 
 public func deriveDirectedBroadcast(ip: String): String {

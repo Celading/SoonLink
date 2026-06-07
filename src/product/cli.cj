@@ -226,6 +226,19 @@ public func buildConfigPayload(config: AppConfig, profile: RuntimeProfile): Stri
         .putBool("discoveryBroadcastEnabled", normalized.discoveryBroadcastEnabled)
         .putBool("relayEnabled", normalized.relayEnabled)
         .put("relayCacheDir", normalized.relayCacheDir)
+        .putBool("localSendEnabled", normalized.localSendEnabled)
+        .putBool("localSendDiscoveryEnabled", normalized.localSendDiscoveryEnabled)
+        .putBool("localSendAnnounceEnabled", normalized.localSendAnnounceEnabled)
+        .putInt("localSendAnnounceIntervalSeconds", normalized.localSendAnnounceIntervalSeconds)
+        .put("localSendAlias", normalized.localSendAlias)
+        .put("localSendFingerprint", normalized.localSendFingerprint)
+        .put("localSendDeviceModel", normalized.localSendDeviceModel)
+        .put("localSendDeviceType", normalized.localSendDeviceType)
+        .putBool("localSendDownloadEnabled", normalized.localSendDownloadEnabled)
+        .put("localSendAcceptPolicy", normalized.localSendAcceptPolicy)
+        .put("localSendDefaultSaveDir", normalized.localSendDefaultSaveDir)
+        .put("localSendWhitelist", normalized.localSendWhitelist)
+        .put("localSendBlacklist", normalized.localSendBlacklist)
         .put("favoritesStoreMode", normalized.favoritesStoreMode)
         .putBool("trustProxyHeaders", normalized.localAuthTrustProxyHeaders)
         .toString()
@@ -256,7 +269,7 @@ public func renderCliHelp(): String {
     "  soonlnk help\n" +
     "\n" +
     "Common options:\n" +
-    "  -c, --config <path>     override config file\n" +
+    "  -c, --config <path>     override config file (auto ~/.soonlink/etc/sl-config.yaml -> ./config/soonlink.toml)\n" +
     "  -p, --port <port>       override web port\n" +
     "  --root-dir <path>       override local root dir\n" +
     "  --temp-dir <path>       override temp dir\n" +

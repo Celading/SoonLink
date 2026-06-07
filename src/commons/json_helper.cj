@@ -151,7 +151,18 @@ public func parseJsonString(json: String, field: String): ?String {
                     var value = ""
                     while (k < runes.size && runes[k] != r'"') {
                         if (runes[k] == r'\\' && k + 1 < runes.size) {
-                            k += 1
+                            let escaped = runes[k + 1]
+                            match (escaped) {
+                                case r'n' => value += "\n"
+                                case r'r' => value += "\r"
+                                case r't' => value += "\t"
+                                case r'"' => value += "\""
+                                case r'\\' => value += "\\"
+                                case r'/' => value += "/"
+                                case _ => value += escaped.toString()
+                            }
+                            k += 2
+                            continue
                         }
                         value += runes[k].toString()
                         k += 1

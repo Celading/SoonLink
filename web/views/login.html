@@ -20,9 +20,9 @@
             <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">
                 <div>
                     <div class="pill login-mode-pill mb-3" id="login-mode-pill">载入访问上下文...</div>
-                    <h1 class="h4 mb-3">SoonLink 登录入口（能力预留）</h1>
-                    <p class="mb-2" id="login-summary">当前运行态保留无密码体验，管理员权限仅在 localhost 自动生效。</p>
-                    <p class="text-muted mb-4" id="login-detail">远程访问通过此入口仅用于后续扩展，不会在本期获得提权能力。</p>
+                    <h1 class="h4 mb-3">SoonLink 管理入口</h1>
+                    <p class="mb-2" id="login-summary">正在读取当前访问与认证策略。</p>
+                    <p class="text-muted mb-4" id="login-detail">配置管理员密码后，可在这里建立临时管理会话。</p>
                 </div>
                 <div class="login-theme-chip" id="login-theme-chip">主题自动</div>
             </div>
@@ -54,17 +54,33 @@
                 </div>
             </div>
 
+            <form id="login-password-form" class="file-preview-wrap mt-4" style="display: none;">
+                <div class="preview-head">
+                    <span>管理员密码</span>
+                    <span class="text-muted small">env-only runtime secret</span>
+                </div>
+                <div class="mt-3">
+                    <label class="form-label" for="login-password-input">输入 `SOONLINK_ADMIN_PASSWORD`</label>
+                    <input type="password" class="form-control" id="login-password-input" autocomplete="current-password" placeholder="管理员密码">
+                </div>
+                <div class="d-flex gap-2 flex-wrap mt-3">
+                    <button type="submit" class="btn btn-primary" id="login-submit-button">建立管理会话</button>
+                    <button type="button" class="btn btn-outline-secondary" id="login-logout-button" style="display: none;">退出会话</button>
+                </div>
+                <div class="text-muted small mt-3" id="login-form-status">密码不会写入 SoonLink 配置文件。</div>
+            </form>
+
             <div class="file-preview-wrap mt-4">
                 <div class="preview-head">
                     <span>能力说明</span>
-                    <span class="text-muted small">当前运行态仅展示预留位点</span>
+                    <span class="text-muted small">当前认证 provider 暴露能力</span>
                 </div>
                 <div id="login-capabilities" class="login-capabilities-list mt-3"></div>
             </div>
 
             <div class="d-flex gap-2 flex-wrap mt-4">
                 <a href="/" class="btn btn-primary">返回主页面</a>
-                <a href="/admin" class="btn btn-outline-secondary" id="login-admin-link">管理员面板（仅本机）</a>
+                <a href="/admin" class="btn btn-outline-secondary" id="login-admin-link">进入管理员面板</a>
             </div>
         </div>
     </main>

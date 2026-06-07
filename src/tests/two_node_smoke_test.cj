@@ -143,10 +143,16 @@ public class TwoNodeSmoke_test {
             let pending = waitForTransferRequest(serverB, request.id)
             @Assert(transferRequestStatusToString(pending.status), "pending")
             @Assert(pending.sourceDevice, "node-a")
+            @Assert(pending.fileCategory, "text")
+            @Assert(pending.protocolCandidates[0], "http")
+            @Assert(pending.protocolCandidates.size, 1)
 
             let task = serverB.acceptTransferRequest(request.id, "/accepted")
             let finalTask = waitForRemoteTask(serverB, task.id)
             @Assert(taskStatusToString(finalTask.status), "completed")
+            @Assert(finalTask.fileCategory, "text")
+            @Assert(finalTask.protocolCandidates[0], "http")
+            @Assert(finalTask.protocolCandidates.size, 1)
             @Assert(fileMgr.readText(rootB + "/accepted/request.txt"), "hello-by-request")
 
             let accepted = waitForTransferRequest(serverB, request.id)

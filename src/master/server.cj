@@ -75,13 +75,16 @@ public class CoreServer {
         this.fileManager = FileSystemManager()
         this.connectorRegistry = ConnectorRegistry()
         this.transferEngine = TransferEngine(this.config.tempDir, this.config.maxConnections)
-        this.authProvider = CorePlaceholderAuthProvider(profile)
+        this.authProvider = CorePlaceholderAuthProvider(profile, this.config.adminPassword, this.config.adminBearerToken, this.config.adminSessionTtlSeconds)
         this.cryptoProvider = CorePlaceholderCryptoProvider(profile)
 
-        this.securityChannel = SecurityChannel(securityModeFromString(this.config.securityMode))
+        this.securityChannel = SecurityChannel(
+            securityModeFromString(this.config.securityMode),
+            payloadProtectionProviderFromEncryptionKey(this.config.encryptionKey)
+        )
 
         let registryStore = JsonDeviceRegistryStore(this.config.deviceRegistryFile)
-        let udpTransport = UdpDiscoveryTransport(this.config.discoveryUdpPort)
+        let udpTransport = UdpDiscoveryTransport(this.config.discoveryUdpPort, this.config.discoveryAuthKey)
         let mdnsTransport: DiscoveryTransport = if (this.config.enableMdns) {
             MdnsDiscoveryTransport()
         } else {
@@ -120,6 +123,12 @@ public class CoreServer {
         relayFeature.setWriteHandler({ deviceId: String, path: String, payload: Array<UInt8> =>
             this.writeRelayTarget(deviceId, path, payload)
         })
+        relayFeature.configureLocalSendAcceptPolicy(
+            this.config.localSendAcceptPolicy,
+            this.config.localSendDefaultSaveDir,
+            this.config.localSendWhitelist,
+            this.config.localSendBlacklist
+        )
         chunkTransferFeature.setWriteHandler({ deviceId: String, path: String, payload: Array<UInt8>, offset: Int64 =>
             this.writeChunkTarget(deviceId, path, payload, offset)
         })
@@ -240,8 +249,6 @@ public class CoreServer {
         record.name = resolveNodeDisplayName()
         record.deviceType = "node"
         record.connectorType = "soonlink-http"
-        record.endpointScheme = "http"
-        record.endpointBasePath = ""
         record.ip = resolveDiscoveryAdvertiseIp()
         record.port = Int64(config.webPort)
         record.online = true
@@ -307,6 +314,9 @@ public class CoreServer {
             if (profile.supportsRelay) {
                 spawn { startCleanupTask() }
                 spawn { startRelayDispatchLoop() }
+                if (config.localSendEnabled && config.localSendDiscoveryEnabled && config.localSendAnnounceEnabled) {
+                    spawn { startLocalSendAnnounceLoop() }
+                }
             }
         }
 
@@ -339,6 +349,10 @@ public class CoreServer {
     func loadPersistedDiscoveryRegistry(): Unit {
         let persisted = discoveryFeature.listRegistry()
         for (record in persisted) {
+            if (isSelfEndpoint(record.ip, record.port)) {
+                let _ = discoveryFeature.removeRecord(record.id)
+                continue
+            }
             upsertDiscoveredDevice(record, loadPersistedTrust: true)
         }
     }
@@ -359,6 +373,52 @@ public class CoreServer {
             return
         }
         discoveryFeature.publishHeartbeat(buildDiscoverySelfRecord())
+    }
+
+    func startLocalSendAnnounceLoop(): Unit {
+        publishLocalSendAnnouncement()
+        while (true) {
+            sleep(Duration.second * config.localSendAnnounceIntervalSeconds)
+            publishLocalSendAnnouncement()
+        }
+    }
+
+    func publishLocalSendAnnouncement(): Unit {
+        if (!profile.supportsRelay || !config.localSendEnabled || !config.localSendDiscoveryEnabled || !config.localSendAnnounceEnabled) {
+            return
+        }
+        let announcer = LocalSendUdpAnnouncer()
+        let payload = announcer.buildPayload(
+            resolveLocalSendAlias(),
+            "2.1",
+            if (config.localSendDeviceModel.trimAscii().size > 0) { config.localSendDeviceModel } else { "SoonLink" },
+            if (config.localSendDeviceType.trimAscii().size > 0) { config.localSendDeviceType } else { "desktop" },
+            resolveLocalSendFingerprint(),
+            if (config.certFile.trimAscii().size > 0 && config.keyFile.trimAscii().size > 0) { "https" } else { "http" },
+            Int64(config.webPort),
+            config.localSendDownloadEnabled
+        )
+        let _ = announcer.publishWithFallback(payload, resolveDiscoveryAdvertiseIp())
+    }
+
+    func resolveLocalSendAlias(): String {
+        if (config.localSendAlias.trimAscii().size > 0) {
+            return config.localSendAlias.trimAscii()
+        }
+        if (config.nodeId.trimAscii().size > 0) {
+            return config.nodeId.trimAscii()
+        }
+        "SoonLink Relay"
+    }
+
+    func resolveLocalSendFingerprint(): String {
+        if (config.localSendFingerprint.trimAscii().size > 0) {
+            return config.localSendFingerprint.trimAscii()
+        }
+        if (config.nodeId.trimAscii().size > 0) {
+            return config.nodeId.trimAscii()
+        }
+        "soonlink-relay"
     }
 
     func startCleanupTask(): Unit {
@@ -383,6 +443,10 @@ public class CoreServer {
         if (record.id.size == 0 || record.id == "local" || record.id == config.nodeId) {
             return
         }
+        if (isSelfEndpoint(record.ip, record.port)) {
+            let _ = discoveryFeature.removeRecord(record.id)
+            return
+        }
 
         let device = registryRecordToDevice(record)
         if (device.name.size == 0) {
@@ -399,9 +463,9 @@ public class CoreServer {
         if (device.capability.size == 0) {
             applyDiscoveredDeviceCapabilities(device)
         }
-        applyDefaultDeviceEndpoint(device)
         applyDefaultDeviceConnector(device)
-        preserveDiscoveredState(device, loadPersistedTrust)
+        applyDefaultDeviceEndpoint(device)
+        preserveDiscoveredTrust(device, loadPersistedTrust)
 
         registerDevice(device)
     }
@@ -419,8 +483,6 @@ public class CoreServer {
         if (device.id == "local") {
             applyDeviceTrustState(device, Trusted, "runtime")
         }
-        applyDefaultDeviceEndpoint(device)
-        applyDefaultDeviceConnector(device)
         synchronized(devicesMutex) {
             devices.add(device.id, device)
         }
@@ -428,6 +490,44 @@ public class CoreServer {
 
     public func registerDeviceRecord(record: DeviceRegistryRecord): Device {
         upsertManagedDeviceRecord(record)
+    }
+
+    public func rememberDiscoveredDevice(deviceId: String): Device {
+        let normalizedId = deviceId.trimAscii()
+        if (normalizedId.size == 0) {
+            throw Exception("设备ID不能为空")
+        }
+        match (discoveryFeature.getRecord(normalizedId)) {
+            case Some(record) =>
+                record.remembered = true
+                if (record.trustSource.size == 0) {
+                    record.trustSource = "discovery"
+                }
+                discoveryFeature.manualRegister(record)
+                match (getDevice(normalizedId)) {
+                    case Some(device) => return device
+                    case None => return registryRecordToDevice(record)
+                }
+            case None =>
+                var existingDevice: ?Device = None
+                synchronized(devicesMutex) {
+                    match (devices.get(normalizedId)) {
+                        case Some(device) =>
+                            device.remembered = true
+                            applyDefaultDeviceConnector(device)
+                            applyDefaultDeviceEndpoint(device)
+                            existingDevice = Some(device)
+                        case None => ()
+                    }
+                }
+                match (existingDevice) {
+                    case Some(device) =>
+                        persistDeviceRecord(device)
+                        return device
+                    case None => ()
+                }
+                throw Exception("设备未发现，不能记住")
+        }
     }
 
     public func validateManagedDeviceRecord(record: DeviceRegistryRecord): String {
@@ -440,21 +540,8 @@ public class CoreServer {
         }
 
         let connectorType = normalizeConnectorType(record.connectorType)
-        var effectiveConnectorType = connectorType
-        if (effectiveConnectorType.size == 0) {
-            effectiveConnectorType = defaultConnectorTypeForDevice(registryRecordToDevice(record))
-        }
-        if (effectiveConnectorType == "local-fs") {
+        if (connectorType == "local-fs") {
             return "local-fs 仅保留给本机设备"
-        }
-        let endpointScheme = normalizeEndpointScheme(record.endpointScheme)
-        if (
-            effectiveConnectorType == "soonlink-http" &&
-            endpointScheme.size > 0 &&
-            endpointScheme != "http" &&
-            endpointScheme != "https"
-        ) {
-            return "soonlink-http 仅支持 http 或 https endpointScheme"
         }
 
         let ip = record.ip.trimAscii()
@@ -465,6 +552,9 @@ public class CoreServer {
         let port = if (record.port > 0) { record.port } else { Int64(config.webPort) }
         if (port <= 0) {
             return "设备端口不能为空"
+        }
+        if (isSelfEndpoint(ip, port)) {
+            return "不能把当前 SoonLink 本机端点登记为远端节点"
         }
         ""
     }
@@ -485,7 +575,6 @@ public class CoreServer {
         if (device.capability.size == 0) {
             applyDefaultDeviceCapabilities(device, profile)
         }
-        applyDefaultDeviceEndpoint(device)
         applyDefaultDeviceConnector(device)
         registerDevice(device)
         persistDeviceRecord(device)
@@ -519,31 +608,11 @@ public class CoreServer {
                 device.online = true
                 device.lastSeen = currentTimestamp()
 
-                if (device.remembered) {
-                    persistDeviceRecord(device)
-                }
+                persistDeviceRecord(device)
                 return Some(device)
             }
         }
         None
-    }
-
-    public func rememberDiscoveredDevice(deviceId: String): Device {
-        let normalized = deviceId.trimAscii()
-        if (normalized.size == 0) {
-            throw Exception("设备ID不能为空")
-        }
-        if (normalized.toLower() == "local") {
-            throw Exception("local 设备由运行时保留，无需重复记住")
-        }
-
-        match (getDevice(normalized)) {
-            case Some(device) =>
-                persistDeviceRecord(device)
-                device
-            case None =>
-                throw Exception("设备不存在: ${normalized}")
-        }
     }
 
     public func getDevice(deviceId: String): ?Device {
@@ -579,6 +648,9 @@ public class CoreServer {
                         }
                     }
                     applyDeviceTrustState(device, if (device.id == "local") { Trusted } else { state }, source)
+                    if (device.id != "local") {
+                        device.remembered = true
+                    }
                     persistDeviceRecord(device)
                     return device
                 case None =>
@@ -649,7 +721,6 @@ public class CoreServer {
     }
 
     func persistDeviceRecord(device: Device): Unit {
-        device.remembered = true
         discoveryFeature.manualRegister(deviceToRegistryRecord(device))
     }
 
@@ -659,7 +730,7 @@ public class CoreServer {
         device.trustUpdatedAt = currentTimestamp()
     }
 
-    func preserveDiscoveredState(device: Device, loadPersistedTrust: Bool): Unit {
+    func preserveDiscoveredTrust(device: Device, loadPersistedTrust: Bool): Unit {
         var existing: ?Device = None
         synchronized(devicesMutex) {
             existing = devices.get(device.id)
@@ -667,16 +738,10 @@ public class CoreServer {
 
         match (existing) {
             case Some(current) =>
-                device.remembered = current.remembered
                 device.trustState = current.trustState
                 device.trustSource = current.trustSource
                 device.trustUpdatedAt = current.trustUpdatedAt
             case None =>
-                if (loadPersistedTrust || device.remembered) {
-                    device.remembered = true
-                } else {
-                    device.remembered = false
-                }
                 if (!loadPersistedTrust) {
                     device.trustState = Unknown
                     device.trustSource = "discovery"
@@ -762,12 +827,34 @@ public class CoreServer {
         "127.0.0.1"
     }
 
+    func isSelfEndpoint(host: String, port: Int64): Bool {
+        let normalizedHost = host.trimAscii().toLower()
+        if (normalizedHost.size == 0 || port <= 0 || port != Int64(config.webPort)) {
+            return false
+        }
+        if (normalizedHost == "localhost" || normalizedHost == "127.0.0.1" || normalizedHost == "::1") {
+            return true
+        }
+        let primary = currentPrimaryIp().trimAscii().toLower()
+        if (primary.size > 0 && normalizedHost == primary) {
+            return true
+        }
+        let advertised = resolveDiscoveryAdvertiseIp().trimAscii().toLower()
+        if (advertised.size > 0 && normalizedHost == advertised) {
+            return true
+        }
+        false
+    }
+
     // CFM/P Master boundary: task domain
     public func createTransferTask(
         sourceDevice: String,
         targetDevice: String,
         filePath: String,
-        targetPath: String
+        targetPath: String,
+        fileCategory!: String = "",
+        protocolPreferences!: ArrayList<String> = ArrayList<String>(),
+        threads!: Int64 = 0
     ): TransferTask {
         ensureDeviceUsableForTransfer(sourceDevice, "transfer source")
         ensureDeviceUsableForTransfer(targetDevice, "transfer target")
@@ -780,9 +867,14 @@ public class CoreServer {
         task.targetPath = targetPath
         task.status = Pending
         task.createdAt = currentTimestamp()
+        task.protocolPreferences = sanitizeTransferProtocolPreferences(protocolPreferences)
+        task.threads = if (threads > 0) { threads } else { 0 }
 
         match (getFileInfo(sourceDevice, filePath)) {
             case Some(meta) =>
+                if (meta.category.trimAscii().size == 0) {
+                    meta.category = resolveTransferFileCategory(filePath, meta.mimeType, meta.isDir)
+                }
                 task.metadata = meta
                 task.sourceIsDir = meta.isDir
                 if (!meta.isDir) {
@@ -791,6 +883,20 @@ public class CoreServer {
                 }
             case None => ()
         }
+
+        task.fileCategory = resolveTransferTaskCategory(task, fileCategory)
+        if (task.metadata.category.trimAscii().size == 0) {
+            task.metadata.category = task.fileCategory
+        }
+        task.protocolCandidates = buildTransferProtocolCandidatesForRoute(
+            task.fileCategory,
+            task.totalBytes,
+            task.protocolPreferences,
+            task.sourceIsDir || task.metadata.isDir,
+            task.threads,
+            task.sourceDevice,
+            task.targetDevice
+        )
 
         synchronized(tasksMutex) {
             tasks.add(task.id, task)
@@ -857,6 +963,8 @@ public class CoreServer {
         if (request.metadata.name.size == 0) {
             request.metadata.name = extractVirtualBaseName(request.filePath)
         }
+        request.metadata.mimeType = resolvePreviewMimeType(request.metadata.mimeType, request.filePath, request.sourceIsDir)
+        request.metadata.category = resolveTransferRequestCategory(request)
         if (request.sourceName.trimAscii().size == 0) {
             request.sourceName = request.sourceDevice
         }
@@ -869,6 +977,9 @@ public class CoreServer {
         if (request.totalBytes <= 0 && request.metadata.size > 0) {
             request.totalBytes = request.metadata.size
         }
+        request.fileCategory = request.metadata.category
+        request.protocolPreferences = sanitizeTransferProtocolPreferences(request.protocolPreferences)
+        request.protocolCandidates = soonLinkDirectProtocolCandidates()
         if (request.createdAt <= 0) {
             request.createdAt = now
         }
@@ -889,12 +1000,13 @@ public class CoreServer {
         targetDevice: String,
         filePath: String,
         targetPath: String,
-        note: String
+        note: String,
+        protocolPreferences!: ArrayList<String> = ArrayList<String>()
     ): TransferRequest {
         ensureDeviceUsableForTransfer(sourceDevice, "transfer request source")
         ensureDeviceUsableForTransfer(targetDevice, "transfer request target")
 
-        let request = buildTransferRequest(sourceDevice, filePath, targetPath, note)
+        let request = buildTransferRequest(sourceDevice, filePath, targetPath, note, protocolPreferences: protocolPreferences)
         if (targetDevice == "local") {
             return ingestTransferRequest(request)
         }
@@ -936,7 +1048,14 @@ public class CoreServer {
             case Some(request) =>
                 let resolvedSource = resolveTransferRequestSourceDevice(request)
                 let resolvedTargetPath = normalizeVirtualPath(if (targetPath.trimAscii().size > 0) { targetPath } else { request.targetPath })
-                let task = createTransferTask(resolvedSource, "local", request.filePath, resolvedTargetPath)
+                let task = createTransferTask(
+                    resolvedSource,
+                    "local",
+                    request.filePath,
+                    resolvedTargetPath,
+                    fileCategory: request.fileCategory,
+                    protocolPreferences: request.protocolPreferences
+                )
                 let now = currentTimestamp()
                 synchronized(transferRequestsMutex) {
                     if (let Some(stored) <- transferRequests.get(requestId)) {
@@ -1293,6 +1412,128 @@ public class CoreServer {
         relayFeature.getJob(jobId)
     }
 
+    public func listRelayRooms(): ArrayList<RelayRoom> {
+        if (!profile.supportsRelay) {
+            return ArrayList<RelayRoom>()
+        }
+        relayFeature.listRooms()
+    }
+
+    public func listRelayRoomMessages(roomId: String, limit: Int64): ArrayList<RelayMessage> {
+        if (!profile.supportsRelay) {
+            return ArrayList<RelayMessage>()
+        }
+        relayFeature.listRoomMessages(roomId, limit)
+    }
+
+    public func listRelayChannelAdapters(): ArrayList<ChannelAdapter> {
+        if (!profile.supportsRelay) {
+            return ArrayList<ChannelAdapter>()
+        }
+        relayFeature.listChannelAdapters()
+    }
+
+    public func createRelayAdapterTextMessage(message: ChannelAdapterMessage): RelayJob {
+        if (!profile.supportsRelay) {
+            let job = RelayJob()
+            job.status = "disabled"
+            job.message = "relay disabled in current edition"
+            job.recordKind = "text"
+            job.sourceProtocolId = message.protocolId
+            job.sourcePeerId = message.peerId
+            return job
+        }
+        relayFeature.createAdapterTextMessage(message)
+    }
+
+    public func recordLocalSendPeerRegistration(info: LocalSendPeerInfo, body: String): ?RelayJob {
+        if (!profile.supportsRelay) {
+            return None
+        }
+        relayFeature.recordLocalSendPeerRegistration(info, body)
+    }
+
+    public func createRelayRoomTextMessage(roomId: String, sourceDevice: String, fileName: String, content: String): RelayJob {
+        if (!profile.supportsRelay) {
+            let job = RelayJob()
+            job.status = "disabled"
+            job.message = "relay disabled in current edition"
+            job.recordKind = "text"
+            job.sessionId = roomId
+            job.sourceDevice = sourceDevice
+            job.fileName = fileName
+            return job
+        }
+        relayFeature.createRoomTextMessage(roomId, sourceDevice, fileName, content)
+    }
+
+    public func prepareLocalSendUpload(raw: String, endpoint: String): LocalSendSession {
+        if (!profile.supportsRelay) {
+            throw Exception("relay disabled in current edition")
+        }
+        relayFeature.prepareLocalSendUpload(raw, endpoint)
+    }
+
+    public func receiveLocalSendUpload(sessionId: String, fileId: String, token: String, payload: Array<UInt8>): RelayJob {
+        if (!profile.supportsRelay) {
+            throw Exception("relay disabled in current edition")
+        }
+        relayFeature.receiveLocalSendUpload(sessionId, fileId, token, payload)
+    }
+
+    public func cancelLocalSendUpload(sessionId: String): Bool {
+        if (!profile.supportsRelay) {
+            return false
+        }
+        relayFeature.cancelLocalSendUpload(sessionId)
+    }
+
+    public func prepareLocalSendDownload(jobId: String): LocalSendSession {
+        if (!profile.supportsRelay) {
+            throw Exception("relay disabled in current edition")
+        }
+        relayFeature.prepareLocalSendDownload(jobId)
+    }
+
+    public func localSendDownloadCacheDescriptor(sessionId: String, fileId: String, token: String): ?(String, String) {
+        if (!profile.supportsRelay) {
+            return None
+        }
+        relayFeature.localSendDownloadCacheDescriptor(sessionId, fileId, token)
+    }
+
+    public func sendLocalSendJobToPeer(endpoint: String, jobId: String, alias: String, fingerprint: String, deviceModel: String, deviceType: String): LocalSendOutboundResult {
+        if (!profile.supportsRelay) {
+            throw Exception("relay disabled in current edition")
+        }
+        relayFeature.sendLocalSendJobToPeer(endpoint, jobId, alias, fingerprint, deviceModel, deviceType)
+    }
+
+    public func pullLocalSendFileFromPeer(endpoint: String, sessionId: String, fileId: String, token: String, fileName: String, peerDisplayName: String): LocalSendOutboundResult {
+        if (!profile.supportsRelay) {
+            throw Exception("relay disabled in current edition")
+        }
+        relayFeature.pullLocalSendFileFromPeer(endpoint, sessionId, fileId, token, fileName, peerDisplayName)
+    }
+
+    public func localSendPolicySnapshot(): JsonObject {
+        if (!profile.supportsRelay) {
+            return JsonObject()
+                .put("acceptPolicy", "disabled")
+                .put("defaultSaveDir", "")
+                .put("whitelist", "")
+                .put("blacklist", "")
+        }
+        relayFeature.localSendPolicySnapshot()
+    }
+
+    public func configureLocalSendAcceptPolicy(policy: String, defaultSaveDir: String, whitelist: String, blacklist: String): Unit {
+        if (!profile.supportsRelay) {
+            return
+        }
+        relayFeature.configureLocalSendAcceptPolicy(policy, defaultSaveDir, whitelist, blacklist)
+    }
+
     public func relayCacheDescriptor(jobId: String): ?(String, String) {
         if (!profile.supportsRelay) {
             return None
@@ -1305,15 +1546,20 @@ public class CoreServer {
     }
 
     public func createRelayTextRecord(sourceDevice: String, fileName: String, content: String, targetPath: String): RelayJob {
+        createRelayTextRecord(sourceDevice, fileName, content, targetPath, "")
+    }
+
+    public func createRelayTextRecord(sourceDevice: String, fileName: String, content: String, targetPath: String, sessionId: String): RelayJob {
         if (!profile.supportsRelay) {
             let job = RelayJob()
             job.status = "disabled"
             job.message = "relay disabled in current edition"
             job.fileName = fileName
             job.recordKind = "text"
+            job.sessionId = sessionId
             return job
         }
-        relayFeature.createTextRecord(sourceDevice, fileName, content, targetPath)
+        relayFeature.createTextRecord(sourceDevice, fileName, content, targetPath, sessionId)
     }
 
     public func retryRelayJob(jobId: String): ?RelayJob {
@@ -1518,6 +1764,9 @@ public class CoreServer {
         if (normalizedHost.size == 0 || port <= 0) {
             return
         }
+        if (isSelfEndpoint(normalizedHost, port)) {
+            return
+        }
         match (getDevice(normalizedId)) {
             case Some(_) =>
                 return
@@ -1542,7 +1791,8 @@ public class CoreServer {
         sourceDevice: String,
         filePath: String,
         targetPath: String,
-        note: String
+        note: String,
+        protocolPreferences!: ArrayList<String> = ArrayList<String>()
     ): TransferRequest {
         let normalizedSource = sourceDevice.trimAscii()
         let normalizedFilePath = normalizeVirtualPath(filePath)
@@ -1562,15 +1812,20 @@ public class CoreServer {
         request.totalEntries = plan.totalEntries
         request.totalBytes = plan.totalBytes
         request.note = note.trimAscii()
+        request.protocolPreferences = sanitizeTransferProtocolPreferences(protocolPreferences)
 
         match (getFileInfo(normalizedSource, normalizedFilePath)) {
             case Some(meta) =>
+                if (meta.category.trimAscii().size == 0) {
+                    meta.category = resolveTransferFileCategory(normalizedFilePath, meta.mimeType, meta.isDir)
+                }
                 request.metadata = meta
             case None =>
                 request.metadata.name = plan.rootName
                 request.metadata.path = normalizedFilePath
                 request.metadata.isDir = plan.sourceIsDir
                 request.metadata.size = plan.totalBytes
+                request.metadata.mimeType = resolvePreviewMimeType("", normalizedFilePath, plan.sourceIsDir)
         }
 
         if (request.metadata.path.size == 0) {
@@ -1579,10 +1834,99 @@ public class CoreServer {
         if (request.metadata.name.size == 0) {
             request.metadata.name = plan.rootName
         }
+        request.metadata.category = resolveTransferRequestCategory(request)
+        request.fileCategory = request.metadata.category
+        request.protocolCandidates = soonLinkDirectProtocolCandidates()
+        if (!shouldUseSoonLinkDirectProtocol(request.sourceDevice, "local")) {
+            request.protocolCandidates = buildTransferProtocolCandidates(
+            request.fileCategory,
+            request.totalBytes,
+            request.protocolPreferences,
+            request.sourceIsDir,
+            0
+            )
+        }
         if (request.targetPath.size == 0) {
             request.targetPath = "/"
         }
         request
+    }
+
+    func buildTransferProtocolCandidatesForRoute(
+        fileCategory: String,
+        totalBytes: Int64,
+        protocolPreferences: ArrayList<String>,
+        isDir: Bool,
+        threads: Int64,
+        sourceDevice: String,
+        targetDevice: String
+    ): ArrayList<String> {
+        if (shouldUseSoonLinkDirectProtocol(sourceDevice, targetDevice)) {
+            return soonLinkDirectProtocolCandidates()
+        }
+        buildTransferProtocolCandidates(fileCategory, totalBytes, protocolPreferences, isDir, threads)
+    }
+
+    func shouldUseSoonLinkDirectProtocol(sourceDevice: String, targetDevice: String): Bool {
+        isSoonLinkDirectDevice(sourceDevice) || isSoonLinkDirectDevice(targetDevice)
+    }
+
+    func isSoonLinkDirectDevice(deviceId: String): Bool {
+        let normalized = deviceId.trimAscii()
+        if (normalized.size == 0 || normalized == "local") {
+            return false
+        }
+        if (normalized == config.nodeId.trimAscii()) {
+            return true
+        }
+        match (getDevice(normalized)) {
+            case Some(device) =>
+                let connector = normalizeConnectorType(defaultConnectorTypeForDevice(device))
+                connector == "soonlink-http" || connector == "soonlink-lite"
+            case None => false
+        }
+    }
+
+    func soonLinkDirectProtocolCandidates(): ArrayList<String> {
+        let out = ArrayList<String>()
+        out.add("http")
+        out
+    }
+
+    func resolveTransferTaskCategory(task: TransferTask, preferredCategory: String): String {
+        let normalizedPreferred = normalizeRequestedTransferCategory(preferredCategory)
+        if (normalizedPreferred.size > 0) {
+            return normalizedPreferred
+        }
+        if (task.metadata.category.trimAscii().size > 0) {
+            return task.metadata.category.trimAscii().toLower()
+        }
+        resolveTransferFileCategory(task.filePath, task.metadata.mimeType, task.sourceIsDir || task.metadata.isDir)
+    }
+
+    func resolveTransferRequestCategory(request: TransferRequest): String {
+        let normalizedRequested = normalizeRequestedTransferCategory(request.fileCategory)
+        if (normalizedRequested.size > 0) {
+            return normalizedRequested
+        }
+        if (request.metadata.category.trimAscii().size > 0) {
+            return request.metadata.category.trimAscii().toLower()
+        }
+        resolveTransferFileCategory(request.filePath, request.metadata.mimeType, request.sourceIsDir || request.metadata.isDir)
+    }
+
+    func normalizeRequestedTransferCategory(raw: String): String {
+        let normalized = raw.trimAscii().toLower()
+        if (normalized == "directory") { return "directory" }
+        if (normalized == "image") { return "image" }
+        if (normalized == "video") { return "video" }
+        if (normalized == "audio") { return "audio" }
+        if (normalized == "document") { return "document" }
+        if (normalized == "archive") { return "archive" }
+        if (normalized == "code") { return "code" }
+        if (normalized == "text") { return "text" }
+        if (normalized == "unknown") { return "unknown" }
+        ""
     }
 
     func resolveTransferRequestSourceDeviceId(sourceDevice: String): String {
@@ -1631,6 +1975,14 @@ public class CoreServer {
     }
 
     func buildTransferRequestIngressPayload(request: TransferRequest): String {
+        let preferences = JsonArray()
+        for (value in request.protocolPreferences) {
+            preferences.addStr(value)
+        }
+        let candidates = JsonArray()
+        for (value in request.protocolCandidates) {
+            candidates.addStr(value)
+        }
         JsonObject()
             .put("id", request.id)
             .put("requesterDeviceId", request.requesterDeviceId)
@@ -1643,11 +1995,14 @@ public class CoreServer {
             .put("targetPath", request.targetPath)
             .put("fileName", request.metadata.name)
             .put("mimeType", request.metadata.mimeType)
+            .put("fileCategory", request.fileCategory)
             .putInt("sourceSize", request.metadata.size)
             .putInt("sourceModified", request.metadata.modified)
             .putBool("sourceIsDir", request.sourceIsDir)
             .putInt("totalEntries", request.totalEntries)
             .putInt("totalBytes", request.totalBytes)
+            .putArr("protocolPreferences", preferences)
+            .putArr("protocolCandidates", candidates)
             .put("note", request.note)
             .putInt("createdAt", request.createdAt)
             .toString()
@@ -1658,8 +2013,6 @@ public class CoreServer {
         record.name = record.name.trimAscii()
         record.deviceType = record.deviceType.trimAscii().toLower()
         record.connectorType = normalizeConnectorType(record.connectorType)
-        record.endpointScheme = normalizeEndpointScheme(record.endpointScheme)
-        record.endpointBasePath = normalizeEndpointBasePath(record.endpointBasePath)
         record.ip = record.ip.trimAscii()
 
         let validationError = validateManagedDeviceRecord(record)
@@ -1698,10 +2051,11 @@ public class CoreServer {
         if (record.connectorType.size == 0) {
             record.connectorType = "soonlink-http"
         }
-        let normalizedDevice = registryRecordToDevice(record)
-        applyDefaultDeviceEndpoint(normalizedDevice)
-        record.endpointScheme = normalizedDevice.endpointScheme
-        record.endpointBasePath = normalizedDevice.endpointBasePath
+        record.endpointScheme = normalizeEndpointScheme(record.endpointScheme)
+        if (record.endpointScheme.size > 0 && record.endpointScheme != "http" && record.endpointScheme != "https" && record.endpointScheme != "local") {
+            return "endpoint scheme 只能是 http / https / local"
+        }
+        record.endpointBasePath = normalizeEndpointBasePath(record.endpointBasePath)
         ""
     }
 

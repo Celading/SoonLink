@@ -4,7 +4,7 @@ import soonlnk.commons.*
 import soonlnk.features.*
 import soonlnk.master.*
 import soonlnk.product.*
-import std.fs.remove
+import std.fs.{Directory, remove}
 import std.unittest.*
 import std.unittest.testmacro.*
 
@@ -47,5 +47,35 @@ public class FileHelper_test {
         }
 
         remove(path)
+    }
+
+    @TestCase
+    public func localFileSystemAnchorsRootAndRejectsTraversal(): Unit {
+        let root = testTempPath("soonlink_localfs_root")
+        Directory.create(root, recursive: true)
+        let fs = LocalFileSystem(root, consoleEnabled: false)
+
+        fs.writeFile("/safe.txt", stringToBytes("ok"), 0)
+        let read = fs.readFile("safe.txt", 0, 2)
+        @Assert(String.fromUtf8(read), "ok")
+        @Assert(fs.getFileInfo("safe.txt").path, "/safe.txt")
+
+        try {
+            _ = fs.readFile("../outside.txt", 0, 8)
+            @Fail("parent traversal should be rejected")
+        } catch (_: Exception) {}
+
+        try {
+            fs.writeFile("/nested/../escape.txt", stringToBytes("bad"), 0)
+            @Fail("nested parent traversal should be rejected")
+        } catch (_: Exception) {}
+
+        try {
+            _ = fs.readFile("..\\outside.txt", 0, 8)
+            @Fail("backslash traversal should be rejected")
+        } catch (_: Exception) {}
+
+        remove(root + "/safe.txt")
+        remove(root)
     }
 }

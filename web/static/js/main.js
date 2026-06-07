@@ -32,12 +32,17 @@ const APP_STATE = {
     connectorBindings: [],
     allTasks: [],
     allRelayJobs: [],
+    relayRooms: [],
+    relayRoomMessagesCache: {},
     relaySelectedIds: [],
     relayPreview: null,
+    relayTextStationSelectedRoomId: '',
     relayTextStationSelectedId: '',
     relayTextPreviewCache: {},
+    localSendPolicy: null,
     relayPageDraftSeed: 0,
     relayModalDraftSeed: 0,
+    relayTextStationSessionId: 'default-text-room',
     allFiles: [],
     fileSortBy: 'name',
     fileSortOrder: 'asc',
@@ -1539,6 +1544,8 @@ document.addEventListener('DOMContentLoaded', async function() {
     initTransferModal();
     initTransferRequestDrawer();
     initSettingsForm();
+    initLocalSendPolicySettings();
+    initLanzigFeedSettings();
     initAdminPanel();
     initThemeAutomation();
     initEnhancedToolbar();
@@ -3856,6 +3863,12 @@ function initRelayPanel() {
             openRelayTextStation();
         });
     }
+    const openLocalSendPolicyBtn = document.getElementById('relay-open-localsend-policy-btn');
+    if (openLocalSendPolicyBtn) {
+        openLocalSendPolicyBtn.addEventListener('click', () => {
+            openLocalSendPolicySettings();
+        });
+    }
 
     const textInput = document.getElementById('relay-text-content');
     if (textInput) {
@@ -3922,6 +3935,16 @@ function initRelayPanel() {
             }
         });
     }
+    const previewCopyBtn = document.getElementById('relay-preview-copy-btn');
+    if (previewCopyBtn) {
+        previewCopyBtn.addEventListener('click', async () => {
+            const jobId = APP_STATE.relayPreview?.jobId || '';
+            if (!jobId) {
+                return;
+            }
+            await copyRelayJobCacheText(jobId, '缓存原文已复制');
+        });
+    }
     const previewClearBtn = document.getElementById('relay-preview-clear-btn');
     if (previewClearBtn) {
         previewClearBtn.addEventListener('click', clearRelayPreview);
@@ -3949,6 +3972,16 @@ function initRelayPanel() {
             const preview = APP_STATE.relayTextPreviewCache[selectedId];
             const url = preview?.downloadUrl || `/api/relay/jobs/${encodeURIComponent(selectedId)}/cache`;
             window.open(url, '_blank', 'noopener');
+        });
+    }
+    const modalCopyBtn = document.getElementById('relay-text-station-copy-btn');
+    if (modalCopyBtn) {
+        modalCopyBtn.addEventListener('click', async () => {
+            const selectedId = APP_STATE.relayTextStationSelectedId || '';
+            if (!selectedId) {
+                return;
+            }
+            await copyRelayJobCacheText(selectedId, '文字记录原文已复制');
         });
     }
     const modalRestoreBtn = document.getElementById('relay-text-station-restore-btn');
@@ -4009,6 +4042,9 @@ function refreshRelayTextDraftSeed(scope = 'page') {
 }
 
 function buildRelayTextDefaultFileName(scope = 'page') {
+    if (scope === 'modal') {
+        return 'soonlink-room.txt';
+    }
     return `tmpTXT-${ensureRelayTextDraftSeed(scope)}.txt`;
 }
 
@@ -4098,6 +4134,9 @@ async function submitRelayTextRecord(sourceDevice, fileName, content, options = 
         targetPath,
         content,
     };
+    if (options.sessionId) {
+        payload.sessionId = options.sessionId;
+    }
 
     try {
         const resp = await fetch('/api/relay/jobs/text', {
@@ -4112,13 +4151,61 @@ async function submitRelayTextRecord(sourceDevice, fileName, content, options = 
             showAlert(data.error || '临时文本提交失败', 'danger');
             return null;
         }
-        showAlert('文字中转站记录已缓存到中继站', 'success');
+        showAlert(options.sessionId ? '会话消息已追加到文字站' : '文字中转站记录已缓存到中继站', 'success');
         resetRelayTextDraft(scope);
         await loadRelayJobs();
         return data;
     } catch (error) {
         console.error('提交临时文本失败:', error);
         showAlert('文字中转站记录提交失败', 'danger');
+        return null;
+    }
+}
+
+function getRelayTextStationComposerRoomId() {
+    return APP_STATE.relayTextStationSelectedRoomId
+        || APP_STATE.relayTextStationSessionId
+        || 'default-text-room';
+}
+
+async function submitRelayRoomMessage(roomId, sourceDevice, fileName, content, options = {}) {
+    const scope = options.scope || 'modal';
+    const resolvedRoomId = String(roomId || '').trim() || 'default-text-room';
+    const resolvedFileName = normalizeRelayTextRecordName(fileName, scope);
+    const payload = {
+        sourceDevice: sourceDevice || 'web-client',
+        fileName: resolvedFileName,
+        content,
+    };
+
+    try {
+        const resp = await fetch(`/api/relay/rooms/${encodeURIComponent(resolvedRoomId)}/messages`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showAlert(data.error || '频道消息发送失败', 'danger');
+            return null;
+        }
+        showAlert('频道消息已写入文字站', 'success');
+        resetRelayTextDraft(scope);
+        await loadRelayJobs();
+        await loadRelayRooms({ silent: true });
+        delete APP_STATE.relayRoomMessagesCache[resolvedRoomId];
+        await fetchRelayRoomMessages(resolvedRoomId, false);
+        APP_STATE.relayTextStationSelectedRoomId = resolvedRoomId;
+        if (data?.job?.id) {
+            APP_STATE.relayTextStationSelectedId = String(data.job.id);
+        }
+        renderRelayTextStationList();
+        return data;
+    } catch (error) {
+        console.error('发送频道消息失败:', error);
+        showAlert('频道消息发送失败', 'danger');
         return null;
     }
 }
@@ -4133,10 +4220,11 @@ async function submitRelayTextRecordFromModal() {
         showAlert('请输入要发送的文字内容', 'warning');
         return;
     }
-    const data = await submitRelayTextRecord(sourceDevice, fileName, content, { scope: 'modal' });
+    const roomId = getRelayTextStationComposerRoomId();
+    const data = await submitRelayRoomMessage(roomId, sourceDevice, fileName, content, { scope: 'modal' });
     if (data?.job?.id) {
         APP_STATE.relayTextStationSelectedId = String(data.job.id);
-        await selectRelayTextStationRecord(APP_STATE.relayTextStationSelectedId);
+        await selectRelayTextStationRecord(roomId);
     }
 }
 
@@ -4164,7 +4252,8 @@ function updateRelayModalTextMeta() {
     const chars = content.length;
     const lines = countTextLines(content);
     const resolvedPath = buildRelayTextResolvedPath(name, 'modal');
-    metaNode.textContent = `${chars} 字符 · ${lines} 行 · 默认落点 ${resolvedPath}`;
+    const roomId = getRelayTextStationComposerRoomId();
+    metaNode.textContent = `${chars} 字符 · ${lines} 行 · 频道 ${roomId} · 会写入持久消息并保留缓存 ${resolvedPath}`;
     updateRelayModalSubmitButtonState();
 }
 
@@ -4232,6 +4321,9 @@ function normalizeRelayTextRecordName(name, scope = 'page') {
 async function loadRelayJobs() {
     if (!hasCapability('relay')) {
         APP_STATE.allRelayJobs = [];
+        APP_STATE.relayRooms = [];
+        APP_STATE.relayRoomMessagesCache = {};
+        APP_STATE.relayTextStationSelectedRoomId = '';
         APP_STATE.relaySelectedIds = [];
         updateRelayStats([]);
         renderRelayJobs();
@@ -4252,10 +4344,38 @@ async function loadRelayJobs() {
         syncRelayPreviewState();
         updateRelayStats(APP_STATE.allRelayJobs);
         renderRelayJobs();
+        await loadRelayRooms({ silent: true });
         renderRelayTextStationList();
     } catch (error) {
         console.error('加载中继任务失败:', error);
         list.innerHTML = '<tr><td colspan="12" class="table-empty-cell text-center text-danger">加载中继任务失败</td></tr>';
+    }
+}
+
+async function loadRelayRooms(options = {}) {
+    if (!hasCapability('relay')) {
+        APP_STATE.relayRooms = [];
+        APP_STATE.relayRoomMessagesCache = {};
+        APP_STATE.relayTextStationSelectedRoomId = '';
+        return [];
+    }
+    try {
+        const response = await fetch('/api/relay/rooms');
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || data.message || '频道窗口加载失败');
+        }
+        APP_STATE.relayRooms = Array.isArray(data.rooms) ? data.rooms : [];
+        syncRelayRoomSelectionSet();
+        return APP_STATE.relayRooms;
+    } catch (error) {
+        console.error('加载中继频道窗口失败:', error);
+        APP_STATE.relayRooms = [];
+        syncRelayRoomSelectionSet();
+        if (!options.silent) {
+            showAlert(error?.message || '频道窗口加载失败，已退回旧文字记录视图', 'warning');
+        }
+        return [];
     }
 }
 
@@ -4266,18 +4386,86 @@ function getRelayTextJobs() {
         .sort((a, b) => Number(a.updatedAt || 0) - Number(b.updatedAt || 0));
 }
 
+function getRelayTextRoomIdForJob(job) {
+    const sessionId = String(job?.sessionId || '').trim();
+    return sessionId || 'default-text-room';
+}
+
+function getRelayTextRooms() {
+    const apiRooms = Array.isArray(APP_STATE.relayRooms) ? APP_STATE.relayRooms : [];
+    if (apiRooms.length) {
+        return apiRooms.slice().sort((a, b) => Number(a.updatedAt || 0) - Number(b.updatedAt || 0));
+    }
+    const roomMap = {};
+    getRelayTextJobs().forEach((job) => {
+        const roomId = getRelayTextRoomIdForJob(job);
+        if (!roomMap[roomId]) {
+            roomMap[roomId] = {
+                roomId,
+                title: job.sessionId ? (job.fileName || job.sessionId) : '文字中转站',
+                kind: job.sessionId ? 'default-text-station' : 'manual-room',
+                participantIdentityIds: [],
+                createdAt: Number(job.createdAt || 0),
+                updatedAt: Number(job.updatedAt || 0),
+                retentionPolicy: 'relay-text-cache',
+                transportHints: 'legacy-relay-job-text',
+            };
+        }
+        roomMap[roomId].updatedAt = Math.max(Number(roomMap[roomId].updatedAt || 0), Number(job.updatedAt || 0));
+        const source = String(job.sourceDevice || 'web-client');
+        if (!roomMap[roomId].participantIdentityIds.includes(source)) {
+            roomMap[roomId].participantIdentityIds.push(source);
+        }
+    });
+    return Object.values(roomMap).sort((a, b) => Number(a.updatedAt || 0) - Number(b.updatedAt || 0));
+}
+
+function findRelayTextRoom(roomId) {
+    return getRelayTextRooms().find((room) => String(room.roomId || '') === String(roomId || '')) || null;
+}
+
+function findRelayJobById(jobId) {
+    return APP_STATE.allRelayJobs.find((item) => String(item.id || '') === String(jobId || '')) || null;
+}
+
+function findLatestRelayTextJobForRoom(roomId) {
+    const matches = getRelayTextJobs()
+        .filter((job) => getRelayTextRoomIdForJob(job) === String(roomId || ''))
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+    return matches.length ? matches[0] : null;
+}
+
 function syncRelayTextStationSelection(preferredId = '') {
-    const jobs = getRelayTextJobs();
-    if (preferredId && jobs.some((job) => String(job.id || '') === preferredId)) {
-        APP_STATE.relayTextStationSelectedId = preferredId;
+    const rooms = getRelayTextRooms();
+    if (!rooms.length) {
+        APP_STATE.relayTextStationSelectedRoomId = '';
+        APP_STATE.relayTextStationSelectedId = '';
+        return '';
+    }
+    if (preferredId && rooms.some((room) => String(room.roomId || '') === preferredId)) {
+        APP_STATE.relayTextStationSelectedRoomId = preferredId;
+        const job = findLatestRelayTextJobForRoom(preferredId);
+        APP_STATE.relayTextStationSelectedId = job ? String(job.id || '') : '';
         return preferredId;
     }
-    const current = APP_STATE.relayTextStationSelectedId || '';
-    if (current && jobs.some((job) => String(job.id || '') === current)) {
-        return current;
+    const preferredJob = preferredId ? findRelayJobById(preferredId) : null;
+    if (preferredJob) {
+        const roomId = getRelayTextRoomIdForJob(preferredJob);
+        APP_STATE.relayTextStationSelectedRoomId = roomId;
+        APP_STATE.relayTextStationSelectedId = String(preferredJob.id || '');
+        return roomId;
     }
-    APP_STATE.relayTextStationSelectedId = jobs.length ? String(jobs[jobs.length - 1].id || '') : '';
-    return APP_STATE.relayTextStationSelectedId;
+    const currentRoom = APP_STATE.relayTextStationSelectedRoomId || '';
+    if (currentRoom && rooms.some((room) => String(room.roomId || '') === currentRoom)) {
+        const job = findLatestRelayTextJobForRoom(currentRoom);
+        APP_STATE.relayTextStationSelectedId = job ? String(job.id || '') : APP_STATE.relayTextStationSelectedId;
+        return currentRoom;
+    }
+    const roomId = String(rooms[rooms.length - 1].roomId || '');
+    APP_STATE.relayTextStationSelectedRoomId = roomId;
+    const job = findLatestRelayTextJobForRoom(roomId);
+    APP_STATE.relayTextStationSelectedId = job ? String(job.id || '') : '';
+    return roomId;
 }
 
 function renderRelayTextStationList() {
@@ -4286,91 +4474,116 @@ function renderRelayTextStationList() {
     if (!list || !countNode) {
         return;
     }
-    const jobs = getRelayTextJobs();
-    const selectedId = syncRelayTextStationSelection();
-    countNode.textContent = `${jobs.length} 条`;
+    const rooms = getRelayTextRooms();
+    const selectedRoomId = syncRelayTextStationSelection();
+    countNode.textContent = `${rooms.length} 个频道`;
 
-    if (!jobs.length) {
-        list.innerHTML = '<div class="transfer-preview-empty relay-text-station-empty">还没有文字记录，发送一条后会像短信收件箱一样出现在这里。</div>';
-        renderRelayTextStationEmpty();
+    if (!rooms.length) {
+        list.innerHTML = '<div class="transfer-preview-empty relay-text-station-empty">还没有文字会话，发送一条后会固定追加到默认会话 txt。</div>';
+        renderRelayTextStationSystemOnly();
         return;
     }
 
-    list.innerHTML = jobs.map((job) => {
-        const jobId = String(job.id || '');
-        const snippet = String(job.message || job.fileName || '').trim();
+    list.innerHTML = rooms.map((room) => {
+        const roomId = String(room.roomId || '');
+        const participants = Array.isArray(room.participantIdentityIds) ? room.participantIdentityIds.length : 0;
+        const participantLabel = participants ? `${participants} 个身份` : '等待身份';
+        const hint = String(room.transportHints || room.retentionPolicy || 'relay-room');
         return `
-            <button type="button" class="relay-text-station-item ${jobId === selectedId ? 'is-active' : ''}" data-id="${escapeAttr(jobId)}">
-                <div class="relay-text-station-item-title">${escapeHtml(job.fileName || 'tmpTXT.txt')}</div>
-                <div class="relay-text-station-item-meta">${escapeHtml(job.sourceDevice || 'web-client')} · ${escapeHtml(job.targetPath || '/tmpSL')}</div>
-                <div class="relay-text-station-item-meta">${escapeHtml(formatDate(Number(job.updatedAt || 0) * 1000))}</div>
-                <div class="relay-text-station-item-snippet">${escapeHtml(snippet || '文字记录')}</div>
+            <button type="button" class="relay-text-station-item ${roomId === selectedRoomId ? 'is-active' : ''}" data-room-id="${escapeAttr(roomId)}">
+                <div class="relay-text-station-item-title">${escapeHtml(room.title || roomId || '文字频道')}</div>
+                <div class="relay-text-station-item-meta">${escapeHtml(room.kind || 'manual-room')} · ${escapeHtml(participantLabel)}</div>
+                <div class="relay-text-station-item-meta">${escapeHtml(hint)}</div>
+                <div class="relay-text-station-item-meta">${escapeHtml(formatDate(Number(room.updatedAt || 0) * 1000))}</div>
+                <div class="relay-text-station-item-snippet">${escapeHtml(roomId || 'default-text-room')}</div>
             </button>
         `;
     }).join('');
 
     list.querySelectorAll('.relay-text-station-item').forEach((node) => {
         node.addEventListener('click', async () => {
-            const jobId = node.getAttribute('data-id') || '';
-            await selectRelayTextStationRecord(jobId);
+            const roomId = node.getAttribute('data-room-id') || '';
+            await selectRelayTextStationRecord(roomId);
         });
     });
 
-    const currentJob = jobs.find((job) => String(job.id || '') === selectedId) || null;
-    if (!currentJob) {
+    const currentRoom = findRelayTextRoom(selectedRoomId);
+    if (!currentRoom) {
         renderRelayTextStationEmpty();
         return;
     }
-    const cachedPreview = APP_STATE.relayTextPreviewCache[selectedId];
-    if (cachedPreview) {
-        renderRelayTextStationDetail(cachedPreview, currentJob);
+    const cachedMessages = APP_STATE.relayRoomMessagesCache[selectedRoomId];
+    if (cachedMessages) {
+        renderRelayTextStationRoomDetail(currentRoom, cachedMessages);
     } else {
-        renderRelayTextStationLoading(currentJob);
+        renderRelayTextStationRoomLoading(currentRoom);
     }
 }
 
 function renderRelayTextStationEmpty(message = '选择一条文字记录后，会在这里按会话气泡展示内容；超过预览阈值时可直接下载。') {
     const title = document.getElementById('relay-text-station-thread-title');
     const meta = document.getElementById('relay-text-station-thread-meta');
-    const empty = document.getElementById('relay-text-station-empty');
-    const bubble = document.getElementById('relay-text-station-bubble');
+    const stream = document.getElementById('relay-text-station-stream');
     if (title) title.textContent = '选择一条文字记录';
     if (meta) meta.textContent = '会显示来源、落点、大小与时间。';
-    if (empty) {
-        empty.hidden = false;
-        empty.textContent = message;
-    }
-    if (bubble) {
-        bubble.hidden = true;
-        bubble.classList.remove('is-self');
+    if (stream) {
+        stream.innerHTML = `<div class="transfer-preview-empty relay-text-station-empty">${escapeHtml(message)}</div>`;
     }
     setRelayTextStationActionState(null, null);
+}
+
+function renderRelayTextStationSystemOnly() {
+    const title = document.getElementById('relay-text-station-thread-title');
+    const meta = document.getElementById('relay-text-station-thread-meta');
+    const stream = document.getElementById('relay-text-station-stream');
+    if (title) title.textContent = 'Messenger 收件箱';
+    if (meta) meta.textContent = '还没有文字会话；来向传输请求会先显示为系统消息。';
+    setRelayTextStationActionState(null, null);
+    if (!stream) {
+        return;
+    }
+    const requestEvents = buildTransferRequestMessengerEvents();
+    if (!requestEvents.length) {
+        stream.innerHTML = '<div class="transfer-preview-empty relay-text-station-empty">当前没有文字消息或来向传输请求。</div>';
+        return;
+    }
+    renderRelayMessengerStream(stream, requestEvents);
 }
 
 function renderRelayTextStationLoading(job) {
     const title = document.getElementById('relay-text-station-thread-title');
     const meta = document.getElementById('relay-text-station-thread-meta');
-    const empty = document.getElementById('relay-text-station-empty');
-    const bubble = document.getElementById('relay-text-station-bubble');
+    const stream = document.getElementById('relay-text-station-stream');
     if (title) title.textContent = job?.fileName || '文字记录';
     if (meta) meta.textContent = `${job?.sourceDevice || 'web-client'} · ${job?.targetPath || '/tmpSL'} · 正在加载文本内容`;
-    if (empty) {
-        empty.hidden = false;
-        empty.textContent = '正在加载文本内容...';
-    }
-    if (bubble) {
-        bubble.hidden = true;
-        bubble.classList.remove('is-self');
+    if (stream) {
+        stream.innerHTML = '<div class="transfer-preview-empty relay-text-station-empty">正在加载文本内容...</div>';
     }
     setRelayTextStationActionState(job, null);
 }
 
+function renderRelayTextStationRoomLoading(room) {
+    const title = document.getElementById('relay-text-station-thread-title');
+    const meta = document.getElementById('relay-text-station-thread-meta');
+    const stream = document.getElementById('relay-text-station-stream');
+    if (title) title.textContent = room?.title || room?.roomId || '文字频道';
+    if (meta) meta.textContent = `${room?.kind || 'relay-room'} · 正在读取频道消息`;
+    if (stream) {
+        stream.innerHTML = '<div class="transfer-preview-empty relay-text-station-empty">正在读取频道消息...</div>';
+    }
+    setRelayTextStationActionState(findLatestRelayTextJobForRoom(room?.roomId || ''), null);
+}
+
 function setRelayTextStationActionState(job, preview) {
     const downloadBtn = document.getElementById('relay-text-station-download-btn');
+    const copyBtn = document.getElementById('relay-text-station-copy-btn');
     const restoreBtn = document.getElementById('relay-text-station-restore-btn');
     const deleteBtn = document.getElementById('relay-text-station-delete-btn');
     if (downloadBtn) {
         downloadBtn.disabled = !job || !job.cacheAvailable;
+    }
+    if (copyBtn) {
+        copyBtn.disabled = !job || !job.cacheAvailable;
     }
     if (restoreBtn) {
         restoreBtn.disabled = !job || !job.cacheAvailable;
@@ -4381,6 +4594,68 @@ function setRelayTextStationActionState(job, preview) {
     }
 }
 
+function resolveRelayActionJobFromMessages(messages, roomId) {
+    const normalized = Array.isArray(messages) ? messages : [];
+    for (let index = normalized.length - 1; index >= 0; index -= 1) {
+        const message = normalized[index] || {};
+        const refs = Array.isArray(message.fileRefs) ? message.fileRefs : [];
+        const candidate = refs.length ? refs[0] : message.sourceRecordId;
+        const job = findRelayJobById(candidate);
+        if (job) {
+            return job;
+        }
+    }
+    return findLatestRelayTextJobForRoom(roomId);
+}
+
+function normalizeRelayRoomMessageForStream(message) {
+    const refs = Array.isArray(message?.fileRefs) ? message.fileRefs : [];
+    const senderId = String(message?.senderIdentityId || message?.senderKind || 'unknown');
+    let sender = senderId.replace(/^relay-source-/, '');
+    if (!sender) {
+        sender = 'unknown';
+    }
+    return {
+        kind: 'text',
+        sender,
+        createdAt: Number(message?.createdAt || 0),
+        body: String(message?.body || ''),
+        isSelf: sender === 'web-client' || senderId.endsWith('web-client'),
+        sourceRecordId: String(message?.sourceRecordId || (refs.length ? refs[0] : '')),
+        fileRefs: refs,
+    };
+}
+
+function renderRelayTextStationRoomDetail(room, messages) {
+    if (!room) {
+        renderRelayTextStationEmpty();
+        return;
+    }
+    const title = document.getElementById('relay-text-station-thread-title');
+    const meta = document.getElementById('relay-text-station-thread-meta');
+    const stream = document.getElementById('relay-text-station-stream');
+    if (!title || !meta || !stream) {
+        return;
+    }
+    const actionJob = resolveRelayActionJobFromMessages(messages, room.roomId || '');
+    APP_STATE.relayTextStationSelectedId = actionJob ? String(actionJob.id || '') : '';
+    const participants = Array.isArray(room.participantIdentityIds) ? room.participantIdentityIds.length : 0;
+    const metaParts = [
+        room.kind || 'relay-room',
+        participants ? `${participants} 个身份` : '等待身份',
+        formatDate(Number(room.updatedAt || 0) * 1000),
+    ];
+    if (room.retentionPolicy) {
+        metaParts.push(room.retentionPolicy);
+    }
+    title.textContent = room.title || room.roomId || '文字频道';
+    meta.textContent = metaParts.join(' · ');
+    setRelayTextStationActionState(actionJob, null);
+    const streamMessages = (Array.isArray(messages) ? messages : []).map(normalizeRelayRoomMessageForStream);
+    const requestEvents = buildTransferRequestMessengerEvents();
+    renderRelayMessengerStream(stream, streamMessages.concat(requestEvents));
+}
+
 function renderRelayTextStationDetail(preview, job) {
     if (!job) {
         renderRelayTextStationEmpty();
@@ -4388,11 +4663,8 @@ function renderRelayTextStationDetail(preview, job) {
     }
     const title = document.getElementById('relay-text-station-thread-title');
     const meta = document.getElementById('relay-text-station-thread-meta');
-    const empty = document.getElementById('relay-text-station-empty');
-    const bubble = document.getElementById('relay-text-station-bubble');
-    const bubbleMeta = document.getElementById('relay-text-station-bubble-meta');
-    const bubbleText = document.getElementById('relay-text-station-bubble-text');
-    if (!title || !meta || !empty || !bubble || !bubbleMeta || !bubbleText) {
+    const stream = document.getElementById('relay-text-station-stream');
+    if (!title || !meta || !stream) {
         return;
     }
 
@@ -4413,18 +4685,138 @@ function renderRelayTextStationDetail(preview, job) {
     setRelayTextStationActionState(job, preview);
 
     if (!preview || !preview.canPreview || !preview.inlineAllowed) {
-        bubble.hidden = true;
-        bubble.classList.remove('is-self');
-        empty.hidden = false;
-        empty.textContent = preview?.message || '当前缓存仅支持文本预览，请直接下载查看。';
+        stream.innerHTML = `<div class="transfer-preview-empty relay-text-station-empty">${escapeHtml(preview?.message || '当前缓存仅支持文本预览，请直接下载查看。')}</div>`;
         return;
     }
 
-    bubble.hidden = false;
-    bubble.classList.toggle('is-self', String(job.sourceDevice || '') === 'web-client');
-    empty.hidden = true;
-    bubbleMeta.textContent = `${job.sourceDevice || 'web-client'} · ${formatDate(Number(job.updatedAt || 0) * 1000)}`;
-    bubbleText.textContent = preview.content || '';
+    const messages = parseRelayMessengerMessages(preview.content || '', job);
+    const requestEvents = buildTransferRequestMessengerEvents();
+    renderRelayMessengerStream(stream, messages.concat(requestEvents));
+}
+
+async function fetchRelayRoomMessages(roomId, alertOnFailure = true) {
+    try {
+        const response = await fetch(`/api/relay/rooms/${encodeURIComponent(roomId)}/messages?limit=200`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || data.message || '频道消息加载失败');
+        }
+        const messages = Array.isArray(data.messages) ? data.messages : [];
+        APP_STATE.relayRoomMessagesCache[roomId] = messages;
+        return messages;
+    } catch (error) {
+        console.error('加载频道消息失败:', error);
+        if (alertOnFailure) {
+            showAlert(error?.message || '频道消息加载失败，已退回旧预览', 'warning');
+        }
+        return null;
+    }
+}
+
+function parseRelayMessengerMessages(content, job) {
+    const text = String(content || '');
+    const lines = text.split('\n');
+    const messages = [];
+    let current = null;
+    const headerPattern = /^\[(\d+)\]\s+(.+)$/;
+    lines.forEach((line) => {
+        const match = line.match(headerPattern);
+        if (match) {
+            if (current) {
+                messages.push(current);
+            }
+            current = {
+                kind: 'text',
+                sender: match[2] || job?.sourceDevice || 'web-client',
+                createdAt: Number(match[1] || 0),
+                body: '',
+                isSelf: String(match[2] || '') === 'web-client',
+            };
+            return;
+        }
+        if (!current) {
+            current = {
+                kind: 'text',
+                sender: job?.sourceDevice || 'web-client',
+                createdAt: Number(job?.updatedAt || 0),
+                body: '',
+                isSelf: String(job?.sourceDevice || '') === 'web-client',
+            };
+        }
+        current.body = current.body ? `${current.body}\n${line}` : line;
+    });
+    if (current) {
+        messages.push(current);
+    }
+    return messages.length ? messages : [{
+        kind: 'text',
+        sender: job?.sourceDevice || 'web-client',
+        createdAt: Number(job?.updatedAt || 0),
+        body: text,
+        isSelf: String(job?.sourceDevice || '') === 'web-client',
+    }];
+}
+
+function buildTransferRequestMessengerEvents() {
+    return APP_STATE.transferRequests
+        .slice()
+        .sort((a, b) => Number(a?.updatedAt || 0) - Number(b?.updatedAt || 0))
+        .map((request) => {
+            const status = String(request?.status || 'pending');
+            const fileName = request?.metadata?.name || basenamePath(request?.filePath || '/') || '未命名内容';
+            const sourceLabel = buildTransferRequestRouteLabel(request);
+            const body = [
+                `传输请求：${fileName}`,
+                `来源：${sourceLabel}`,
+                `源路径：${request?.filePath || '/'}`,
+                `接收：确认后由本节点通过 HTTP GET / Range 自提内容，无需远端主动 push`,
+            ];
+            if (request?.note) {
+                body.push(`说明：${request.note}`);
+            }
+            return {
+                kind: 'transfer-request',
+                requestId: String(request?.id || ''),
+                sender: sourceLabel,
+                createdAt: Number(request?.updatedAt || request?.createdAt || 0),
+                body: body.join('\n'),
+                status,
+                isSelf: false,
+            };
+        });
+}
+
+function renderRelayMessengerStream(stream, messages) {
+    if (!messages.length) {
+        stream.innerHTML = '<div class="transfer-preview-empty relay-text-station-empty">当前会话还没有消息。</div>';
+        return;
+    }
+    stream.innerHTML = messages.map((message) => {
+        const isRequest = message.kind === 'transfer-request';
+        const status = String(message.status || '');
+        const statusLabel = isRequest ? ` · ${status}` : '';
+        const action = isRequest && status === 'pending'
+            ? `<button class="btn btn-sm btn-primary mt-2 relay-messenger-accept-request" data-request-id="${escapeAttr(message.requestId)}"><i class="bi bi-check2-circle me-1"></i>接受并自提</button>`
+            : '';
+        return `
+            <div class="relay-text-bubble ${message.isSelf ? 'is-self' : ''} ${isRequest ? 'is-system' : ''}">
+                <div class="relay-text-bubble-meta">${escapeHtml(message.sender || 'unknown')} · ${escapeHtml(formatDate(Number(message.createdAt || 0) * 1000))}${escapeHtml(statusLabel)}</div>
+                <pre class="relay-text-bubble-text">${escapeHtml(message.body || '')}</pre>
+                ${action}
+            </div>
+        `;
+    }).join('');
+    stream.querySelectorAll('.relay-messenger-accept-request').forEach((button) => {
+        button.addEventListener('click', async (event) => {
+            const requestId = event.currentTarget?.dataset?.requestId || '';
+            await acceptTransferRequest(requestId);
+            renderRelayTextStationList();
+            if (APP_STATE.relayTextStationSelectedId) {
+                await selectRelayTextStationRecord(APP_STATE.relayTextStationSelectedId);
+            }
+        });
+    });
+    stream.scrollTop = stream.scrollHeight;
 }
 
 async function openRelayTextStation(preferredId = '') {
@@ -4436,23 +4828,41 @@ async function openRelayTextStation(preferredId = '') {
     renderRelayTextStationList();
     updateRelayModalTextMeta();
     bootstrap.Modal.getOrCreateInstance(modal).show();
-    if (APP_STATE.relayTextStationSelectedId) {
-        await selectRelayTextStationRecord(APP_STATE.relayTextStationSelectedId);
+    await loadTransferRequests({ autoOpen: false, silent: true });
+    const selected = APP_STATE.relayTextStationSelectedRoomId || APP_STATE.relayTextStationSelectedId;
+    if (selected) {
+        await selectRelayTextStationRecord(selected);
     }
 }
 
-async function selectRelayTextStationRecord(jobId) {
-    if (!jobId) {
+async function selectRelayTextStationRecord(recordOrRoomId) {
+    if (!recordOrRoomId) {
         renderRelayTextStationEmpty();
         return;
     }
-    APP_STATE.relayTextStationSelectedId = jobId;
+    const roomId = syncRelayTextStationSelection(recordOrRoomId);
+    if (!roomId) {
+        renderRelayTextStationEmpty();
+        return;
+    }
     renderRelayTextStationList();
-    const job = APP_STATE.allRelayJobs.find((item) => String(item.id || '') === jobId) || null;
-    renderRelayTextStationLoading(job);
-    const preview = APP_STATE.relayTextPreviewCache[jobId] || await fetchRelayPreview(jobId);
-    if (APP_STATE.relayTextStationSelectedId === jobId) {
-        renderRelayTextStationDetail(preview, job);
+    const room = findRelayTextRoom(roomId);
+    renderRelayTextStationRoomLoading(room);
+    const messages = APP_STATE.relayRoomMessagesCache[roomId] || await fetchRelayRoomMessages(roomId, false);
+    if (messages && APP_STATE.relayTextStationSelectedRoomId === roomId) {
+        renderRelayTextStationRoomDetail(room, messages);
+        return;
+    }
+
+    const job = findRelayJobById(recordOrRoomId) || findLatestRelayTextJobForRoom(roomId);
+    if (job) {
+        const jobId = String(job.id || '');
+        APP_STATE.relayTextStationSelectedId = jobId;
+        renderRelayTextStationLoading(job);
+        const preview = APP_STATE.relayTextPreviewCache[jobId] || await fetchRelayPreview(jobId);
+        if (APP_STATE.relayTextStationSelectedId === jobId) {
+            renderRelayTextStationDetail(preview, job);
+        }
     }
 }
 
@@ -4467,6 +4877,45 @@ async function fetchRelayPreview(jobId, alertOnFailure = true) {
     }
     APP_STATE.relayTextPreviewCache[jobId] = data;
     return data;
+}
+
+async function copyRelayJobCacheText(jobId, successMessage = '缓存原文已复制') {
+    const job = APP_STATE.allRelayJobs.find((item) => String(item.id || '') === String(jobId || '')) || null;
+    if (!jobId || !job || !job.cacheAvailable) {
+        showAlert('当前记录暂无可复制的缓存原文', 'warning');
+        return false;
+    }
+
+    try {
+        const response = await fetch(`/api/relay/jobs/${encodeURIComponent(jobId)}/cache`);
+        if (!response.ok) {
+            let message = '缓存原文加载失败';
+            try {
+                const data = await response.json();
+                message = data.error || data.message || message;
+            } catch (_error) {
+                const fallbackText = await response.text().catch(() => '');
+                if (fallbackText.trim()) {
+                    message = fallbackText.trim();
+                }
+            }
+            throw new Error(message);
+        }
+
+        const content = await response.text();
+        const copied = await copyTextToClipboard(content);
+        if (!copied) {
+            showAlert('复制失败，请直接下载缓存查看', 'warning');
+            return false;
+        }
+
+        showAlert(successMessage, 'success');
+        return true;
+    } catch (error) {
+        console.error('复制中继缓存原文失败:', error);
+        showAlert(error?.message || '缓存原文加载失败', 'danger');
+        return false;
+    }
 }
 
 function renderRelayJobs() {
@@ -4658,6 +5107,18 @@ function syncRelaySelectionSet() {
     Object.keys(APP_STATE.relayTextPreviewCache).forEach((jobId) => {
         if (!existing.has(jobId)) {
             delete APP_STATE.relayTextPreviewCache[jobId];
+        }
+    });
+}
+
+function syncRelayRoomSelectionSet() {
+    const existingRooms = new Set(getRelayTextRooms().map((room) => String(room.roomId || '')));
+    if (!existingRooms.has(APP_STATE.relayTextStationSelectedRoomId)) {
+        APP_STATE.relayTextStationSelectedRoomId = '';
+    }
+    Object.keys(APP_STATE.relayRoomMessagesCache).forEach((roomId) => {
+        if (!existingRooms.has(roomId)) {
+            delete APP_STATE.relayRoomMessagesCache[roomId];
         }
     });
 }
@@ -4935,8 +5396,9 @@ function renderRelayPreview(preview) {
     const emptyNode = document.getElementById('relay-preview-empty');
     const textNode = document.getElementById('relay-preview-text');
     const downloadBtn = document.getElementById('relay-preview-download-btn');
+    const copyBtn = document.getElementById('relay-preview-copy-btn');
     const clearBtn = document.getElementById('relay-preview-clear-btn');
-    if (!wrap || !metaNode || !emptyNode || !textNode || !downloadBtn || !clearBtn) {
+    if (!wrap || !metaNode || !emptyNode || !textNode || !downloadBtn || !copyBtn || !clearBtn) {
         return;
     }
 
@@ -4944,6 +5406,7 @@ function renderRelayPreview(preview) {
     textNode.textContent = '';
     emptyNode.hidden = false;
     downloadBtn.hidden = true;
+    copyBtn.hidden = true;
     clearBtn.hidden = true;
 
     if (!preview) {
@@ -4965,6 +5428,7 @@ function renderRelayPreview(preview) {
     }
     metaNode.textContent = metaParts.join(' · ');
     downloadBtn.hidden = !preview.downloadUrl;
+    copyBtn.hidden = !preview.canPreview;
     clearBtn.hidden = false;
 
     if (!preview.canPreview) {
@@ -5402,6 +5866,12 @@ async function loadTransferRequests(options = {}) {
         const previousPendingIds = new Set(getPendingTransferRequests().map((item) => String(item.id || '')));
         APP_STATE.transferRequests = normalized;
         renderTransferRequestDrawer();
+        if (document.getElementById('relay-text-station-modal')?.classList.contains('show')) {
+            renderRelayTextStationList();
+            if (APP_STATE.relayTextStationSelectedId) {
+                await selectRelayTextStationRecord(APP_STATE.relayTextStationSelectedId);
+            }
+        }
 
         const pending = getPendingTransferRequests();
         const newPending = pending.filter((request) => {
@@ -5701,6 +6171,220 @@ function initSettingsForm() {
     });
 }
 
+function initLocalSendPolicySettings() {
+    const card = document.getElementById('localsend-policy-settings-card');
+    if (!card) {
+        return;
+    }
+    document.getElementById('localsend-policy-refresh-btn')?.addEventListener('click', () => {
+        loadLocalSendPolicyStatus({ alertOnFailure: true });
+    });
+    document.getElementById('localsend-policy-copy-info-btn')?.addEventListener('click', async () => {
+        const copied = await copyTextToClipboard(`${window.location.origin}/api/localsend/v2/info`);
+        showAlert(copied ? 'LocalSend info 接口已复制' : '复制失败，请手动选择地址', copied ? 'success' : 'warning');
+    });
+    document.getElementById('localsend-policy-form')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        await saveLocalSendPolicy();
+    });
+    loadLocalSendPolicyStatus();
+}
+
+function setLocalSendPolicyText(id, value) {
+    const node = document.getElementById(id);
+    if (node) {
+        node.textContent = value;
+    }
+}
+
+function setLocalSendEntryButtonState(state = 'idle') {
+    const btn = document.getElementById('relay-open-localsend-policy-btn');
+    if (!btn) {
+        return;
+    }
+    const isLoading = state === 'loading';
+    const isActive = state === 'active';
+    btn.disabled = isLoading;
+    btn.classList.toggle('btn-outline-secondary', !isLoading && !isActive);
+    btn.classList.toggle('btn-outline-primary', isLoading);
+    btn.classList.toggle('btn-primary', isActive);
+    btn.setAttribute('aria-busy', isLoading ? 'true' : 'false');
+    btn.innerHTML = isLoading
+        ? '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> LocalSend'
+        : '<i class="bi bi-broadcast-pin"></i> LocalSend';
+}
+
+function fillLocalSendPolicyForm(policy) {
+    const acceptPolicy = String(policy?.acceptPolicy || policy?.policy || 'manual');
+    const defaultSaveDir = String(policy?.defaultSaveDir || '/tmpSL');
+    const whitelist = String(policy?.whitelist || '');
+    const blacklist = String(policy?.blacklist || '');
+    const policyInput = document.getElementById('localsend-accept-policy');
+    const saveInput = document.getElementById('localsend-default-save-dir');
+    const whitelistInput = document.getElementById('localsend-whitelist');
+    const blacklistInput = document.getElementById('localsend-blacklist');
+    if (policyInput) policyInput.value = acceptPolicy;
+    if (saveInput) saveInput.value = defaultSaveDir;
+    if (whitelistInput) whitelistInput.value = whitelist;
+    if (blacklistInput) blacklistInput.value = blacklist;
+    setLocalSendPolicyText('localsend-policy-mode-chip', `策略 ${acceptPolicy}`);
+    setLocalSendPolicyText('localsend-policy-save-chip', `保存 ${defaultSaveDir || '/tmpSL'}`);
+    setLocalSendPolicyText('localsend-policy-note', 'LocalSend 文件会先进入中转缓存；命中 auto/whitelist 时会额外保存到默认目录，并在 Messenger 文字站显示协议频道消息。');
+}
+
+async function loadLocalSendPolicyStatus(options = {}) {
+    const card = document.getElementById('localsend-policy-settings-card');
+    if (!card || !hasCapability('relay')) {
+        return null;
+    }
+    try {
+        setLocalSendPolicyText('localsend-policy-status-chip', '状态 加载中');
+        const response = await fetch('/api/relay/localsend/policy', { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || data.message || 'LocalSend 策略加载失败');
+        }
+        const policy = data.policy || {};
+        APP_STATE.localSendPolicy = policy;
+        fillLocalSendPolicyForm(policy);
+        setLocalSendPolicyText('localsend-policy-status-chip', '状态 可用');
+        return policy;
+    } catch (error) {
+        console.error('加载 LocalSend 策略失败:', error);
+        setLocalSendPolicyText('localsend-policy-status-chip', '状态 待确认');
+        setLocalSendPolicyText('localsend-policy-note', error?.message || 'LocalSend 策略加载失败，可检查 relay 能力或管理员权限。');
+        if (options.alertOnFailure) {
+            showAlert(error?.message || 'LocalSend 策略加载失败', 'warning');
+        }
+        return null;
+    }
+}
+
+async function saveLocalSendPolicy() {
+    if (!APP_STATE.accessContext.isLocalAdmin) {
+        showAlert('保存 LocalSend 接收策略需要本机管理员访问', 'warning');
+        return;
+    }
+    const payload = {
+        acceptPolicy: document.getElementById('localsend-accept-policy')?.value || 'manual',
+        defaultSaveDir: document.getElementById('localsend-default-save-dir')?.value || '/tmpSL',
+        whitelist: document.getElementById('localsend-whitelist')?.value || '',
+        blacklist: document.getElementById('localsend-blacklist')?.value || '',
+    };
+    try {
+        const response = await fetch('/api/relay/localsend/policy', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || data.message || 'LocalSend 策略保存失败');
+        }
+        APP_STATE.localSendPolicy = data.policy || payload;
+        fillLocalSendPolicyForm(APP_STATE.localSendPolicy);
+        setLocalSendPolicyText('localsend-policy-status-chip', '状态 已保存');
+        showAlert('LocalSend 接收策略已保存', 'success');
+    } catch (error) {
+        console.error('保存 LocalSend 策略失败:', error);
+        showAlert(error?.message || 'LocalSend 策略保存失败', 'danger');
+    }
+}
+
+async function openLocalSendPolicySettings() {
+    if (!hasCapability('relay')) {
+        showAlert('当前版本未启用 LocalSend / 中继能力', 'info');
+        return;
+    }
+    setLocalSendEntryButtonState('loading');
+    showAlert('正在打开 LocalSend 中转设置', 'info', 1800);
+    showPage('settings-page');
+    try {
+        await loadLocalSendPolicyStatus({ alertOnFailure: true });
+        const card = document.getElementById('localsend-policy-settings-card');
+        if (card) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            card.classList.add('focus-ring');
+            window.setTimeout(() => card.classList.remove('focus-ring'), 1200);
+        }
+        setLocalSendEntryButtonState('active');
+        showAlert('LocalSend 中转设置已打开', 'success', 2400);
+    } finally {
+        window.setTimeout(() => setLocalSendEntryButtonState('idle'), 1600);
+    }
+}
+
+function initLanzigFeedSettings() {
+    const card = document.getElementById('lanzig-feed-settings-card');
+    if (!card) {
+        return;
+    }
+    document.getElementById('lanzig-feed-refresh-btn')?.addEventListener('click', () => {
+        loadLanzigFeedStatus({ alertOnFailure: true });
+    });
+    document.getElementById('lanzig-feed-copy-btn')?.addEventListener('click', async () => {
+        const url = document.getElementById('lanzig-feed-url')?.value || '';
+        if (!url || url === '等待加载...') {
+            showAlert('Lanzig feed 地址尚未加载', 'warning');
+            return;
+        }
+        const copied = await copyTextToClipboard(url);
+        showAlert(copied ? 'Lanzig feed 地址已复制' : '复制失败，请手动选择地址', copied ? 'success' : 'warning');
+    });
+    document.getElementById('lanzig-feed-open-btn')?.addEventListener('click', () => {
+        const url = document.getElementById('lanzig-feed-url')?.value || '';
+        if (!url || url === '等待加载...') {
+            showAlert('Lanzig feed 地址尚未加载', 'warning');
+            return;
+        }
+        window.open(url, '_blank', 'noopener');
+    });
+    loadLanzigFeedStatus();
+}
+
+function setLanzigFeedText(id, value) {
+    const node = document.getElementById(id);
+    if (node) {
+        node.textContent = value;
+    }
+}
+
+async function loadLanzigFeedStatus(options = {}) {
+    const urlInput = document.getElementById('lanzig-feed-url');
+    try {
+        setLanzigFeedText('lanzig-feed-status-chip', '状态 加载中');
+        const response = await fetch('/api/lanzig/status', { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok || data.success === false) {
+            throw new Error(data.error || data.message || 'Lanzig feed 状态加载失败');
+        }
+
+        if (urlInput) {
+            urlInput.value = data.feedUrl || `${window.location.origin}/api/lanzig/feed.json`;
+        }
+        setLanzigFeedText('lanzig-feed-status-chip', '状态 可用');
+        setLanzigFeedText('lanzig-feed-count-chip', `条目 ${Number(data.itemCount || 0)}`);
+        setLanzigFeedText('lanzig-feed-mode-chip', data.readOnly && data.passiveSync === false ? '只读 / 非同步' : '检查协议边界');
+        setLanzigFeedText('lanzig-feed-protocol', data.protocol || data.version || 'lanzig.feed.v0');
+        setLanzigFeedText('lanzig-feed-source-path', data.sourcePath || '/lanzig-feed');
+        setLanzigFeedText('lanzig-feed-markdown-route', data.markdownRoute || '/api/lanzig/md/:noteId');
+        setLanzigFeedText('lanzig-feed-note', data.message || '把 Markdown 文件放入 /lanzig-feed 后刷新即可发布到只读 feed。');
+    } catch (error) {
+        console.error('加载 Lanzig feed 状态失败:', error);
+        if (urlInput) {
+            urlInput.value = `${window.location.origin}/api/lanzig/feed.json`;
+        }
+        setLanzigFeedText('lanzig-feed-status-chip', '状态 待确认');
+        setLanzigFeedText('lanzig-feed-count-chip', '条目 -');
+        setLanzigFeedText('lanzig-feed-note', error?.message || 'Lanzig feed 状态加载失败，可直接尝试打开 feed URL。');
+        if (options.alertOnFailure) {
+            showAlert(error?.message || 'Lanzig feed 状态加载失败', 'warning');
+        }
+    }
+}
+
 function initAdminPanel() {
     const configForm = document.getElementById('admin-config-form');
     if (configForm) {
@@ -5779,7 +6463,7 @@ function setAdminStatusText(id, value, fallback = '-') {
 
 async function copyTextToClipboard(text) {
     const content = String(text ?? '');
-    if (!content.trim()) {
+    if (content.length === 0) {
         return false;
     }
 
@@ -6197,7 +6881,8 @@ function formatSize(bytes, preferredText = '') {
     const unitIndex = Math.min(Math.floor(Math.log(numeric) / Math.log(1024)), units.length - 1);
     const value = numeric / Math.pow(1024, unitIndex);
     const digits = unitIndex === 0 ? 0 : (value >= 100 ? 0 : (value >= 10 ? 1 : 2));
-    return `${value.toFixed(digits)} ${units[unitIndex]}`;
+    const compact = value.toFixed(digits).replace(/\.0+$|(\.\d*[1-9])0+$/, '$1');
+    return `${compact} ${units[unitIndex]}`;
 }
 
 function getStatusText(status) {

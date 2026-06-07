@@ -7,8 +7,11 @@ import std.convert.*
 import std.fs.{Directory, FileInfo, remove}
 import std.sync.Mutex
 import std.unicode.*
+import stdx.net.http.{ClientBuilder, HttpRequestBuilder, HttpResponse}
 
 let relayTextRecordMaxBytes: Int64 = 256 * 1024
+let relayRoomStoreFileName: String = "relay_rooms.toml"
+let relayMessageStoreDirName: String = "relay_messages"
 
 public class RelayFeature {
     let cacheDir: String
@@ -18,11 +21,22 @@ public class RelayFeature {
     let limitPercent: Int64
     let diskProbe: DiskProbe
     let whitelistStore: TomlConfigStore
+    let manifestStore: TomlConfigStore
+    let roomStore: TomlConfigStore
+    let messageStoreDir: String
     let fileMgr: FileMgr
 
     let mutex: Mutex = Mutex()
     var jobs: HashMap<String, RelayJob> = HashMap<String, RelayJob>()
     var whitelist: HashMap<String, WhitelistRule> = HashMap<String, WhitelistRule>()
+    var channelAdapters: HashMap<String, ChannelAdapter> = HashMap<String, ChannelAdapter>()
+    var localSendUploadSessions: HashMap<String, LocalSendSession> = HashMap<String, LocalSendSession>()
+    var localSendDownloadSessions: HashMap<String, LocalSendSession> = HashMap<String, LocalSendSession>()
+    var localSendPeerRegistrationSeenAt: HashMap<String, Int64> = HashMap<String, Int64>()
+    var localSendAcceptPolicy: String = "manual"
+    var localSendDefaultSaveDir: String = "/tmpSL"
+    var localSendWhitelist: String = ""
+    var localSendBlacklist: String = ""
     var onlineChecker: ?(String) -> Bool = None
     var writeHandler: ?(String, String, Array<UInt8>) -> Bool = None
 
@@ -42,10 +56,16 @@ public class RelayFeature {
         this.limitPercent = if (limitPercent > 0) { limitPercent } else { 10 }
         this.diskProbe = diskProbe
         this.whitelistStore = TomlConfigStore(whitelistFile)
+        this.manifestStore = TomlConfigStore(joinPaths(cacheDir, "relay_manifest.toml"))
+        this.roomStore = TomlConfigStore(joinPaths(cacheDir, relayRoomStoreFileName))
+        this.messageStoreDir = joinPaths(cacheDir, relayMessageStoreDirName)
         this.fileMgr = LocalFileMgr()
 
         fileMgr.ensureDir(cacheDir)
+        fileMgr.ensureDir(messageStoreDir)
+        registerDefaultChannelAdapters()
         loadWhitelist()
+        loadPersistedTextJobs()
     }
 
     public func setDeviceOnlineChecker(checker: (String) -> Bool): Unit {
@@ -60,6 +80,25 @@ public class RelayFeature {
         }
     }
 
+    public func configureLocalSendAcceptPolicy(policy: String, defaultSaveDir: String, whitelist: String, blacklist: String): Unit {
+        synchronized(mutex) {
+            localSendAcceptPolicy = normalizeLocalSendAcceptPolicy(policy)
+            localSendDefaultSaveDir = if (defaultSaveDir.trimAscii().size > 0) { defaultSaveDir.trimAscii() } else { "/tmpSL" }
+            localSendWhitelist = whitelist
+            localSendBlacklist = blacklist
+        }
+    }
+
+    public func localSendPolicySnapshot(): JsonObject {
+        synchronized(mutex) {
+            JsonObject()
+                .put("acceptPolicy", localSendAcceptPolicy)
+                .put("defaultSaveDir", localSendDefaultSaveDir)
+                .put("whitelist", localSendWhitelist)
+                .put("blacklist", localSendBlacklist)
+        }
+    }
+
     public func createJobFromPayload(
         sourceDevice: String,
         targetDevice: String,
@@ -67,7 +106,7 @@ public class RelayFeature {
         fileName: String,
         payload: Array<UInt8>
     ): RelayJob {
-        createRelayRecord("file", sourceDevice, targetDevice, targetPath, fileName, payload, true)
+        createRelayRecord("file", sourceDevice, targetDevice, targetPath, fileName, payload, true, "")
     }
 
     public func createTextRecord(sourceDevice: String, fileName: String, content: String): RelayJob {
@@ -75,6 +114,10 @@ public class RelayFeature {
     }
 
     public func createTextRecord(sourceDevice: String, fileName: String, content: String, targetPath: String): RelayJob {
+        createTextRecord(sourceDevice, fileName, content, targetPath, "")
+    }
+
+    public func createTextRecord(sourceDevice: String, fileName: String, content: String, targetPath: String, sessionId: String): RelayJob {
         let payload = stringToBytes(content)
         if (payload.size == 0) {
             throw Exception("文本内容不能为空")
@@ -82,7 +125,586 @@ public class RelayFeature {
         if (payload.size > relayTextRecordMaxBytes) {
             throw Exception("临时文本缓存最多支持 256 KiB，请改走文件中转")
         }
-        createRelayRecord("text", sourceDevice, "", normalizeRelayTextTargetPath(targetPath), normalizeRelayTextRecordName(fileName), payload, false)
+        let normalizedSessionId = normalizeRelayTextSessionId(sessionId)
+        let normalizedFileName = normalizeRelayTextRecordName(if (fileName.trimAscii().size > 0) { fileName } else { normalizedSessionId })
+        var job: RelayJob
+        if (normalizedSessionId.size > 0) {
+            job = appendRelayTextSessionRecord(sourceDevice, normalizedFileName, content, targetPath, normalizedSessionId)
+        } else {
+            job = createRelayRecord("text", sourceDevice, "", normalizeRelayTextTargetPath(targetPath), normalizedFileName, payload, false, "")
+        }
+        appendStoredMessageForTextJob(job, sourceDevice, content, 0)
+        job
+    }
+
+    public func registerChannelAdapter(adapter: ChannelAdapter): ChannelAdapter {
+        let normalized = normalizeChannelProtocolId(adapter.protocolId)
+        if (normalized.size == 0) {
+            throw Exception("频道协议ID不能为空")
+        }
+        adapter.protocolId = normalized
+        if (adapter.displayName.trimAscii().size == 0) {
+            adapter.displayName = normalized
+        }
+        if (adapter.trustShape.trimAscii().size == 0) {
+            adapter.trustShape = "manual"
+        }
+        if (adapter.receiveMode.trimAscii().size == 0) {
+            adapter.receiveMode = "pull-or-ingress"
+        }
+        if (adapter.roomKind.trimAscii().size == 0) {
+            adapter.roomKind = "protocol-room"
+        }
+        synchronized(mutex) {
+            channelAdapters.add(adapter.protocolId, adapter)
+        }
+        adapter
+    }
+
+    public func listChannelAdapters(): ArrayList<ChannelAdapter> {
+        let out = ArrayList<ChannelAdapter>()
+        synchronized(mutex) {
+            for ((_, adapter) in channelAdapters) {
+                out.add(adapter)
+            }
+        }
+        out
+    }
+
+    public func getChannelAdapter(protocolId: String): ?ChannelAdapter {
+        let normalized = normalizeChannelProtocolId(protocolId)
+        synchronized(mutex) {
+            channelAdapters.get(normalized)
+        }
+    }
+
+    public func createAdapterTextMessage(message: ChannelAdapterMessage): RelayJob {
+        let normalized = normalizeChannelAdapterMessage(message)
+        let adapter = getChannelAdapter(normalized.protocolId)
+        match (adapter) {
+            case Some(_adapter) => ()
+            case None => throw Exception("频道协议未注册: ${normalized.protocolId}")
+        }
+        if (normalized.body.trimAscii().size == 0) {
+            throw Exception("频道消息内容不能为空")
+        }
+
+        let sessionId = channelAdapterRoomId(normalized.protocolId, normalized.peerId)
+        let fileName = channelAdapterRoomFileName(normalized.protocolId, normalized.peerDisplayName)
+        let sourceDevice = channelAdapterSourceDevice(normalized.protocolId, normalized.peerDisplayName)
+        let job = appendRelayTextSessionRecord(sourceDevice, fileName, normalized.body, "/tmpSL", sessionId)
+
+        synchronized(mutex) {
+            if (let Some(stored) <- jobs.get(job.id)) {
+                stored.sourceProtocolId = normalized.protocolId
+                stored.sourcePeerId = normalized.peerId
+                stored.sourceEndpoint = normalized.endpoint
+                stored.message = "adapter message cached from ${normalized.protocolId}"
+                stored.updatedAt = currentTimestamp()
+                persistTextManifestLocked()
+                appendStoredMessageForTextJob(stored, sourceDevice, normalized.body, normalized.createdAt, normalized.sourceRecordId)
+                return stored
+            }
+        }
+        job.sourceProtocolId = normalized.protocolId
+        job.sourcePeerId = normalized.peerId
+        job.sourceEndpoint = normalized.endpoint
+        appendStoredMessageForTextJob(job, sourceDevice, normalized.body, normalized.createdAt, normalized.sourceRecordId)
+        job
+    }
+
+    public func recordLocalSendPeerRegistration(info: LocalSendPeerInfo, body: String): ?RelayJob {
+        var peerKey = info.peerId.trimAscii()
+        if (peerKey.size == 0) {
+            peerKey = info.fingerprint.trimAscii()
+        }
+        if (peerKey.size == 0) {
+            peerKey = info.alias.trimAscii()
+        }
+        if (peerKey.size == 0) {
+            return None
+        }
+
+        let now = currentTimestamp()
+        var shouldRecord = false
+        synchronized(mutex) {
+            match (localSendPeerRegistrationSeenAt.get(peerKey)) {
+                case Some(lastSeenAt) =>
+                    if (now - lastSeenAt >= 60) {
+                        shouldRecord = true
+                    }
+                case None => shouldRecord = true
+            }
+            localSendPeerRegistrationSeenAt.add(peerKey, now)
+        }
+        if (!shouldRecord) {
+            return None
+        }
+
+        let messageBody = if (body.trimAscii().size > 0) { body.trimAscii() } else { "LocalSend peer registered" }
+        let template = buildLocalSendInfoChannelAdapterMessage(info, messageBody)
+        Some(createAdapterTextMessage(template))
+    }
+
+    public func createRoomTextMessage(roomId: String, sourceDevice: String, fileName: String, content: String): RelayJob {
+        let normalizedRoomId = normalizeRelayTextSessionId(roomId)
+        if (normalizedRoomId.size == 0) {
+            throw Exception("频道窗口ID不能为空")
+        }
+        let sender = if (sourceDevice.trimAscii().size > 0) { sourceDevice.trimAscii() } else { "web-client" }
+        let recordName = if (fileName.trimAscii().size > 0) { fileName.trimAscii() } else { normalizedRoomId }
+        createTextRecord(sender, recordName, content, "/tmpSL", normalizedRoomId)
+    }
+
+    public func prepareLocalSendUpload(raw: String, endpoint: String): LocalSendSession {
+        let peer = parseLocalSendPeerInfoFromEnvelope(raw, endpoint, "v2")
+        let files = parseLocalSendFileOffers(raw)
+        if (files.size == 0) {
+            throw Exception("LocalSend prepare-upload must include at least one file")
+        }
+
+        let decision = decideLocalSendAccept(peer, endpoint)
+        if (decision == "reject") {
+            throw Exception("LocalSend peer rejected by accept policy")
+        }
+
+        let session = LocalSendSession()
+        session.sessionId = "ls-up-" + generateId()
+        session.createdAt = currentTimestamp()
+        session.acceptPolicy = decision
+        session.autoSave = decision == "auto-save"
+        session.defaultSaveDir = currentLocalSendDefaultSaveDir()
+        match (peer) {
+            case Some(info) =>
+                session.peerId = if (info.peerId.size > 0) { info.peerId } else { normalizeRelayTextSessionId(info.alias) }
+                session.peerDisplayName = if (info.alias.size > 0) { info.alias } else { session.peerId }
+                session.endpoint = info.endpoint
+            case None =>
+                session.peerId = "unknown-localsend-peer"
+                session.peerDisplayName = "LocalSend Peer"
+                session.endpoint = endpoint.trimAscii()
+        }
+
+        for (file in files) {
+            let token = LocalSendFileToken()
+            token.fileId = normalizeRelayTextSessionId(if (file.fileId.size > 0) { file.fileId } else { file.fileName })
+            token.fileName = normalizeFileName(file.fileName)
+            token.size = file.size
+            token.token = "lst-" + generateId()
+            session.tokens.add(token)
+        }
+
+        synchronized(mutex) {
+            localSendUploadSessions.add(session.sessionId, session)
+        }
+        session
+    }
+
+    public func receiveLocalSendUpload(sessionId: String, fileId: String, token: String, payload: Array<UInt8>): RelayJob {
+        let normalizedSessionId = sessionId.trimAscii()
+        let normalizedFileId = normalizeRelayTextSessionId(fileId)
+        let normalizedToken = token.trimAscii()
+        var session: ?LocalSendSession = None
+        var fileToken: ?LocalSendFileToken = None
+        var peerId = ""
+        var peerDisplayName = ""
+        var endpoint = ""
+        var autoSave = false
+        var defaultSaveDir = "/tmpSL"
+        synchronized(mutex) {
+            session = localSendUploadSessions.get(normalizedSessionId)
+        }
+        match (session) {
+            case Some(s) =>
+                peerId = s.peerId
+                peerDisplayName = s.peerDisplayName
+                endpoint = s.endpoint
+                autoSave = s.autoSave
+                defaultSaveDir = s.defaultSaveDir
+                for (candidate in s.tokens) {
+                    if (candidate.fileId == normalizedFileId && candidate.token == normalizedToken) {
+                        fileToken = Some(candidate)
+                    }
+                }
+            case None => throw Exception("LocalSend upload session not found")
+        }
+        match (fileToken) {
+            case Some(t) =>
+                if (payload.size <= 0) {
+                    throw Exception("LocalSend upload payload is empty")
+                }
+                let sourceDevice = "localsend:${if (peerDisplayName.size > 0) { peerDisplayName } else { peerId }}"
+                let job = createRelayRecord("file", sourceDevice, "", "/", t.fileName, payload, false, "")
+                job.sourceProtocolId = "localsend"
+                job.sourcePeerId = peerId
+                job.sourceEndpoint = endpoint
+                job.message = "LocalSend file cached"
+                job.updatedAt = currentTimestamp()
+                if (autoSave) {
+                    let savedPath = composeRelayTargetFilePath(defaultSaveDir, t.fileName)
+                    if (autoSaveLocalSendPayload(savedPath, payload)) {
+                        job.targetDevice = "local"
+                        job.targetPath = defaultSaveDir
+                        job.message = "LocalSend file cached and auto-saved to local:${savedPath}"
+                    } else {
+                        job.message = "LocalSend file cached; auto-save failed"
+                    }
+                    job.updatedAt = currentTimestamp()
+                }
+
+                let message = ChannelAdapterMessage()
+                message.protocolId = "localsend"
+                message.peerId = peerId
+                message.peerDisplayName = peerDisplayName
+                message.endpoint = endpoint
+                message.body = "LocalSend file received: ${t.fileName} (${formatBytes(payload.size)})"
+                message.contentType = "text/plain"
+                message.sourceRecordId = job.id
+                let _ = createAdapterTextMessage(message)
+                job
+            case None => throw Exception("LocalSend upload token invalid")
+        }
+    }
+
+    public func cancelLocalSendUpload(sessionId: String): Bool {
+        let normalized = sessionId.trimAscii()
+        if (normalized.size == 0) {
+            return false
+        }
+        synchronized(mutex) {
+            match (localSendUploadSessions.get(normalized)) {
+                case Some(_s) =>
+                    localSendUploadSessions.remove(normalized)
+                    true
+                case None => false
+            }
+        }
+    }
+
+    public func prepareLocalSendDownload(jobId: String): LocalSendSession {
+        let session = LocalSendSession()
+        session.sessionId = "ls-down-" + generateId()
+        session.peerId = "soonlink-local"
+        session.peerDisplayName = "SoonLink Relay"
+        session.endpoint = ""
+        session.createdAt = currentTimestamp()
+        synchronized(mutex) {
+            for ((id, job) in jobs) {
+                if (jobId.trimAscii().size > 0 && id != jobId.trimAscii()) {
+                    continue
+                }
+                refreshCacheState(job)
+                if (!canAccessCache(job)) {
+                    continue
+                }
+                let token = LocalSendFileToken()
+                token.fileId = normalizeRelayTextSessionId(id)
+                token.jobId = id
+                token.fileName = job.fileName
+                token.size = job.bytes
+                token.token = "lsd-" + generateId()
+                session.tokens.add(token)
+            }
+            if (session.tokens.size > 0) {
+                localSendDownloadSessions.add(session.sessionId, session)
+            }
+        }
+        if (session.tokens.size == 0) {
+            throw Exception("No relay cache file available for LocalSend download")
+        }
+        session
+    }
+
+    public func localSendDownloadCacheDescriptor(sessionId: String, fileId: String, token: String): ?(String, String) {
+        let normalizedSessionId = sessionId.trimAscii()
+        let normalizedFileId = normalizeRelayTextSessionId(fileId)
+        let normalizedToken = token.trimAscii()
+        synchronized(mutex) {
+            match (localSendDownloadSessions.get(normalizedSessionId)) {
+                case Some(session) =>
+                    for (candidate in session.tokens) {
+                        if (candidate.fileId == normalizedFileId && candidate.token == normalizedToken) {
+                            match (jobs.get(candidate.jobId)) {
+                                case Some(job) =>
+                                    refreshCacheState(job)
+                                    if (canAccessCache(job)) {
+                                        return Some((job.cachePath, job.fileName))
+                                    }
+                                case None => ()
+                            }
+                        }
+                    }
+                case None => ()
+            }
+        }
+        None
+    }
+
+    public func sendLocalSendJobToPeer(endpoint: String, jobId: String, alias: String, fingerprint: String, deviceModel: String, deviceType: String): LocalSendOutboundResult {
+        let remoteEndpoint = normalizeLocalSendOutboundEndpoint(endpoint)
+        if (remoteEndpoint.size == 0) {
+            throw Exception("LocalSend outbound endpoint must start with http://")
+        }
+
+        var cachePath = ""
+        var fileName = ""
+        var bytes: Int64 = 0
+        synchronized(mutex) {
+            match (jobs.get(jobId)) {
+                case Some(job) =>
+                    refreshCacheState(job)
+                    if (!canAccessCache(job)) {
+                        throw Exception("relay cache unavailable for LocalSend outbound")
+                    }
+                    cachePath = job.cachePath
+                    fileName = if (job.fileName.trimAscii().size > 0) { job.fileName } else { "soonlink-relay.bin" }
+                    bytes = job.bytes
+                case None => throw Exception("relay job not found")
+            }
+        }
+
+        let payload = fileMgr.readBytes(cachePath)
+        let fileId = normalizeLocalSendOutboundFileId(jobId)
+        let prepareBody = buildLocalSendOutboundPrepareBody(
+            fileId,
+            fileName,
+            if (bytes > 0) { bytes } else { payload.size },
+            alias,
+            fingerprint,
+            deviceModel,
+            deviceType
+        )
+        let result = LocalSendOutboundResult()
+        result.remoteEndpoint = remoteEndpoint
+        result.jobId = jobId
+        result.fileId = fileId
+
+        let client = ClientBuilder().build()
+        try {
+            let prepareReq = HttpRequestBuilder()
+                .post()
+                .url(remoteEndpoint + "/api/localsend/v2/prepare-upload")
+                .header("content-type", "application/json")
+                .body(prepareBody)
+                .build()
+            let prepareResp = client.send(prepareReq)
+            let prepareStatus = Int64(prepareResp.status)
+            let prepareRespBody = readLocalSendHttpBody(prepareResp)
+            prepareResp.close()
+            if (prepareStatus < 200 || prepareStatus >= 300) {
+                result.statusCode = prepareStatus
+                result.responseBody = prepareRespBody
+                result.message = "LocalSend prepare-upload failed"
+                return result
+            }
+
+            let sessionId = parseJsonString(prepareRespBody, "sessionId") ?? ""
+            let token = parseJsonString(prepareRespBody, fileId) ?? ""
+            if (sessionId.trimAscii().size == 0 || token.trimAscii().size == 0) {
+                result.statusCode = prepareStatus
+                result.responseBody = prepareRespBody
+                result.message = "LocalSend prepare-upload response missing session/token"
+                return result
+            }
+
+            result.sessionId = sessionId
+            result.token = token
+            let uploadReq = HttpRequestBuilder()
+                .post()
+                .url(remoteEndpoint + "/api/localsend/v2/upload?sessionId=" + sessionId + "&fileId=" + fileId + "&token=" + token)
+                .header("content-type", "application/octet-stream")
+                .body(payload)
+                .build()
+            let uploadResp = client.send(uploadReq)
+            let uploadStatus = Int64(uploadResp.status)
+            let uploadRespBody = readLocalSendHttpBody(uploadResp)
+            uploadResp.close()
+
+            result.statusCode = uploadStatus
+            result.responseBody = uploadRespBody
+            result.success = uploadStatus >= 200 && uploadStatus < 300
+            result.message = if (result.success) { "LocalSend outbound upload completed" } else { "LocalSend outbound upload failed" }
+            synchronized(mutex) {
+                if (let Some(job) <- jobs.get(jobId)) {
+                    job.updatedAt = currentTimestamp()
+                    job.message = result.message + " -> " + remoteEndpoint
+                }
+            }
+            result
+        } finally {
+            client.close()
+        }
+    }
+
+    public func pullLocalSendFileFromPeer(endpoint: String, sessionId: String, fileId: String, token: String, fileName: String, peerDisplayName: String): LocalSendOutboundResult {
+        let remoteEndpoint = normalizeLocalSendOutboundEndpoint(endpoint)
+        if (remoteEndpoint.size == 0) {
+            throw Exception("LocalSend pull endpoint must start with http://")
+        }
+        let normalizedSessionId = sessionId.trimAscii()
+        let normalizedFileId = normalizeRelayTextSessionId(fileId)
+        let normalizedToken = token.trimAscii()
+        if (normalizedSessionId.size == 0 || normalizedFileId.size == 0 || normalizedToken.size == 0) {
+            throw Exception("LocalSend pull requires sessionId, fileId, and token")
+        }
+
+        let result = LocalSendOutboundResult()
+        result.remoteEndpoint = remoteEndpoint
+        result.fileId = normalizedFileId
+        result.sessionId = normalizedSessionId
+        result.token = normalizedToken
+
+        let client = ClientBuilder().build()
+        try {
+            let downloadUrl = remoteEndpoint +
+                "/api/localsend/v2/download?sessionId=" + urlEncodeLocalSendQuery(normalizedSessionId) +
+                "&fileId=" + urlEncodeLocalSendQuery(normalizedFileId) +
+                "&token=" + urlEncodeLocalSendQuery(normalizedToken)
+            let downloadReq = HttpRequestBuilder()
+                .get()
+                .url(downloadUrl)
+                .build()
+            let downloadResp = client.send(downloadReq)
+            let status = Int64(downloadResp.status)
+            let payload = readLocalSendHttpBytes(downloadResp)
+            downloadResp.close()
+
+            result.statusCode = status
+            if (status < 200 || status >= 300) {
+                result.responseBody = String.fromUtf8(payload)
+                result.message = "LocalSend pull download failed"
+                return result
+            }
+            if (payload.size <= 0) {
+                result.message = "LocalSend pull download returned empty payload"
+                return result
+            }
+
+            let displayName = if (peerDisplayName.trimAscii().size > 0) { peerDisplayName.trimAscii() } else { "LocalSend Peer" }
+            let pulledFileName = if (fileName.trimAscii().size > 0) { fileName.trimAscii() } else { normalizedFileId + ".bin" }
+            let job = createRelayRecord("file", "localsend:${displayName}", "", "/", pulledFileName, payload, false, "")
+            job.sourceProtocolId = "localsend"
+            var sourcePeerId = displayName.trimAscii()
+            if (sourcePeerId.size == 0) {
+                sourcePeerId = normalizedFileId
+            }
+            if (sourcePeerId.size == 0) {
+                sourcePeerId = remoteEndpoint
+            }
+            job.sourcePeerId = sourcePeerId
+            job.sourceEndpoint = remoteEndpoint
+            job.message = "LocalSend file pulled from peer"
+            job.updatedAt = currentTimestamp()
+
+            let message = ChannelAdapterMessage()
+            message.protocolId = "localsend"
+            message.peerId = job.sourcePeerId
+            message.peerDisplayName = displayName
+            message.endpoint = remoteEndpoint
+            message.body = "LocalSend file pulled: ${pulledFileName} (${formatBytes(payload.size)})"
+            message.contentType = "text/plain"
+            message.sourceRecordId = job.id
+            let _ = createAdapterTextMessage(message)
+
+            result.success = true
+            result.jobId = job.id
+            result.responseBody = ""
+            result.message = "LocalSend pull download completed"
+            result
+        } finally {
+            client.close()
+        }
+    }
+
+    func decideLocalSendAccept(peer: ?LocalSendPeerInfo, endpoint: String): String {
+        var policy = "manual"
+        var whitelist = ""
+        var blacklist = ""
+        synchronized(mutex) {
+            policy = localSendAcceptPolicy
+            whitelist = localSendWhitelist
+            blacklist = localSendBlacklist
+        }
+        if (localSendPeerMatches(peer, endpoint, blacklist)) {
+            return "reject"
+        }
+        if (policy == "reject") {
+            return "reject"
+        }
+        if (localSendPeerMatches(peer, endpoint, whitelist)) {
+            return "auto-save"
+        }
+        if (policy == "auto") {
+            return "auto-save"
+        }
+        if (policy == "whitelist") {
+            return "reject"
+        }
+        "manual"
+    }
+
+    func currentLocalSendDefaultSaveDir(): String {
+        synchronized(mutex) {
+            if (localSendDefaultSaveDir.trimAscii().size > 0) {
+                return localSendDefaultSaveDir.trimAscii()
+            }
+        }
+        "/tmpSL"
+    }
+
+    func autoSaveLocalSendPayload(path: String, payload: Array<UInt8>): Bool {
+        var handler: ?(String, String, Array<UInt8>) -> Bool = None
+        synchronized(mutex) {
+            handler = writeHandler
+        }
+        match (handler) {
+            case Some(h) => h("local", path, payload)
+            case None => false
+        }
+    }
+
+    func appendRelayTextSessionRecord(
+        sourceDevice: String,
+        fileName: String,
+        content: String,
+        targetPath: String,
+        sessionId: String
+    ): RelayJob {
+        synchronized(mutex) {
+            for ((_, job) in jobs) {
+                if (job.recordKind == "text" && job.sessionId == sessionId) {
+                    try {
+                        fileMgr.writeText(job.cachePath, buildRelayTextSessionAppendText(sourceDevice, content, true), true)
+                        let info = FileInfo(job.cachePath)
+                        job.bytes = info.size
+                        job.status = "cached"
+                        job.cacheAvailable = true
+                        job.message = "session text appended"
+                    } catch (e: Exception) {
+                        job.status = "failed"
+                        job.cacheAvailable = false
+                        job.message = "session append failed: ${e.message}"
+                    }
+                    job.sourceDevice = if (sourceDevice.trimAscii().size > 0) { sourceDevice.trimAscii() } else { job.sourceDevice }
+                    job.targetPath = normalizeRelayTextTargetPath(targetPath)
+                    job.updatedAt = currentTimestamp()
+                    job.expiresAt = job.updatedAt + retentionHours * 3600
+                    persistTextManifestLocked()
+                    return job
+                }
+            }
+        }
+
+        createRelayRecord(
+            "text",
+            sourceDevice,
+            "",
+            normalizeRelayTextTargetPath(targetPath),
+            fileName,
+            stringToBytes(buildRelayTextSessionAppendText(sourceDevice, content, false)),
+            false,
+            sessionId
+        )
     }
 
     func createRelayRecord(
@@ -92,11 +714,13 @@ public class RelayFeature {
         targetPath: String,
         fileName: String,
         payload: Array<UInt8>,
-        attemptDispatch: Bool
+        attemptDispatch: Bool,
+        sessionId: String
     ): RelayJob {
         let job = RelayJob()
         job.id = "relay-" + generateId()
         job.recordKind = recordKind
+        job.sessionId = sessionId
         job.sourceDevice = if (sourceDevice.size > 0) { sourceDevice } else { "unknown" }
         job.targetDevice = if (attemptDispatch) { targetDevice } else { "" }
         job.targetPath = if (recordKind == "text") {
@@ -111,14 +735,18 @@ public class RelayFeature {
         job.updatedAt = job.createdAt
         job.expiresAt = job.createdAt + retentionHours * 3600
         job.status = "caching"
-        job.cachePath = joinPaths(cacheDir, "${job.id}_${job.fileName}")
+        job.cachePath = if (recordKind == "text" && sessionId.size > 0) {
+            joinPaths(cacheDir, "${sessionId}_${job.fileName}")
+        } else {
+            joinPaths(cacheDir, "${job.id}_${job.fileName}")
+        }
 
         try {
             fileMgr.writeBytes(job.cachePath, payload, false)
             job.bytes = payload.size
             job.status = "cached"
             job.cacheAvailable = true
-            job.message = if (recordKind == "text") { "text record cached" } else { "cached on relay" }
+        job.message = if (recordKind == "text") { "text record cached" } else { "cached on relay" }
         } catch (e: Exception) {
             job.status = "failed"
             job.cacheAvailable = false
@@ -127,6 +755,9 @@ public class RelayFeature {
 
         synchronized(mutex) {
             jobs.add(job.id, job)
+            if (job.recordKind == "text") {
+                persistTextManifestLocked()
+            }
         }
 
         enforceCapacity()
@@ -143,6 +774,105 @@ public class RelayFeature {
                 refreshCacheState(job)
                 out.add(job)
             }
+        }
+        out
+    }
+
+    public func listRooms(): ArrayList<RelayRoom> {
+        let out = ArrayList<RelayRoom>()
+        let persisted = loadStoredRooms()
+        for (room in persisted) {
+            out.add(room)
+        }
+        synchronized(mutex) {
+            for ((_, job) in jobs) {
+                if (job.recordKind != "text") {
+                    continue
+                }
+                refreshCacheState(job)
+                if (!canAccessCache(job)) {
+                    continue
+                }
+                let roomId = relayTextRoomIdForJob(job)
+                var found = false
+                for (room in out) {
+                    if (room.roomId == roomId) {
+                        found = true
+                        if (job.createdAt > 0 && (room.createdAt == 0 || job.createdAt < room.createdAt)) {
+                            room.createdAt = job.createdAt
+                        }
+                        if (job.updatedAt > room.updatedAt) {
+                            room.updatedAt = job.updatedAt
+                        }
+                        addRelayRoomParticipant(room, relayIdentityIdForSource(job.sourceDevice))
+                        addRelayRoomParticipantsFromJobText(room, job, fileMgr)
+                    }
+                }
+                if (!found) {
+                    let room = RelayRoom()
+                    room.roomId = roomId
+                    room.title = relayTextRoomTitleForJob(job)
+                    room.kind = relayTextRoomKindForJob(job)
+                    room.createdAt = job.createdAt
+                    room.updatedAt = job.updatedAt
+                    room.retentionPolicy = "relay-text-cache"
+                    room.transportHints = relayTextRoomTransportHintsForJob(job)
+                    addRelayRoomParticipant(room, relayIdentityIdForSource(job.sourceDevice))
+                    addRelayRoomParticipantsFromJobText(room, job, fileMgr)
+                    out.add(room)
+                }
+            }
+        }
+        out
+    }
+
+    public func listRoomMessages(roomId: String, limit: Int64): ArrayList<RelayMessage> {
+        let out = ArrayList<RelayMessage>()
+        let selected = ArrayList<RelayJob>()
+        let normalizedRoomId = if (roomId.trimAscii().size > 0) { roomId.trimAscii() } else { "default-text-room" }
+        let safeLimit = normalizeRelayMessageLimit(limit)
+        let stored = loadStoredRoomMessages(normalizedRoomId, safeLimit)
+        for (message in stored) {
+            if (out.size >= safeLimit) {
+                break
+            }
+            out.add(message)
+        }
+        if (out.size >= safeLimit) {
+            return out
+        }
+        synchronized(mutex) {
+            for ((_, job) in jobs) {
+                if (job.recordKind != "text") {
+                    continue
+                }
+                refreshCacheState(job)
+                if (!canAccessCache(job)) {
+                    continue
+                }
+                if (relayTextRoomIdForJob(job) == normalizedRoomId) {
+                    if (stored.size > 0) {
+                        continue
+                    }
+                    selected.add(job)
+                }
+            }
+        }
+
+        for (job in selected) {
+            if (out.size >= safeLimit) {
+                break
+            }
+            try {
+                let text = fileMgr.readText(job.cachePath)
+                let messages = parseRelayTextMessagesFromJob(job, text, safeLimit - out.size)
+                for (message in messages) {
+                    if (out.size >= safeLimit) {
+                        break
+                    }
+                    out.add(message)
+                }
+            } catch (_: Exception) {}
         }
         out
     }
@@ -190,6 +920,7 @@ public class RelayFeature {
                         remove(job.cachePath)
                     } catch (_: Exception) {}
                     jobs.remove(jobId)
+                    persistTextManifestLocked()
                     true
                 case None => false
             }
@@ -206,6 +937,7 @@ public class RelayFeature {
                     remove(job.cachePath)
                 } catch (_: Exception) {}
                 job.cacheAvailable = false
+                persistTextManifestLocked()
                 return true
             }
         }
@@ -319,6 +1051,7 @@ public class RelayFeature {
                     job.cacheAvailable = false
                 }
             }
+            persistTextManifestLocked()
         }
     }
 
@@ -396,6 +1129,7 @@ public class RelayFeature {
                 }
                 jobs.remove(id)
             }
+            persistTextManifestLocked()
         }
         ids.size
     }
@@ -610,8 +1344,62 @@ public class RelayFeature {
                     } catch (_: Exception) {}
                     job.cacheAvailable = false
                     remaining -= job.bytes
+                    persistTextManifestLocked()
                 }
             }
+        }
+    }
+
+    func loadPersistedTextJobs(): Unit {
+        var values = HashMap<String, String>()
+        try {
+            values = manifestStore.load()
+        } catch (e: Exception) {
+            println("[Relay][RoomStore] manifest load skipped: ${e.message}")
+            return
+        }
+
+        synchronized(mutex) {
+            var idx: Int64 = 0
+            let now = currentTimestamp()
+            while (true) {
+                let key = "job_${idx}"
+                if (let Some(raw) <- values.get(key)) {
+                    match (parseRelayTextJobManifestLine(raw)) {
+                        case Some(job) =>
+                            refreshCacheState(job)
+                            if (job.cacheAvailable && (job.expiresAt == 0 || job.expiresAt > now)) {
+                                jobs.add(job.id, job)
+                            }
+                        case None => ()
+                    }
+                    idx += 1
+                    continue
+                }
+                break
+            }
+            persistTextManifestLocked()
+        }
+    }
+
+    func persistTextManifestLocked(): Unit {
+        let values = HashMap<String, String>()
+        var idx: Int64 = 0
+        for ((_, job) in jobs) {
+            if (job.recordKind != "text") {
+                continue
+            }
+            refreshCacheState(job)
+            if (!job.cacheAvailable) {
+                continue
+            }
+            values.add("job_${idx}", encodeRelayTextJobManifestLine(job))
+            idx += 1
+        }
+        try {
+            manifestStore.save(values)
+        } catch (e: Exception) {
+            println("[Relay][RoomStore] manifest persist skipped: ${e.message}")
         }
     }
 
@@ -660,6 +1448,170 @@ public class RelayFeature {
         }
         limitBytes
     }
+
+    func registerDefaultChannelAdapters(): Unit {
+        let local = ChannelAdapter()
+        local.protocolId = "soonlink-local"
+        local.displayName = "SoonLink Local Channel"
+        local.trustShape = "local-session"
+        local.receiveMode = "local-ingress"
+        local.roomKind = "manual-room"
+        local.capabilities.add("receive-text")
+        local.capabilities.add("project-to-relay-room")
+        local.contentTypes.add("text/plain")
+        let _ = registerChannelAdapter(local)
+
+        let localSend = ChannelAdapter()
+        localSend.protocolId = "localsend"
+        localSend.displayName = "LocalSend Compatible Channel"
+        localSend.trustShape = "manual-peer-or-configured-source"
+        localSend.receiveMode = "http-pull-or-adapter-ingress"
+        localSend.roomKind = "protocol-room"
+        localSend.capabilities.add("receive-text")
+        localSend.capabilities.add("receive-file-reference")
+        localSend.capabilities.add("peer-info")
+        localSend.capabilities.add("localsend-v1-info")
+        localSend.capabilities.add("localsend-v2-info")
+        localSend.capabilities.add("localsend-v2-prepare-upload")
+        localSend.capabilities.add("localsend-v2-upload")
+        localSend.capabilities.add("localsend-v2-prepare-download")
+        localSend.capabilities.add("localsend-v2-download")
+        localSend.capabilities.add("localsend-udp-discovery")
+        localSend.capabilities.add("project-to-relay-room")
+        localSend.contentTypes.add("text/plain")
+        localSend.contentTypes.add("application/octet-stream")
+        let _ = registerChannelAdapter(localSend)
+    }
+
+    func appendStoredMessageForTextJob(job: RelayJob, sender: String, body: String, createdAt: Int64): Unit {
+        appendStoredMessageForTextJob(job, sender, body, createdAt, "")
+    }
+
+    func appendStoredMessageForTextJob(job: RelayJob, sender: String, body: String, createdAt: Int64, sourceRecordId: String): Unit {
+        if (job.recordKind != "text" || body.size == 0) {
+            return
+        }
+        refreshCacheState(job)
+        if (!canAccessCache(job)) {
+            return
+        }
+        let message = buildRelayTextMessage(job, currentStoredMessageIndex(relayTextRoomIdForJob(job)), sender, if (createdAt > 0) { createdAt } else { currentTimestamp() }, body)
+        message.messageId = "msg-${currentTimestamp()}-${generateId()}"
+        if (sourceRecordId.trimAscii().size > 0) {
+            message.sourceRecordId = sourceRecordId.trimAscii()
+            message.fileRefs = ArrayList<String>()
+            message.fileRefs.add(message.sourceRecordId)
+        }
+        persistStoredRoomForMessage(job, message)
+        appendStoredRoomMessage(message)
+    }
+
+    func loadStoredRooms(): ArrayList<RelayRoom> {
+        let out = ArrayList<RelayRoom>()
+        var values = HashMap<String, String>()
+        try {
+            values = roomStore.load()
+        } catch (_: Exception) {
+            return out
+        }
+        var idx: Int64 = 0
+        while (true) {
+            let key = "room_${idx}"
+            if (let Some(raw) <- values.get(key)) {
+                match (parseStoredRelayRoomLine(raw)) {
+                    case Some(room) => out.add(room)
+                    case None => ()
+                }
+                idx += 1
+                continue
+            }
+            break
+        }
+        out
+    }
+
+    func persistStoredRoomForMessage(job: RelayJob, message: RelayMessage): Unit {
+        let rooms = loadStoredRooms()
+        var found = false
+        for (room in rooms) {
+            if (room.roomId == message.roomId) {
+                found = true
+                room.title = relayTextRoomTitleForJob(job)
+                room.kind = relayTextRoomKindForJob(job)
+                if (room.createdAt == 0 || message.createdAt < room.createdAt) {
+                    room.createdAt = message.createdAt
+                }
+                if (message.createdAt > room.updatedAt) {
+                    room.updatedAt = message.createdAt
+                }
+                room.retentionPolicy = "relay-message-store"
+                room.transportHints = relayTextRoomTransportHintsForJob(job)
+                addRelayRoomParticipant(room, message.senderIdentityId)
+            }
+        }
+        if (!found) {
+            let room = RelayRoom()
+            room.roomId = message.roomId
+            room.title = relayTextRoomTitleForJob(job)
+            room.kind = relayTextRoomKindForJob(job)
+            room.createdAt = if (message.createdAt > 0) { message.createdAt } else { job.createdAt }
+            room.updatedAt = if (message.createdAt > 0) { message.createdAt } else { job.updatedAt }
+            room.retentionPolicy = "relay-message-store"
+            room.transportHints = relayTextRoomTransportHintsForJob(job)
+            addRelayRoomParticipant(room, message.senderIdentityId)
+            rooms.add(room)
+        }
+
+        let values = HashMap<String, String>()
+        var idx: Int64 = 0
+        for (room in rooms) {
+            values.add("room_${idx}", encodeStoredRelayRoomLine(room))
+            idx += 1
+        }
+        try {
+            roomStore.save(values)
+        } catch (e: Exception) {
+            println("[Relay][RoomStore] room persist skipped: ${e.message}")
+        }
+    }
+
+    func appendStoredRoomMessage(message: RelayMessage): Unit {
+        try {
+            fileMgr.ensureDir(messageStoreDir)
+            fileMgr.writeText(storedRoomMessagePath(message.roomId), encodeStoredRelayMessageLine(message) + "\n", true)
+        } catch (e: Exception) {
+            println("[Relay][RoomStore] message append skipped: ${e.message}")
+        }
+    }
+
+    func loadStoredRoomMessages(roomId: String, limit: Int64): ArrayList<RelayMessage> {
+        let out = ArrayList<RelayMessage>()
+        let safeLimit = normalizeRelayMessageLimit(limit)
+        if (safeLimit <= 0) {
+            return out
+        }
+        try {
+            let lines = fileMgr.readLines(storedRoomMessagePath(roomId))
+            for (line in lines) {
+                if (out.size >= safeLimit) {
+                    break
+                }
+                match (parseStoredRelayMessageLine(line)) {
+                    case Some(message) => out.add(message)
+                    case None => ()
+                }
+            }
+        } catch (_: Exception) {}
+        out
+    }
+
+    func currentStoredMessageIndex(roomId: String): Int64 {
+        loadStoredRoomMessages(roomId, 500).size
+    }
+
+    func storedRoomMessagePath(roomId: String): String {
+        joinPaths(messageStoreDir, "${normalizeRelayTextSessionId(roomId)}.log")
+    }
 }
 
 func refreshCacheState(job: RelayJob): Unit {
@@ -706,6 +1658,122 @@ func normalizeRelayTextTargetPath(path: String): String {
         return "/tmpSL"
     }
     normalized
+}
+
+func normalizeRelayTextSessionId(raw: String): String {
+    var out = raw.trimAscii()
+    if (out.size == 0) {
+        return ""
+    }
+    out = strReplace(out, "\\", "-")
+    out = strReplace(out, "/", "-")
+    while (strContains(out, "..")) {
+        out = strReplace(out, "..", "-")
+    }
+    if (out.size > 80) {
+        out = strSubstring(out, 0, 80)
+    }
+    out
+}
+
+func normalizeChannelProtocolId(raw: String): String {
+    var out = raw.trimAscii().toLower()
+    out = strReplace(out, "\\", "-")
+    out = strReplace(out, "/", "-")
+    out = strReplace(out, " ", "-")
+    while (strContains(out, "..")) {
+        out = strReplace(out, "..", "-")
+    }
+    if (out.size > 64) {
+        out = strSubstring(out, 0, 64)
+    }
+    out
+}
+
+func normalizeChannelAdapterMessage(raw: ChannelAdapterMessage): ChannelAdapterMessage {
+    let out = ChannelAdapterMessage()
+    out.protocolId = normalizeChannelProtocolId(raw.protocolId)
+    out.peerId = normalizeRelayTextSessionId(if (raw.peerId.trimAscii().size > 0) { raw.peerId } else { raw.peerDisplayName })
+    if (out.peerId.size == 0) {
+        out.peerId = "unknown-peer"
+    }
+    out.peerDisplayName = if (raw.peerDisplayName.trimAscii().size > 0) { raw.peerDisplayName.trimAscii() } else { out.peerId }
+    out.endpoint = raw.endpoint.trimAscii()
+    out.body = raw.body
+    out.contentType = if (raw.contentType.trimAscii().size > 0) { raw.contentType.trimAscii() } else { "text/plain" }
+    out.sourceRecordId = raw.sourceRecordId.trimAscii()
+    out.createdAt = if (raw.createdAt > 0) { raw.createdAt } else { currentTimestamp() }
+    out
+}
+
+func channelAdapterRoomId(protocolId: String, peerId: String): String {
+    "adapter-${normalizeChannelProtocolId(protocolId)}-${normalizeRelayTextSessionId(peerId)}"
+}
+
+func channelAdapterRoomFileName(protocolId: String, peerName: String): String {
+    let proto = normalizeChannelProtocolId(protocolId)
+    let peer = if (peerName.trimAscii().size > 0) { peerName.trimAscii() } else { "peer" }
+    normalizeRelayTextRecordName("${proto}-${peer}")
+}
+
+func channelAdapterSourceDevice(protocolId: String, peerName: String): String {
+    let proto = normalizeChannelProtocolId(protocolId)
+    let peer = if (peerName.trimAscii().size > 0) { peerName.trimAscii() } else { "peer" }
+    "${proto}:${peer}"
+}
+
+func buildRelayTextSessionAppendText(sourceDevice: String, content: String, append: Bool): String {
+    let source = if (sourceDevice.trimAscii().size > 0) { sourceDevice.trimAscii() } else { "web-client" }
+    let prefix = if (append) { "\n\n" } else { "" }
+    "${prefix}[${currentTimestamp()}] ${source}\n${content}"
+}
+
+func localSendPeerMatches(peer: ?LocalSendPeerInfo, endpoint: String, list: String): Bool {
+    let raw = list.trimAscii()
+    if (raw.size == 0) {
+        return false
+    }
+    var token = ""
+    for (ch in raw.toRuneArray()) {
+        if (ch == r',' || ch == r';' || ch == r'\n' || ch == r'\r' || ch == r'\t' || ch == r' ') {
+            if (localSendPeerMatchesToken(peer, endpoint, token)) {
+                return true
+            }
+            token = ""
+        } else {
+            token += ch.toString()
+        }
+    }
+    localSendPeerMatchesToken(peer, endpoint, token)
+}
+
+func localSendPeerMatchesToken(peer: ?LocalSendPeerInfo, endpoint: String, token: String): Bool {
+    let needle = normalizeLocalSendPolicyKey(token)
+    if (needle.size == 0) {
+        return false
+    }
+    if (needle == "*") {
+        return true
+    }
+    if (normalizeLocalSendPolicyKey(endpoint) == needle) {
+        return true
+    }
+    match (peer) {
+        case Some(info) =>
+            normalizeLocalSendPolicyKey(info.peerId) == needle ||
+            normalizeLocalSendPolicyKey(info.fingerprint) == needle ||
+            normalizeLocalSendPolicyKey(info.alias) == needle ||
+            normalizeLocalSendPolicyKey(info.endpoint) == needle
+        case None => false
+    }
+}
+
+func normalizeLocalSendPolicyKey(raw: String): String {
+    var out = raw.trimAscii().toLower()
+    if (strStartsWith(out, "localsend:")) {
+        out = strSubstring(out, 10, out.size)
+    }
+    out
 }
 
 func normalizeFileName(name: String): String {
@@ -788,4 +1856,572 @@ func shouldCleanupStatus(statusFilter: String, status: String): Bool {
         return status == statusFilter
     }
     status == "delivered" || status == "expired" || status == "failed"
+}
+
+func encodeRelayTextJobManifestLine(job: RelayJob): String {
+    let parts = ArrayList<String>()
+    parts.add(job.id)
+    parts.add(job.recordKind)
+    parts.add(job.sessionId)
+    parts.add(job.sourceDevice)
+    parts.add(job.targetDevice)
+    parts.add(job.targetPath)
+    parts.add(job.fileName)
+    parts.add(job.cachePath)
+    parts.add("${job.bytes}")
+    parts.add(job.status)
+    parts.add("${job.attempts}")
+    parts.add(job.message)
+    parts.add(job.sourceProtocolId)
+    parts.add(job.sourcePeerId)
+    parts.add(job.sourceEndpoint)
+    parts.add("${job.createdAt}")
+    parts.add("${job.updatedAt}")
+    parts.add("${job.expiresAt}")
+
+    var out = ""
+    for (idx in 0..parts.size) {
+        if (idx > 0) {
+            out += "|"
+        }
+        out += escapeRelayManifestPart(parts[idx])
+    }
+    out
+}
+
+func parseRelayTextJobManifestLine(raw: String): ?RelayJob {
+    let parts = splitRelayManifestLine(raw)
+    if (parts.size < 15) {
+        return None
+    }
+    let job = RelayJob()
+    job.id = parts[0]
+    job.recordKind = parts[1]
+    job.sessionId = parts[2]
+    job.sourceDevice = parts[3]
+    job.targetDevice = parts[4]
+    job.targetPath = parts[5]
+    job.fileName = parts[6]
+    job.cachePath = parts[7]
+    job.bytes = parseRelayManifestInt(parts[8], 0)
+    job.status = parts[9]
+    job.attempts = parseRelayManifestInt(parts[10], 0)
+    job.message = parts[11]
+    if (parts.size >= 18) {
+        job.sourceProtocolId = parts[12]
+        job.sourcePeerId = parts[13]
+        job.sourceEndpoint = parts[14]
+        job.createdAt = parseRelayManifestInt(parts[15], currentTimestamp())
+        job.updatedAt = parseRelayManifestInt(parts[16], job.createdAt)
+        job.expiresAt = parseRelayManifestInt(parts[17], 0)
+    } else {
+        job.createdAt = parseRelayManifestInt(parts[12], currentTimestamp())
+        job.updatedAt = parseRelayManifestInt(parts[13], job.createdAt)
+        job.expiresAt = parseRelayManifestInt(parts[14], 0)
+    }
+    if (job.id.size == 0 || job.recordKind != "text" || job.cachePath.size == 0 || job.fileName.size == 0) {
+        return None
+    }
+    Some(job)
+}
+
+func splitRelayManifestLine(raw: String): ArrayList<String> {
+    let out = ArrayList<String>()
+    var current = ""
+    for (ch in raw.toRuneArray()) {
+        if (ch == r'|') {
+            out.add(unescapeRelayManifestPart(current))
+            current = ""
+            continue
+        }
+        current += ch.toString()
+    }
+    out.add(unescapeRelayManifestPart(current))
+    out
+}
+
+func escapeRelayManifestPart(raw: String): String {
+    var out = raw
+    out = strReplace(out, "%", "%25")
+    out = strReplace(out, "|", "%7C")
+    out = strReplace(out, "\n", "%0A")
+    out = strReplace(out, "\r", "%0D")
+    out
+}
+
+func unescapeRelayManifestPart(raw: String): String {
+    var out = raw
+    out = strReplace(out, "%0D", "\r")
+    out = strReplace(out, "%0A", "\n")
+    out = strReplace(out, "%7C", "|")
+    out = strReplace(out, "%25", "%")
+    out
+}
+
+func parseRelayManifestInt(raw: String, fallback: Int64): Int64 {
+    try {
+        return Int64.parse(raw)
+    } catch (_: Exception) {
+        fallback
+    }
+}
+
+func encodeStoredRelayRoomLine(room: RelayRoom): String {
+    let parts = ArrayList<String>()
+    parts.add(room.roomId)
+    parts.add(room.title)
+    parts.add(room.kind)
+    parts.add(joinRelayStoreList(room.participantIdentityIds))
+    parts.add("${room.createdAt}")
+    parts.add("${room.updatedAt}")
+    parts.add(room.retentionPolicy)
+    parts.add(room.transportHints)
+    joinRelayStoreParts(parts)
+}
+
+func parseStoredRelayRoomLine(raw: String): ?RelayRoom {
+    let parts = splitRelayManifestLine(raw)
+    if (parts.size < 8) {
+        return None
+    }
+    let room = RelayRoom()
+    room.roomId = parts[0]
+    room.title = parts[1]
+    room.kind = parts[2]
+    let participantIds = splitRelayStoreList(parts[3])
+    for (id in participantIds) {
+        addRelayRoomParticipant(room, id)
+    }
+    room.createdAt = parseRelayManifestInt(parts[4], currentTimestamp())
+    room.updatedAt = parseRelayManifestInt(parts[5], room.createdAt)
+    room.retentionPolicy = parts[6]
+    room.transportHints = parts[7]
+    if (room.roomId.size == 0) {
+        return None
+    }
+    Some(room)
+}
+
+func encodeStoredRelayMessageLine(message: RelayMessage): String {
+    let parts = ArrayList<String>()
+    parts.add(message.messageId)
+    parts.add(message.roomId)
+    parts.add(message.senderIdentityId)
+    parts.add(message.senderKind)
+    parts.add(message.body)
+    parts.add(message.contentType)
+    parts.add("${message.createdAt}")
+    parts.add(message.deliveryState)
+    parts.add(message.sourceProtocolId)
+    parts.add(message.sourceRecordId)
+    parts.add(joinRelayStoreList(message.fileRefs))
+    joinRelayStoreParts(parts)
+}
+
+func parseStoredRelayMessageLine(raw: String): ?RelayMessage {
+    let parts = splitRelayManifestLine(raw)
+    if (parts.size < 11) {
+        return None
+    }
+    let message = RelayMessage()
+    message.messageId = parts[0]
+    message.roomId = parts[1]
+    message.senderIdentityId = parts[2]
+    message.senderKind = parts[3]
+    message.body = parts[4]
+    message.contentType = if (parts[5].size > 0) { parts[5] } else { "text/plain" }
+    message.createdAt = parseRelayManifestInt(parts[6], currentTimestamp())
+    message.deliveryState = parts[7]
+    message.sourceProtocolId = parts[8]
+    message.sourceRecordId = parts[9]
+    let refs = splitRelayStoreList(parts[10])
+    for (ref in refs) {
+        if (ref.size > 0) {
+            message.fileRefs.add(ref)
+        }
+    }
+    if (message.messageId.size == 0 || message.roomId.size == 0) {
+        return None
+    }
+    Some(message)
+}
+
+func joinRelayStoreParts(parts: ArrayList<String>): String {
+    var out = ""
+    for (idx in 0..parts.size) {
+        if (idx > 0) {
+            out += "|"
+        }
+        out += escapeRelayManifestPart(parts[idx])
+    }
+    out
+}
+
+func joinRelayStoreList(values: ArrayList<String>): String {
+    var out = ""
+    for (idx in 0..values.size) {
+        if (idx > 0) {
+            out += ","
+        }
+        out += strReplace(values[idx], ",", "_")
+    }
+    out
+}
+
+func splitRelayStoreList(raw: String): ArrayList<String> {
+    let out = ArrayList<String>()
+    var current = ""
+    for (ch in raw.toRuneArray()) {
+        if (ch == r',') {
+            if (current.size > 0) {
+                out.add(current)
+            }
+            current = ""
+            continue
+        }
+        current += ch.toString()
+    }
+    if (current.size > 0) {
+        out.add(current)
+    }
+    out
+}
+
+func relayTextRoomIdForJob(job: RelayJob): String {
+    if (job.sessionId.trimAscii().size > 0) {
+        return job.sessionId.trimAscii()
+    }
+    "default-text-room"
+}
+
+func relayTextRoomTitleForJob(job: RelayJob): String {
+    if (job.sourceProtocolId.trimAscii().size > 0) {
+        let peer = if (job.sourcePeerId.trimAscii().size > 0) { job.sourcePeerId.trimAscii() } else { job.sourceDevice.trimAscii() }
+        if (peer.size > 0) {
+            return "${job.sourceProtocolId}:${peer}"
+        }
+        return "${job.sourceProtocolId} channel"
+    }
+    if (job.sessionId.trimAscii().size > 0) {
+        return if (job.fileName.size > 0) { job.fileName } else { job.sessionId }
+    }
+    "文字中转站"
+}
+
+func relayTextRoomKindForJob(job: RelayJob): String {
+    if (job.sourceProtocolId.trimAscii().size > 0) {
+        return "protocol-room"
+    }
+    if (job.sessionId.size > 0) {
+        return "default-text-station"
+    }
+    "manual-room"
+}
+
+func relayTextRoomTransportHintsForJob(job: RelayJob): String {
+    if (job.sourceProtocolId.trimAscii().size > 0) {
+        return "adapter:${job.sourceProtocolId}|relay-job-text"
+    }
+    "relay-job-text"
+}
+
+func relayIdentityIdForSource(sourceDevice: String): String {
+    let normalized = if (sourceDevice.trimAscii().size > 0) { sourceDevice.trimAscii() } else { "unknown" }
+    "relay-source-${normalizeRelayTextSessionId(normalized)}"
+}
+
+func relayIdentityIdForJobSource(job: RelayJob, sender: String): String {
+    if (job.sourceProtocolId.trimAscii().size > 0) {
+        let peer = if (job.sourcePeerId.trimAscii().size > 0) { job.sourcePeerId.trimAscii() } else { sender }
+        return "protocol-${normalizeChannelProtocolId(job.sourceProtocolId)}-${normalizeRelayTextSessionId(peer)}"
+    }
+    relayIdentityIdForSource(sender)
+}
+
+func addRelayRoomParticipant(room: RelayRoom, identityId: String): Unit {
+    if (identityId.size == 0) {
+        return
+    }
+    for (id in room.participantIdentityIds) {
+        if (id == identityId) {
+            return
+        }
+    }
+    room.participantIdentityIds.add(identityId)
+}
+
+func addRelayRoomParticipantsFromJobText(room: RelayRoom, job: RelayJob, fileMgr: FileMgr): Unit {
+    if (job.sessionId.size == 0 || !job.cacheAvailable) {
+        return
+    }
+    try {
+        let messages = parseRelayTextMessagesFromJob(job, fileMgr.readText(job.cachePath), 500)
+        for (message in messages) {
+            addRelayRoomParticipant(room, message.senderIdentityId)
+        }
+    } catch (_: Exception) {}
+}
+
+func normalizeRelayMessageLimit(limit: Int64): Int64 {
+    if (limit <= 0) {
+        return 200
+    }
+    if (limit > 500) {
+        return 500
+    }
+    limit
+}
+
+func parseRelayTextMessagesFromJob(job: RelayJob, content: String, limit: Int64): ArrayList<RelayMessage> {
+    let out = ArrayList<RelayMessage>()
+    let safeLimit = normalizeRelayMessageLimit(limit)
+    if (content.size == 0 || safeLimit <= 0) {
+        return out
+    }
+    if (job.sessionId.size == 0) {
+        out.add(buildRelayTextMessage(job, 0, job.sourceDevice, job.createdAt, content))
+        return out
+    }
+
+    let lines = splitRelayTextLines(content)
+    var currentSender = job.sourceDevice
+    var currentCreatedAt = job.createdAt
+    var currentBody = ""
+    var hasCurrent = false
+    var index: Int64 = 0
+    var sawHeader = false
+    for (line in lines) {
+        if (isRelayTextMessageHeader(line)) {
+            if (hasCurrent && out.size < safeLimit) {
+                out.add(buildRelayTextMessage(job, index, currentSender, currentCreatedAt, currentBody))
+                index += 1
+            }
+            currentSender = relayTextHeaderSender(line)
+            currentCreatedAt = relayTextHeaderTimestamp(line, job.createdAt)
+            currentBody = ""
+            hasCurrent = true
+            sawHeader = true
+            continue
+        }
+        if (hasCurrent) {
+            if (currentBody.size > 0) {
+                currentBody += "\n"
+            }
+            currentBody += line
+        }
+    }
+
+    if (hasCurrent && out.size < safeLimit) {
+        out.add(buildRelayTextMessage(job, index, currentSender, currentCreatedAt, currentBody))
+    }
+    if (!sawHeader && out.size == 0) {
+        out.add(buildRelayTextMessage(job, 0, job.sourceDevice, job.createdAt, content))
+    }
+    out
+}
+
+func buildRelayTextMessage(job: RelayJob, index: Int64, sender: String, createdAt: Int64, body: String): RelayMessage {
+    let message = RelayMessage()
+    message.messageId = "${job.id}:${index}"
+    message.roomId = relayTextRoomIdForJob(job)
+    message.senderIdentityId = relayIdentityIdForJobSource(job, sender)
+    message.senderKind = if (job.sourceProtocolId.trimAscii().size > 0) {
+        "protocol-peer"
+    } else if (sender.trimAscii().size > 0) {
+        "relay-source"
+    } else {
+        "manual"
+    }
+    message.body = body
+    message.contentType = "text/plain"
+    message.createdAt = if (createdAt > 0) { createdAt } else { job.createdAt }
+    message.deliveryState = job.status
+    message.sourceProtocolId = if (job.sourceProtocolId.trimAscii().size > 0) { job.sourceProtocolId } else { "soonlink-relay" }
+    message.sourceRecordId = job.id
+    message.fileRefs.add(job.id)
+    message
+}
+
+func splitRelayTextLines(content: String): ArrayList<String> {
+    let out = ArrayList<String>()
+    var current = ""
+    for (ch in content.toRuneArray()) {
+        if (ch == r'\n') {
+            out.add(current)
+            current = ""
+            continue
+        }
+        if (ch == r'\r') {
+            continue
+        }
+        current += ch.toString()
+    }
+    out.add(current)
+    out
+}
+
+func isRelayTextMessageHeader(line: String): Bool {
+    let close = relayTextHeaderCloseIndex(line)
+    if (close <= 1) {
+        return false
+    }
+    let runes = line.toRuneArray()
+    if (runes.size <= close + 1 || runes[close + 1] != r' ') {
+        return false
+    }
+    let timestamp = strSubstring(line, 1, close)
+    try {
+        let _ = Int64.parse(timestamp)
+    } catch (_: Exception) {
+        return false
+    }
+    strSubstring(line, close + 2, runes.size).trimAscii().size > 0
+}
+
+func relayTextHeaderTimestamp(line: String, fallback: Int64): Int64 {
+    let close = relayTextHeaderCloseIndex(line)
+    if (close <= 1) {
+        return fallback
+    }
+    try {
+        return Int64.parse(strSubstring(line, 1, close))
+    } catch (_: Exception) {
+        fallback
+    }
+}
+
+func relayTextHeaderSender(line: String): String {
+    let close = relayTextHeaderCloseIndex(line)
+    let runes = line.toRuneArray()
+    if (close <= 0 || runes.size <= close + 2) {
+        return "unknown"
+    }
+    let sender = strSubstring(line, close + 2, runes.size).trimAscii()
+    if (sender.size > 0) { sender } else { "unknown" }
+}
+
+func relayTextHeaderCloseIndex(line: String): Int64 {
+    let runes = line.toRuneArray()
+    if (runes.size < 4 || runes[0] != r'[') {
+        return -1
+    }
+    var idx: Int64 = 1
+    while (idx < runes.size) {
+        if (runes[idx] == r']') {
+            return idx
+        }
+        idx += 1
+    }
+    -1
+}
+
+func normalizeLocalSendOutboundEndpoint(endpoint: String): String {
+    var out = endpoint.trimAscii()
+    while (strEndsWith(out, "/")) {
+        out = strSubstring(out, 0, out.size - 1)
+    }
+    if (!strStartsWith(out, "http://")) {
+        return ""
+    }
+    out
+}
+
+func normalizeLocalSendOutboundFileId(jobId: String): String {
+    var out = jobId.trimAscii()
+    out = strReplace(out, "/", "-")
+    out = strReplace(out, "\\", "-")
+    out = strReplace(out, "?", "-")
+    out = strReplace(out, "&", "-")
+    out = strReplace(out, "=", "-")
+    if (out.size == 0) {
+        out = "soonlink-file"
+    }
+    out
+}
+
+func buildLocalSendOutboundPrepareBody(
+    fileId: String,
+    fileName: String,
+    size: Int64,
+    alias: String,
+    fingerprint: String,
+    deviceModel: String,
+    deviceType: String
+): String {
+    let info = JsonObject()
+        .put("alias", if (alias.trimAscii().size > 0) { alias.trimAscii() } else { "SoonLink Relay" })
+        .put("version", "2.1")
+        .put("deviceModel", if (deviceModel.trimAscii().size > 0) { deviceModel.trimAscii() } else { "SoonLink" })
+        .put("deviceType", if (deviceType.trimAscii().size > 0) { deviceType.trimAscii() } else { "desktop" })
+        .put("fingerprint", if (fingerprint.trimAscii().size > 0) { fingerprint.trimAscii() } else { "soonlink-relay" })
+        .put("protocol", "http")
+        .putInt("port", 0)
+        .putBool("download", true)
+    let file = JsonObject()
+        .put("id", fileId)
+        .put("fileName", fileName)
+        .putInt("size", size)
+        .put("fileType", "application/octet-stream")
+    let files = JsonObject()
+        .putObj(fileId, file)
+    JsonObject()
+        .putObj("info", info)
+        .putObj("files", files)
+        .toString()
+}
+
+func readLocalSendHttpBody(resp: HttpResponse): String {
+    String.fromUtf8(readLocalSendHttpBytes(resp))
+}
+
+func readLocalSendHttpBytes(resp: HttpResponse): Array<UInt8> {
+    let buf = ArrayList<UInt8>()
+    let tmp = Array<UInt8>(4096, repeat: 0)
+    while (true) {
+        let n = resp.body.read(tmp)
+        if (n <= 0) {
+            break
+        }
+        for (i in 0..n) {
+            buf.add(tmp[i])
+        }
+    }
+    buf.toArray()
+}
+
+func urlEncodeLocalSendQuery(input: String): String {
+    let out = ArrayList<UInt8>()
+    for (b in input.toArray()) {
+        if (isLocalSendSafeQueryByte(UInt8(b))) {
+            out.add(UInt8(b))
+            continue
+        }
+        if (b == 32) {
+            out.add(UInt8(43))
+            continue
+        }
+        let byteValue = Int64(b)
+        let high = UInt8(byteValue / 16)
+        let low = UInt8(byteValue % 16)
+        let encoded = "%${hexLocalSendDigit(high)}${hexLocalSendDigit(low)}".toArray()
+        for (c in encoded) {
+            out.add(UInt8(c))
+        }
+    }
+    String.fromUtf8(out.toArray())
+}
+
+func isLocalSendSafeQueryByte(b: UInt8): Bool {
+    (b >= UInt8(48) && b <= UInt8(57)) ||
+    (b >= UInt8(65) && b <= UInt8(90)) ||
+    (b >= UInt8(97) && b <= UInt8(122)) ||
+    b == UInt8(45) || b == UInt8(46) || b == UInt8(95) || b == UInt8(126)
+}
+
+func hexLocalSendDigit(v: UInt8): String {
+    if (v < UInt8(10)) {
+        String.fromUtf8([UInt8(48) + v])
+    } else {
+        String.fromUtf8([UInt8(65) + (v - UInt8(10))])
+    }
 }

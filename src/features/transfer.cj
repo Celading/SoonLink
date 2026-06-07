@@ -111,6 +111,14 @@ public class TransferEngine {
     }
 
     func selectBestProtocol(task: TransferTask): String {
+        if (task.protocolCandidates.size > 0) {
+            task.protocolCandidates = sanitizeTransferProtocolPreferences(task.protocolCandidates)
+            for (protocolName in task.protocolCandidates) {
+                if (protocolName == "http" || protocolName == "multi-thread-http") {
+                    return protocolName
+                }
+            }
+        }
         if (task.threads > 1) {
             return "multi-thread-http"
         }
