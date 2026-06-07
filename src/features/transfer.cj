@@ -114,13 +114,43 @@ public class TransferEngine {
         if (task.protocolCandidates.size > 0) {
             task.protocolCandidates = sanitizeTransferProtocolPreferences(task.protocolCandidates)
             for (protocolName in task.protocolCandidates) {
-                if (protocolName == "http" || protocolName == "multi-thread-http") {
-                    return protocolName
+                if (!isRuntimeReadyTransferProtocol(protocolName)) {
+                    continue
+                }
+                synchronized(mutex) {
+                    if (let Some(_protocol) <- protocols.get(protocolName)) {
+                        return protocolName
+                    }
                 }
             }
         }
-        if (task.threads > 1) {
-            return "multi-thread-http"
+
+        if (task.fileCategory.trimAscii().size == 0) {
+            task.fileCategory = resolveTransferFileCategory(
+                task.filePath,
+                task.metadata.mimeType,
+                task.sourceIsDir || task.metadata.isDir
+            )
+        }
+        task.protocolPreferences = sanitizeTransferProtocolPreferences(task.protocolPreferences)
+        let totalBytes = if (task.totalBytes > 0) { task.totalBytes } else { task.metadata.size }
+        task.protocolCandidates = buildTransferProtocolCandidates(
+            task.fileCategory,
+            totalBytes,
+            task.protocolPreferences,
+            task.sourceIsDir || task.metadata.isDir,
+            task.threads
+        )
+
+        synchronized(mutex) {
+            for (protocolName in task.protocolCandidates) {
+                if (!isRuntimeReadyTransferProtocol(protocolName)) {
+                    continue
+                }
+                if (let Some(_protocol) <- protocols.get(protocolName)) {
+                    return protocolName
+                }
+            }
         }
         "http"
     }
@@ -281,4 +311,8 @@ public class P2PProtocol <: TransferProtocol {
         println("[P2P] P2P传输协议尚未实现")
         false
     }
+}
+
+func isRuntimeReadyTransferProtocol(protocolName: String): Bool {
+    protocolName == "http" || protocolName == "multi-thread-http"
 }

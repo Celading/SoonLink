@@ -3471,7 +3471,7 @@ func buildSessionContextPayload(
         .putObj("auth", JsonObject()
             .put("policy", adminAccess.policy)
             .put("provider", auth.provider)
-            .put("edition", "core")
+            .put("edition", "runtime")
             .putBool("supportsPassword", auth.supportsPassword)
             .putBool("passwordConfigured", auth.passwordConfigured)
             .putBool("sessionAuthenticated", adminAccess.authenticated)
@@ -3485,7 +3485,7 @@ func buildSessionContextPayload(
 
 func productProfileToJson(profile: RuntimeProfile): JsonObject {
     JsonObject()
-        .put("edition", "core")
+        .put("edition", "runtime")
         .put("productName", profile.productName)
         .put("displayName", resolveRuntimeDisplayName(profile))
         .put("version", currentProductVersion())
@@ -3505,7 +3505,7 @@ func appConfigToJson(config: AppConfig, profile: RuntimeProfile): JsonObject {
     out.put("logDir", config.logDir)
     out.put("localRootDir", config.localRootDir)
     out.putBool("localAuthTrustProxyHeaders", config.localAuthTrustProxyHeaders)
-    out.put("edition", "core")
+    out.put("edition", "runtime")
     out.put("productName", profile.productName)
     out.put("displayName", resolveRuntimeDisplayName(profile))
     out.put("version", currentProductVersion())
@@ -3576,7 +3576,7 @@ func buildAdminSystemPayload(server: CoreServer, masters: MasterBundle): JsonObj
 
     JsonObject()
         .putBool("success", true)
-        .put("edition", "core")
+        .put("edition", "runtime")
         .put("productName", server.profile.productName)
         .put("displayName", resolveRuntimeDisplayName(server.profile))
         .put("version", currentProductVersion())

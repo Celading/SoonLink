@@ -37,6 +37,7 @@ public class LocalFileSystem <: FileSystemProvider {
                 fe.isDir = item.isDirectory()
                 fe.size = if (fe.isDir) { 0 } else { item.size }
                 fe.mimeType = resolvePreviewMimeType("", fe.path, fe.isDir)
+                fe.category = resolveTransferFileCategory(fe.path, fe.mimeType, fe.isDir)
                 entries.add(fe)
             }
         } catch (e: Exception) {
@@ -101,6 +102,7 @@ public class LocalFileSystem <: FileSystemProvider {
         metadata.size = info.size
         metadata.isDir = info.isDirectory()
         metadata.mimeType = resolvePreviewMimeType("", safeFilePath, metadata.isDir)
+        metadata.category = resolveTransferFileCategory(safeFilePath, metadata.mimeType, metadata.isDir)
         metadata
     }
 

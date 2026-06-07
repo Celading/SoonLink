@@ -70,6 +70,8 @@ public class TwoNodeSmoke_test {
             let finalTaskA = waitForRemoteTask(serverA, taskA.id)
             @Assert(taskStatusToString(finalTaskA.status), "completed")
             @Assert(finalTaskA.sourceIsDir, true)
+            @Assert(finalTaskA.fileCategory, "directory")
+            @Assert(finalTaskA.protocolCandidates[0], "rsync")
 
             @Assert(fileMgr.readText(rootB + "/receiver/share/docs/readme.txt"), "hello-from-node-a")
             @Assert(FileInfo(rootB + "/receiver/share/empty-only").isDirectory(), true)
@@ -77,6 +79,8 @@ public class TwoNodeSmoke_test {
             let taskB = serverB.createTransferTask("node-a", "local", "/share/docs/readme.txt", "/pulled/readme.txt")
             let finalTaskB = waitForRemoteTask(serverB, taskB.id)
             @Assert(taskStatusToString(finalTaskB.status), "completed")
+            @Assert(finalTaskB.fileCategory, "text")
+            @Assert(finalTaskB.protocolCandidates[0], "http")
             @Assert(fileMgr.readText(rootB + "/pulled/readme.txt"), "hello-from-node-a")
         } finally {
             webA.stop()

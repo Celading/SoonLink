@@ -854,6 +854,7 @@ public class CoreServer {
         targetPath: String,
         fileCategory!: String = "",
         protocolPreferences!: ArrayList<String> = ArrayList<String>(),
+        protocolCandidates!: ArrayList<String> = ArrayList<String>(),
         threads!: Int64 = 0
     ): TransferTask {
         ensureDeviceUsableForTransfer(sourceDevice, "transfer source")
@@ -888,15 +889,18 @@ public class CoreServer {
         if (task.metadata.category.trimAscii().size == 0) {
             task.metadata.category = task.fileCategory
         }
-        task.protocolCandidates = buildTransferProtocolCandidatesForRoute(
-            task.fileCategory,
-            task.totalBytes,
-            task.protocolPreferences,
-            task.sourceIsDir || task.metadata.isDir,
-            task.threads,
-            task.sourceDevice,
-            task.targetDevice
-        )
+        let explicitCandidates = sanitizeTransferProtocolPreferences(protocolCandidates)
+        if (explicitCandidates.size > 0) {
+            task.protocolCandidates = explicitCandidates
+        } else {
+            task.protocolCandidates = buildTransferProtocolCandidates(
+                task.fileCategory,
+                task.totalBytes,
+                task.protocolPreferences,
+                task.sourceIsDir || task.metadata.isDir,
+                task.threads
+            )
+        }
 
         synchronized(tasksMutex) {
             tasks.add(task.id, task)
@@ -979,7 +983,19 @@ public class CoreServer {
         }
         request.fileCategory = request.metadata.category
         request.protocolPreferences = sanitizeTransferProtocolPreferences(request.protocolPreferences)
-        request.protocolCandidates = soonLinkDirectProtocolCandidates()
+        if (shouldUseSoonLinkDirectProtocol(request.sourceDevice, "local")) {
+            request.protocolCandidates = soonLinkDirectProtocolCandidates()
+        } else if (request.protocolCandidates.size == 0) {
+            request.protocolCandidates = buildTransferProtocolCandidates(
+                request.fileCategory,
+                request.totalBytes,
+                request.protocolPreferences,
+                request.sourceIsDir,
+                0
+            )
+        } else {
+            request.protocolCandidates = sanitizeTransferProtocolPreferences(request.protocolCandidates)
+        }
         if (request.createdAt <= 0) {
             request.createdAt = now
         }
@@ -1054,7 +1070,8 @@ public class CoreServer {
                     request.filePath,
                     resolvedTargetPath,
                     fileCategory: request.fileCategory,
-                    protocolPreferences: request.protocolPreferences
+                    protocolPreferences: request.protocolPreferences,
+                    protocolCandidates: request.protocolCandidates
                 )
                 let now = currentTimestamp()
                 synchronized(transferRequestsMutex) {
@@ -1249,7 +1266,7 @@ public class CoreServer {
         if (!profile.supportsPeerTransfer) {
             let result = PeerTransferResult()
             result.success = false
-            result.message = "peer transfer disabled in current edition"
+            result.message = "peer transfer disabled in current runtime"
             return result
         }
         peerTransferFeature.acceptUpload(targetPath, peerId, token, payload)
@@ -1259,7 +1276,7 @@ public class CoreServer {
         if (!profile.supportsPeerTransfer) {
             let result = PeerDownloadPayload()
             result.result.success = false
-            result.result.message = "peer transfer disabled in current edition"
+            result.result.message = "peer transfer disabled in current runtime"
             return result
         }
         peerTransferFeature.provideDownload(sourcePath, peerId, token)
@@ -1269,7 +1286,7 @@ public class CoreServer {
         if (!profile.supportsPeerTransfer) {
             let result = PeerTransferResult()
             result.success = false
-            result.message = "peer transfer disabled in current edition"
+            result.message = "peer transfer disabled in current runtime"
             return result
         }
         peerTransferFeature.pullLocalToPath(sourcePath, targetPath)
@@ -1388,7 +1405,7 @@ public class CoreServer {
         if (!profile.supportsRelay) {
             let job = RelayJob()
             job.status = "disabled"
-            job.message = "relay disabled in current edition"
+            job.message = "relay disabled in current runtime"
             job.targetDevice = targetDevice
             job.targetPath = targetPath
             job.fileName = fileName
@@ -1437,7 +1454,7 @@ public class CoreServer {
         if (!profile.supportsRelay) {
             let job = RelayJob()
             job.status = "disabled"
-            job.message = "relay disabled in current edition"
+            job.message = "relay disabled in current runtime"
             job.recordKind = "text"
             job.sourceProtocolId = message.protocolId
             job.sourcePeerId = message.peerId
@@ -1457,7 +1474,7 @@ public class CoreServer {
         if (!profile.supportsRelay) {
             let job = RelayJob()
             job.status = "disabled"
-            job.message = "relay disabled in current edition"
+            job.message = "relay disabled in current runtime"
             job.recordKind = "text"
             job.sessionId = roomId
             job.sourceDevice = sourceDevice
@@ -1469,14 +1486,14 @@ public class CoreServer {
 
     public func prepareLocalSendUpload(raw: String, endpoint: String): LocalSendSession {
         if (!profile.supportsRelay) {
-            throw Exception("relay disabled in current edition")
+            throw Exception("relay disabled in current runtime")
         }
         relayFeature.prepareLocalSendUpload(raw, endpoint)
     }
 
     public func receiveLocalSendUpload(sessionId: String, fileId: String, token: String, payload: Array<UInt8>): RelayJob {
         if (!profile.supportsRelay) {
-            throw Exception("relay disabled in current edition")
+            throw Exception("relay disabled in current runtime")
         }
         relayFeature.receiveLocalSendUpload(sessionId, fileId, token, payload)
     }
@@ -1490,7 +1507,7 @@ public class CoreServer {
 
     public func prepareLocalSendDownload(jobId: String): LocalSendSession {
         if (!profile.supportsRelay) {
-            throw Exception("relay disabled in current edition")
+            throw Exception("relay disabled in current runtime")
         }
         relayFeature.prepareLocalSendDownload(jobId)
     }
@@ -1504,14 +1521,14 @@ public class CoreServer {
 
     public func sendLocalSendJobToPeer(endpoint: String, jobId: String, alias: String, fingerprint: String, deviceModel: String, deviceType: String): LocalSendOutboundResult {
         if (!profile.supportsRelay) {
-            throw Exception("relay disabled in current edition")
+            throw Exception("relay disabled in current runtime")
         }
         relayFeature.sendLocalSendJobToPeer(endpoint, jobId, alias, fingerprint, deviceModel, deviceType)
     }
 
     public func pullLocalSendFileFromPeer(endpoint: String, sessionId: String, fileId: String, token: String, fileName: String, peerDisplayName: String): LocalSendOutboundResult {
         if (!profile.supportsRelay) {
-            throw Exception("relay disabled in current edition")
+            throw Exception("relay disabled in current runtime")
         }
         relayFeature.pullLocalSendFileFromPeer(endpoint, sessionId, fileId, token, fileName, peerDisplayName)
     }
@@ -1553,7 +1570,7 @@ public class CoreServer {
         if (!profile.supportsRelay) {
             let job = RelayJob()
             job.status = "disabled"
-            job.message = "relay disabled in current edition"
+            job.message = "relay disabled in current runtime"
             job.fileName = fileName
             job.recordKind = "text"
             job.sessionId = sessionId
@@ -1836,35 +1853,21 @@ public class CoreServer {
         }
         request.metadata.category = resolveTransferRequestCategory(request)
         request.fileCategory = request.metadata.category
-        request.protocolCandidates = soonLinkDirectProtocolCandidates()
         if (!shouldUseSoonLinkDirectProtocol(request.sourceDevice, "local")) {
             request.protocolCandidates = buildTransferProtocolCandidates(
-            request.fileCategory,
-            request.totalBytes,
-            request.protocolPreferences,
-            request.sourceIsDir,
-            0
+                request.fileCategory,
+                request.totalBytes,
+                request.protocolPreferences,
+                request.sourceIsDir,
+                0
             )
+        } else {
+            request.protocolCandidates = soonLinkDirectProtocolCandidates()
         }
         if (request.targetPath.size == 0) {
             request.targetPath = "/"
         }
         request
-    }
-
-    func buildTransferProtocolCandidatesForRoute(
-        fileCategory: String,
-        totalBytes: Int64,
-        protocolPreferences: ArrayList<String>,
-        isDir: Bool,
-        threads: Int64,
-        sourceDevice: String,
-        targetDevice: String
-    ): ArrayList<String> {
-        if (shouldUseSoonLinkDirectProtocol(sourceDevice, targetDevice)) {
-            return soonLinkDirectProtocolCandidates()
-        }
-        buildTransferProtocolCandidates(fileCategory, totalBytes, protocolPreferences, isDir, threads)
     }
 
     func shouldUseSoonLinkDirectProtocol(sourceDevice: String, targetDevice: String): Bool {

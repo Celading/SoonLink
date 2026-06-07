@@ -165,11 +165,11 @@ public class FileMetadata {
     public var path: String = ""
     public var size: Int64 = 0
     public var mimeType: String = ""
+    public var category: String = ""
     public var modified: Int64 = 0
     public var isDir: Bool = false
     public var checksum: String = ""
     public var encrypted: Bool = false
-    public var category: String = ""
 
     public init() {}
 
@@ -180,6 +180,7 @@ public class FileMetadata {
             .putInt("size", size)
             .put("sizeText", formatBytes(size))
             .put("mimeType", mimeType)
+            .put("category", category)
             .putInt("modified", modified)
             .putBool("isDir", isDir)
             .putBool("encrypted", encrypted)
@@ -198,6 +199,7 @@ public class FileEntry {
     public var modified: Int64 = 0
     public var isDir: Bool = false
     public var mimeType: String = ""
+    public var category: String = ""
 
     public init() {}
 
@@ -218,6 +220,7 @@ public class FileEntry {
             .putInt("modified", modified)
             .putBool("isDir", isDir)
             .put("mimeType", mimeType)
+            .put("category", category)
     }
 }
 
@@ -257,15 +260,6 @@ public class TransferTask {
     }
 
     public func toJson(): JsonObject {
-        let protocolPreferencesArr = JsonArray()
-        for (item in protocolPreferences) {
-            protocolPreferencesArr.addStr(item)
-        }
-        let protocolCandidatesArr = JsonArray()
-        for (item in protocolCandidates) {
-            protocolCandidatesArr.addStr(item)
-        }
-
         let obj = JsonObject()
             .put("id", id)
             .put("sourceDevice", sourceDevice)
@@ -285,8 +279,8 @@ public class TransferTask {
             .putInt("updatedAt", updatedAt)
             .put("protocol", protocol)
             .put("fileCategory", fileCategory)
-            .putArr("protocolPreferences", protocolPreferencesArr)
-            .putArr("protocolCandidates", protocolCandidatesArr)
+            .putArr("protocolPreferences", stringListToJsonArray(protocolPreferences))
+            .putArr("protocolCandidates", stringListToJsonArray(protocolCandidates))
             .putBool("encrypted", encrypted)
             .putInt("threads", threads)
             .putInt("speed", speed)
@@ -340,15 +334,6 @@ public class TransferRequest {
     }
 
     public func toJson(): JsonObject {
-        let protocolPreferencesArr = JsonArray()
-        for (item in protocolPreferences) {
-            protocolPreferencesArr.addStr(item)
-        }
-        let protocolCandidatesArr = JsonArray()
-        for (item in protocolCandidates) {
-            protocolCandidatesArr.addStr(item)
-        }
-
         let obj = JsonObject()
             .put("id", id)
             .put("requesterDeviceId", requesterDeviceId)
@@ -365,8 +350,8 @@ public class TransferRequest {
             .putInt("totalBytes", totalBytes)
             .put("totalBytesText", formatBytes(totalBytes))
             .put("fileCategory", fileCategory)
-            .putArr("protocolPreferences", protocolPreferencesArr)
-            .putArr("protocolCandidates", protocolCandidatesArr)
+            .putArr("protocolPreferences", stringListToJsonArray(protocolPreferences))
+            .putArr("protocolCandidates", stringListToJsonArray(protocolCandidates))
             .put("status", transferRequestStatusToString(status))
             .putInt("createdAt", createdAt)
             .putInt("updatedAt", updatedAt)
@@ -411,4 +396,12 @@ public class AccessLog {
 
 public func currentTimestamp(): Int64 {
     DateTime.now().toUnixTimeStamp().toSeconds()
+}
+
+func stringListToJsonArray(values: ArrayList<String>): JsonArray {
+    let arr = JsonArray()
+    for (value in values) {
+        arr.addStr(value)
+    }
+    arr
 }

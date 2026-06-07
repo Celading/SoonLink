@@ -314,7 +314,8 @@ func isDocumentTransferType(mimeType: String, ext: String): Bool {
 func isTextTransferType(mimeType: String, ext: String): Bool {
     strStartsWithTransfer(mimeType, "text/plain") ||
         ext == "txt" ||
-        ext == "log"
+        ext == "log" ||
+        ext == "lock"
 }
 
 func strStartsWithTransfer(text: String, prefix: String): Bool {
@@ -332,9 +333,13 @@ func strStartsWithTransfer(text: String, prefix: String): Bool {
 }
 
 func strEndsWithTransfer(text: String, suffix: String): Bool {
+    if (suffix.size == 0) {
+        return true
+    }
     if (text.size < suffix.size) {
         return false
     }
+
     let textRunes = text.toRuneArray()
     let suffixRunes = suffix.toRuneArray()
     let offset = textRunes.size - suffixRunes.size

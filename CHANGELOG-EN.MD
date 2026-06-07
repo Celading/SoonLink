@@ -25,6 +25,14 @@ Notes:
 
 ---
 
+## [0.5.57] - 2026-05-09
+
+- `+Feature` Transfer tasks and incoming requests now carry a shared file category and an ordered set of runtime-usable protocol candidates
+- `+Feature` The `StaticWeb` transfers page and incoming-request drawer now expose category and candidate summaries for manual confirmation
+- `=Chore` Synced the public package version, runtime fallback, and README badges to `0.5.57`
+
+---
+
 ## [0.5.56] - 2026-05-08
 
 - `=Chore` Synced the public package version, runtime fallback, visible version badges, and release examples to `0.5.56`
