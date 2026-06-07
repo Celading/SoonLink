@@ -11,6 +11,7 @@ on:
     branches:
       - main
       - core
+      - "feature/**"
     paths:
       - cjpm.toml
       - .github/workflows/release-artifacts.yml
