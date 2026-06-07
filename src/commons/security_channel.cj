@@ -4,7 +4,7 @@ import std.collection.HashMap
 import std.sync.Mutex
 import std.random.Random
 import std.unicode.*
-import jinguissl_contract.jinguissl.contract.{contractChacha20Poly1305Encrypt, contractChacha20Poly1305Decrypt}
+import JinguiSSL.jinguissl.contract.{contractChacha20Poly1305Encrypt, contractChacha20Poly1305Decrypt}
 
 public enum SecurityMode {
     | Plain

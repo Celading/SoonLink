@@ -4,7 +4,7 @@ import std.collection.ArrayList
 import std.convert.*
 import std.net.{UdpSocket, IPSocketAddress, OptionLevel, OptionName}
 import std.unicode.*
-import jinguissl_contract.jinguissl.contract.*
+import JinguiSSL.jinguissl.contract.*
 
 let DISCOVERY_AUTH_SCHEME_HMAC_SHA256_V1 = "hmac-sha256-v1"
 let LOCALSEND_UDP_MULTICAST_ADDRESS = "224.0.0.167"
