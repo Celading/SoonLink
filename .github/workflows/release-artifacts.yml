@@ -35,11 +35,11 @@ env:
   CANGJIE_STDX_REPO: ${{ vars.CANGJIE_STDX_REPO != '' && vars.CANGJIE_STDX_REPO || 'https://gitcode.com/Cangjie/cangjie_stdx' }}
   CANGJIE_STDX_RELEASE_VERSION: ${{ vars.CANGJIE_STDX_RELEASE_VERSION }}
   CANGJIE_NIGHTLY_TAGS_API: ${{ vars.CANGJIE_NIGHTLY_TAGS_API != '' && vars.CANGJIE_NIGHTLY_TAGS_API || 'https://api.gitcode.com/api/v5/repos/Cangjie/nightly_build/tags?per_page=100' }}
-  IGNITE_GIT_URL: https://gitcode.com/cinyu/ignite-cangjie.git
-  LISI_GIT_URL: https://gitcode.com/cinyu/lisi.git
-  JINGUISSL_GIT_URL: https://gitcode.com/cinyu/jinguiSSL.git
-  JINGUISSL_CORE_GIT_URL: https://gitcode.com/CjKu/JinguiCore.git
-  SEAJSON_GIT_URL: https://gitcode.com/CjKu/SeaJson.git
+  IGNITE_GIT_URL: ${{ vars.IGNITE_GIT_URL != '' && vars.IGNITE_GIT_URL || 'https://gitcode.com/cinyu/ignite-cangjie.git' }}
+  LISI_GIT_URL: ${{ vars.LISI_GIT_URL != '' && vars.LISI_GIT_URL || 'https://gitcode.com/cinyu/lisi.git' }}
+  JINGUISSL_GIT_URL: ${{ vars.JINGUISSL_GIT_URL != '' && vars.JINGUISSL_GIT_URL || 'https://gitcode.com/cinyu/jinguiSSL.git' }}
+  JINGUISSL_CORE_GIT_URL: ${{ vars.JINGUISSL_CORE_GIT_URL != '' && vars.JINGUISSL_CORE_GIT_URL || 'https://gitcode.com/CjKu/JinguiCore.git' }}
+  SEAJSON_GIT_URL: ${{ vars.SEAJSON_GIT_URL != '' && vars.SEAJSON_GIT_URL || 'https://gitcode.com/CjKu/SeaJson.git' }}
 
 jobs:
   metadata:
@@ -238,13 +238,31 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          clone_dependency() {
+            local primary_url="$1"
+            local dest_dir="$2"
+            local fallback_url="${3:-}"
+
+            if git clone --depth 1 "${primary_url}" "${dest_dir}"; then
+              return 0
+            fi
+
+            if [[ -n "${fallback_url}" && "${fallback_url}" != "${primary_url}" ]]; then
+              echo "::warning::Falling back from ${primary_url} to ${fallback_url}"
+              git clone --depth 1 "${fallback_url}" "${dest_dir}"
+              return 0
+            fi
+
+            return 1
+          }
+
           deps_root="${RUNNER_TEMP}/soonlink-release-deps"
           mkdir -p "${deps_root}"
-          git clone --depth 1 "${IGNITE_GIT_URL}" "${deps_root}/Ignite0500"
-          git clone --depth 1 "${LISI_GIT_URL}" "${deps_root}/lisi"
-          git clone --depth 1 "${JINGUISSL_GIT_URL}" "${deps_root}/jinguiSSL"
-          git clone --depth 1 "${JINGUISSL_CORE_GIT_URL}" "${deps_root}/JinguiCore"
-          git clone --depth 1 "${SEAJSON_GIT_URL}" "${deps_root}/SeaJson"
+          clone_dependency "${IGNITE_GIT_URL}" "${deps_root}/Ignite0500" "https://gitcode.com/cinyu/ignite-cangjie.git"
+          clone_dependency "${LISI_GIT_URL}" "${deps_root}/lisi"
+          clone_dependency "${JINGUISSL_GIT_URL}" "${deps_root}/jinguiSSL" "https://gitcode.com/cinyu/jinguiSSL.git"
+          clone_dependency "${JINGUISSL_CORE_GIT_URL}" "${deps_root}/JinguiCore" "https://gitcode.com/CjKu/JinguiCore.git"
+          clone_dependency "${SEAJSON_GIT_URL}" "${deps_root}/SeaJson" "https://gitcode.com/CjKu/SeaJson.git"
 
       - name: Prepare release workspace
         id: workspace

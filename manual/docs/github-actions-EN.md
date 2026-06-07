@@ -13,7 +13,7 @@ That split keeps the repository validation path lightweight while leaving the fu
   Repository-boundary checks, Compose validation, and a lightweight build smoke test.
   - When `CANGJIE_SDK_LINUX_AMD64_URL` is configured, the workflow now installs the Linux SDK and `stdx`, then runs real `cjpm build`, `cjpm test`, and container-bundle preparation.
   - When `CANGJIE_STDX_RELEASE_VERSION` is configured, CI prefers that official prebuilt `stdx` release package. When it is unset, Linux still falls back to source builds, while macOS / Windows / OpenHarmony jobs first try the release version derived from `CANGJIE_STDX_GIT_REF` and only then fall back to `1.0.0.1`.
-  - It also clones `Ignite / lisi / jinguiSSL` and builds inside a temporary path-rewritten workspace instead of depending on the current repository's live git dependency shape.
+  - It also clones `Ignite / lisi / JinguiSSL / JinguiSSL Core / SeaJson` and builds inside a temporary path-rewritten workspace instead of depending on the current repository's live git dependency shape.
   - When the repository variable is still missing, the workflow emits a warning and keeps the boundary and Compose checks only.
   - It now also includes an optional OpenHarmony `aarch64` cross-build smoke lane. When the Linux SDK is available and an OpenHarmony DEVECO bundle can be configured or auto-resolved, CI runs one `aarch64-linux-ohos` build as well.
 - `.github/workflows/release-artifacts.yml`
@@ -45,7 +45,7 @@ That split keeps the repository validation path lightweight while leaving the fu
 - `.gitcode/workflows/core-ci.yml`
   Runs the repository verification path on GitCode's default `euleros-2.10.1` runner.
   - After `checkout-action@0.0.1`, all commands execute inside `repo_workspace`.
-  - The workflow runs the repository-boundary audit first, installs Linux prerequisites, installs the Cangjie SDK and `stdx`, clones `Ignite / lisi / jinguiSSL`, projects a clean temporary workspace, and then runs `cjpm build` plus `cjpm test`.
+  - The workflow runs the repository-boundary audit first, installs Linux prerequisites, installs the Cangjie SDK and `stdx`, clones `Ignite / lisi / JinguiSSL / JinguiSSL Core / SeaJson`, projects a clean temporary workspace, and then runs `cjpm build` plus `cjpm test`.
   - Compose validation only runs when `docker compose` is available on the runner. Missing Docker support is treated as a warning instead of a false CI regression.
 - `.gitcode/workflows/release-linux.yml`
   Builds a GitCode-side Linux release bundle for tags and manual runs.
@@ -92,7 +92,25 @@ That split keeps the repository validation path lightweight while leaving the fu
 - `SEAJSON_GIT_URL`
   Optional. Defaults to `https://gitcode.com/CjKu/SeaJson.git`.
 
-GitHub mirrors can be supplied when needed: `IGNITE_GIT_URL=https://github.com/Celading/Ignite.git`, `JINGUISSL_GIT_URL=https://github.com/CangjieKu/JinGuiSSLCore.git`, `JINGUISSL_CORE_GIT_URL=https://github.com/CangjieKu/JinGuiSSL.git`, and `SEAJSON_GIT_URL=https://github.com/CangjieKu/SeaJson.git`.
+The default GitCode dependency mapping is:
+
+```toml
+ignite = { git = "https://gitcode.com/cinyu/ignite-cangjie.git" }
+JinguiSSL = { git = "https://gitcode.com/cinyu/jinguiSSL.git" }
+jinguissl_core = { git = "https://gitcode.com/CjKu/JinguiCore.git" }
+seajson = { git = "https://gitcode.com/CjKu/SeaJson.git" }
+```
+
+GitHub mirrors can be supplied when needed:
+
+```toml
+ignite = { git = "https://github.com/Celading/Ignite.git" }
+JinguiSSL = { git = "https://github.com/CangjieKu/JinGuiSSLCore.git" }
+jinguissl_core = { git = "https://github.com/CangjieKu/JinGuiSSL.git" }
+seajson = { git = "https://github.com/CangjieKu/SeaJson.git" }
+```
+
+Before overriding CI to those GitHub mirrors, verify that each mirror's `cjpm.toml` package name still matches the dependency key above. CI keeps the verified GitCode hosted projection as the default so package-name drift in mirrors does not break release workspace projection.
 
 ## Credentials
 
@@ -149,7 +167,7 @@ Both bundle formats include:
 - `scripts/build_release_bundle.sh`
   Packages an already-built binary with repository assets.
 - `scripts/prepare_release_workspace.sh`
-  Prepares a clean SoonLink + Ignite + lisi + jinguiSSL workspace in CI and rewrites dependencies into local `path` references.
+  Prepares a clean SoonLink + Ignite + lisi + JinguiSSL + JinguiSSL Core + SeaJson workspace in CI and rewrites dependencies into local `path` references.
   - It also drops files such as `cangjie-repo.toml`, `module-resolve.json`, and `module-lock.json` so machine-local path hints do not leak into CI contexts.
   - It now resolves package roots from the actual `cjpm.toml` layout, so repositories such as `lisi` still project into a stable local `path` dependency shape even when the repo root and package root differ.
 

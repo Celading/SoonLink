@@ -31,11 +31,11 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       IMAGE_NAME: celading/soonlink
-      IGNITE_GIT_URL: https://gitcode.com/cinyu/ignite-cangjie.git
-      LISI_GIT_URL: https://gitcode.com/cinyu/lisi.git
-      JINGUISSL_GIT_URL: https://gitcode.com/cinyu/jinguiSSL.git
-      JINGUISSL_CORE_GIT_URL: https://gitcode.com/CjKu/JinguiCore.git
-      SEAJSON_GIT_URL: https://gitcode.com/CjKu/SeaJson.git
+      IGNITE_GIT_URL: ${{ vars.IGNITE_GIT_URL != '' && vars.IGNITE_GIT_URL || 'https://gitcode.com/cinyu/ignite-cangjie.git' }}
+      LISI_GIT_URL: ${{ vars.LISI_GIT_URL != '' && vars.LISI_GIT_URL || 'https://gitcode.com/cinyu/lisi.git' }}
+      JINGUISSL_GIT_URL: ${{ vars.JINGUISSL_GIT_URL != '' && vars.JINGUISSL_GIT_URL || 'https://gitcode.com/cinyu/jinguiSSL.git' }}
+      JINGUISSL_CORE_GIT_URL: ${{ vars.JINGUISSL_CORE_GIT_URL != '' && vars.JINGUISSL_CORE_GIT_URL || 'https://gitcode.com/CjKu/JinguiCore.git' }}
+      SEAJSON_GIT_URL: ${{ vars.SEAJSON_GIT_URL != '' && vars.SEAJSON_GIT_URL || 'https://gitcode.com/CjKu/SeaJson.git' }}
       STDX_GIT_REF: v1.1.0-beta.25
       CANGJIE_VERSION: 1.1.0-beta.25
       CANGJIE_SDK_LINUX_ARM64_URL: https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-linux-aarch64-1.1.0-beta.25.tar.gz&objectKey=69cb74a76e8ed61e6e07fd45
@@ -126,12 +126,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          clone_dependency() {
+            local primary_url="$1"
+            local dest_dir="$2"
+            local fallback_url="${3:-}"
+
+            if git clone --depth 1 "${primary_url}" "${dest_dir}"; then
+              return 0
+            fi
+
+            if [[ -n "${fallback_url}" && "${fallback_url}" != "${primary_url}" ]]; then
+              echo "::warning::Falling back from ${primary_url} to ${fallback_url}"
+              git clone --depth 1 "${fallback_url}" "${dest_dir}"
+              return 0
+            fi
+
+            return 1
+          }
+
           mkdir -p "${{ steps.vars.outputs.deps_dir }}"
-          git clone --depth 1 "${IGNITE_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/Ignite0500"
-          git clone --depth 1 "${LISI_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/lisi"
-          git clone --depth 1 "${JINGUISSL_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/jinguiSSL"
-          git clone --depth 1 "${JINGUISSL_CORE_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/JinguiCore"
-          git clone --depth 1 "${SEAJSON_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/SeaJson"
+          clone_dependency "${IGNITE_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/Ignite0500" "https://gitcode.com/cinyu/ignite-cangjie.git"
+          clone_dependency "${LISI_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/lisi"
+          clone_dependency "${JINGUISSL_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/jinguiSSL" "https://gitcode.com/cinyu/jinguiSSL.git"
+          clone_dependency "${JINGUISSL_CORE_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/JinguiCore" "https://gitcode.com/CjKu/JinguiCore.git"
+          clone_dependency "${SEAJSON_GIT_URL}" "${{ steps.vars.outputs.deps_dir }}/SeaJson" "https://gitcode.com/CjKu/SeaJson.git"
 
       - name: Prepare Docker Build Context
         if: ${{ steps.availability.outputs.enabled == 'true' }}

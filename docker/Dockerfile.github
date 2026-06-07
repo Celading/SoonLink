@@ -64,8 +64,9 @@ RUN case "$TARGETARCH" in \
     && sed -i 's#^  JinguiSSL = { .*#  JinguiSSL = { path = "../jinguiSSL" }#' /workspace/SoonLink-Core/cjpm.toml \
     && sed -i 's#^  jinguissl_core = { .*#  jinguissl_core = { path = "../JinguiCore" }#' /workspace/SoonLink-Core/cjpm.toml \
     && sed -i 's#^  seajson = { .*#  seajson = { path = "../SeaJson" }#' /workspace/SoonLink-Core/cjpm.toml \
-    && sed -i 's#^  lisi = { .*#  lisi = { path = "../lisi" }#' /workspace/Ignite0500/cjpm.toml \
-    && sed -i 's#^  jinguissl = { .*#  jinguissl = { path = "../jinguiSSL" }#' /workspace/Ignite0500/cjpm.toml \
+    && sed -i 's#^  JinguiSSL = { .*#  JinguiSSL = { path = "../jinguiSSL" }#' /workspace/Ignite0500/cjpm.toml \
+    && sed -i 's#^  jinguissl_core = { .*#  jinguissl_core = { path = "../JinguiCore" }#' /workspace/Ignite0500/cjpm.toml \
+    && sed -i 's#^  seajson = { .*#  seajson = { path = "../SeaJson" }#' /workspace/Ignite0500/cjpm.toml \
     && sed -i "s#linux_x86_64_llvm/static/stdx#linux_x86_64_cjnative/static/stdx#g" /workspace/SoonLink-Core/cjpm.toml /workspace/Ignite0500/cjpm.toml /workspace/lisi/cjpm.toml /workspace/jinguiSSL/cjpm.toml /workspace/JinguiCore/cjpm.toml /workspace/SeaJson/cjpm.toml \
     && sed -i "s#linux_aarch64_llvm/static/stdx#linux_aarch64_cjnative/static/stdx#g" /workspace/SoonLink-Core/cjpm.toml /workspace/Ignite0500/cjpm.toml /workspace/lisi/cjpm.toml /workspace/jinguiSSL/cjpm.toml /workspace/JinguiCore/cjpm.toml /workspace/SeaJson/cjpm.toml \
     && printf '%s' "$stdx_dir" > /tmp/cangjie-runtime-dir
