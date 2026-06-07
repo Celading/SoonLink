@@ -18,6 +18,7 @@ on:
       - .github/workflows/version-package.yml
       - scripts/build_release_bundle.sh
       - scripts/build_release_target.sh
+      - scripts/apply_tls_dep_compat.sh
       - scripts/install_cangjie_ci.sh
       - scripts/prepare_release_workspace.sh
 
