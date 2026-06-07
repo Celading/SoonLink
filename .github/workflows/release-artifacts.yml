@@ -363,13 +363,57 @@ jobs:
           echo "artifact stage dir: ${stage_dir}"
           find "${stage_dir}" -maxdepth 1 -type f -print | sort
 
+          tarball_path="$(find "${stage_dir}" -maxdepth 1 -type f -name '*.tar.gz' | head -n 1)"
+          zip_path="$(find "${stage_dir}" -maxdepth 1 -type f -name '*.zip' | head -n 1)"
+
+          if [[ -z "${tarball_path}" || -z "${zip_path}" ]]; then
+            echo "staged bundle must include both .tar.gz and .zip archives" >&2
+            exit 1
+          fi
+
+          tar -tzf "${tarball_path}" | grep -E '/web/views/index\.html$' >/dev/null
+          tar -tzf "${tarball_path}" | grep -E '/web/static/js/main\.js$' >/dev/null
+          tar -tzf "${tarball_path}" | grep -E '/web/static/manifest\.webmanifest$' >/dev/null
+          tar -tzf "${tarball_path}" | grep -E '/config/soonlink\.toml$' >/dev/null
+
+          python_bin="$(command -v python3 || command -v python || true)"
+          if [[ -z "${python_bin}" ]]; then
+            echo "python is required to inspect staged zip archive contents" >&2
+            exit 1
+          fi
+
+          "${python_bin}" - "${zip_path}" <<'PY'
+          import sys
+          import zipfile
+
+          zip_path = sys.argv[1]
+          required = [
+              "/web/views/index.html",
+              "/web/static/js/main.js",
+              "/web/static/manifest.webmanifest",
+              "/config/soonlink.toml",
+          ]
+
+          with zipfile.ZipFile(zip_path) as archive:
+              names = archive.namelist()
+
+          missing = []
+          for suffix in required:
+              if not any(name.endswith(suffix) for name in names):
+                  missing.append(suffix)
+
+          if missing:
+              print("zip archive is missing required packaged paths: " + ", ".join(missing), file=sys.stderr)
+              sys.exit(1)
+          PY
+
       - name: Upload staged bundle artifact
         if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' }}
         id: artifact_upload
         uses: actions/upload-artifact@v4
         with:
           name: soonlink-core-${{ matrix.artifact_platform }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.workspace.outputs.core_dir }}/dist/releases/*
+          path: bundle-artifacts/${{ matrix.artifact_platform }}/*
           if-no-files-found: error
           overwrite: true
           compression-level: 0
