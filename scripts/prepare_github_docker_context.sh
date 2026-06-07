@@ -73,7 +73,7 @@ mkdir -p "$OUTPUT_DIR"
 
 package_name_from_manifest() {
   manifest_path="$1"
-  sed -n 's/^  name = "\(.*\)"/\1/p' "$manifest_path" | head -n 1
+  sed -n 's/^[[:space:]]*name[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' "$manifest_path" | head -n 1
 }
 
 resolve_package_dir() {
@@ -161,7 +161,7 @@ copy_package_tree() {
 copy_tree "$ROOT_DIR" "$OUTPUT_DIR/SoonLink-Core"
 copy_package_tree "$IGNITE_DIR" "$OUTPUT_DIR/Ignite0500" "ignite"
 copy_package_tree "$LISI_DIR" "$OUTPUT_DIR/lisi" "lisi"
-copy_package_tree "$JINGUISSL_DIR" "$OUTPUT_DIR/jinguiSSL" "jinguissl"
+copy_package_tree "$JINGUISSL_DIR" "$OUTPUT_DIR/jinguiSSL" "JinguiSSL"
 copy_package_tree "$JINGUISSL_CORE_DIR" "$OUTPUT_DIR/JinguiCore" "jinguissl_core"
 copy_package_tree "$SEAJSON_DIR" "$OUTPUT_DIR/SeaJson" "seajson"
 

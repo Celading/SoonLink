@@ -13,7 +13,7 @@ SoonLink 现在同时维护 GitHub 与 GitCode 两套自动化入口：
   用于仓库边界检查、Compose 校验与基础构建烟测。
   - 当仓库已配置 `CANGJIE_SDK_LINUX_AMD64_URL` 时，会自动安装 Linux SDK 与 `stdx`，真实执行 `cjpm build`、`cjpm test` 和容器运行包预备。
   - 若配置 `CANGJIE_STDX_RELEASE_VERSION`，会优先下载对应版本的官方预打包 `stdx` release；未配置时，Linux 继续回退到源码构建，而 macOS / Windows / OpenHarmony 任务会优先尝试与 `CANGJIE_STDX_GIT_REF` 对齐的 release 版本，必要时再回退到 `1.0.0.1`。
-  - 同时会克隆 `Ignite / lisi / jinguiSSL`，在临时工作副本里把依赖改写为 `path` 后再构建，避免直接依赖当前仓库的 git 拉取形态。
+  - 同时会克隆 `Ignite / lisi / JinguiSSL / JinguiSSL Core / SeaJson`，在临时工作副本里把依赖改写为 `path` 后再构建，避免直接依赖当前仓库的 git 拉取形态。
   - 若仓库变量尚未配置，则会给出 warning，并只保留边界/Compose 这两层校验。
   - 同时已加入可选的 `OpenHarmony aarch64` 交叉构建烟测：当 Linux SDK 可用，且 `DEVECO_CANGJIE_OHOS_AARCH64_URL` 已配置或能从 GitCode nightly 自动解析到可达地址时，会额外执行一次 `aarch64-linux-ohos` 构建。
 - `.github/workflows/release-artifacts.yml`
@@ -46,7 +46,7 @@ SoonLink 现在同时维护 GitHub 与 GitCode 两套自动化入口：
   用于 GitCode Euler runner 上的主线校验。
   - runner 使用 GitCode 默认的 `euleros-2.10.1`。
   - 通过 `checkout-action@0.0.1` 拉取代码后，在 `repo_workspace` 中执行。
-  - 会先做仓库边界审计，再安装 Linux 构建依赖、下载仓颉 SDK / `stdx`、克隆 `Ignite / lisi / jinguiSSL`，最后在临时投影工作副本中执行 `cjpm build` 与 `cjpm test`。
+  - 会先做仓库边界审计，再安装 Linux 构建依赖、下载仓颉 SDK / `stdx`、克隆 `Ignite / lisi / JinguiSSL / JinguiSSL Core / SeaJson`，最后在临时投影工作副本中执行 `cjpm build` 与 `cjpm test`。
   - Compose 校验仅在 runner 自带 `docker compose` 时执行；若 GitCode runner 未提供 Docker，会打印 warning 而不是让整个 CI 假失败。
 - `.gitcode/workflows/release-linux.yml`
   用于 GitCode 上的 tag Linux bundle 组装。
@@ -93,7 +93,25 @@ SoonLink 现在同时维护 GitHub 与 GitCode 两套自动化入口：
 - `SEAJSON_GIT_URL`
   可选，默认 `https://gitcode.com/CjKu/SeaJson.git`。
 
-GitHub 镜像源可按需覆盖为：`IGNITE_GIT_URL=https://github.com/Celading/Ignite.git`、`JINGUISSL_GIT_URL=https://github.com/CangjieKu/JinGuiSSLCore.git`、`JINGUISSL_CORE_GIT_URL=https://github.com/CangjieKu/JinGuiSSL.git`、`SEAJSON_GIT_URL=https://github.com/CangjieKu/SeaJson.git`。
+默认 GitCode 依赖映射为：
+
+```toml
+ignite = { git = "https://gitcode.com/cinyu/ignite-cangjie.git" }
+JinguiSSL = { git = "https://gitcode.com/cinyu/jinguiSSL.git" }
+jinguissl_core = { git = "https://gitcode.com/CjKu/JinguiCore.git" }
+seajson = { git = "https://gitcode.com/CjKu/SeaJson.git" }
+```
+
+GitHub 镜像源可按需覆盖为：
+
+```toml
+ignite = { git = "https://github.com/Celading/Ignite.git" }
+JinguiSSL = { git = "https://github.com/CangjieKu/JinGuiSSLCore.git" }
+jinguissl_core = { git = "https://github.com/CangjieKu/JinGuiSSL.git" }
+seajson = { git = "https://github.com/CangjieKu/SeaJson.git" }
+```
+
+覆盖到 GitHub 镜像时，请先确认镜像仓的 `cjpm.toml` 包名与上面的依赖键一致；CI 默认仍使用已验证的 GitCode hosted projection，以避免镜像包名漂移导致发布管道在投影阶段失败。
 
 ## 凭据
 
@@ -150,7 +168,7 @@ GitCode workflow 本身不会直接读取 GitHub 风格的 repository variables 
 - `scripts/build_release_bundle.sh`
   只负责把已产出的二进制和仓库资源打成发布包。
 - `scripts/prepare_release_workspace.sh`
-  在 CI 中准备一份干净的 SoonLink + Ignite + lisi + jinguiSSL 工作副本，并把依赖改写为 `path` 形式。
+  在 CI 中准备一份干净的 SoonLink + Ignite + lisi + JinguiSSL + JinguiSSL Core + SeaJson 工作副本，并把依赖改写为 `path` 形式。
   - 同时会排除 `cangjie-repo.toml`、`module-resolve.json`、`module-lock.json` 这类本地路径或本机解析缓存文件，避免把私有路径带进 CI 上下文。
   - 现在会按实际 `cjpm.toml` 自动探测依赖包根；像 `lisi` 这类“仓根目录不等于包根目录”的仓，也会在投影后统一收口到稳定的 `path` 依赖结构。
 

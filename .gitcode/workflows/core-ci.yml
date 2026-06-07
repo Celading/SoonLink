@@ -86,9 +86,11 @@ jobs:
           rm -rf "${DEPS_ROOT}" "${WORKSPACE_ROOT}"
           mkdir -p "${DEPS_ROOT}"
 
-          git clone --depth 1 "${IGNITE_GIT_URL:-https://atomgit.com/cinyu/ignite-cangjie.git}" "${DEPS_ROOT}/Ignite0500"
-          git clone --depth 1 "${LISI_GIT_URL:-https://atomgit.com/cinyu/lisi.git}" "${DEPS_ROOT}/lisi"
-          git clone --depth 1 "${JINGUISSL_GIT_URL:-https://atomgit.com/cinyu/jinguiSSL.git}" "${DEPS_ROOT}/jinguiSSL"
+          git clone --depth 1 "${IGNITE_GIT_URL:-https://gitcode.com/cinyu/ignite-cangjie.git}" "${DEPS_ROOT}/Ignite0500"
+          git clone --depth 1 "${LISI_GIT_URL:-https://gitcode.com/cinyu/lisi.git}" "${DEPS_ROOT}/lisi"
+          git clone --depth 1 "${JINGUISSL_GIT_URL:-https://gitcode.com/cinyu/jinguiSSL.git}" "${DEPS_ROOT}/jinguiSSL"
+          git clone --depth 1 "${JINGUISSL_CORE_GIT_URL:-https://gitcode.com/CjKu/JinguiCore.git}" "${DEPS_ROOT}/JinguiCore"
+          git clone --depth 1 "${SEAJSON_GIT_URL:-https://gitcode.com/CjKu/SeaJson.git}" "${DEPS_ROOT}/SeaJson"
 
           chmod +x ./scripts/install_cangjie_ci.sh ./scripts/prepare_release_workspace.sh
           ./scripts/install_cangjie_ci.sh \
@@ -104,7 +106,9 @@ jobs:
             --output "${WORKSPACE_ROOT}" \
             --ignite "${DEPS_ROOT}/Ignite0500" \
             --lisi "${DEPS_ROOT}/lisi" \
-            --jinguissl "${DEPS_ROOT}/jinguiSSL"
+            --jinguissl "${DEPS_ROOT}/jinguiSSL" \
+            --jinguissl-core "${DEPS_ROOT}/JinguiCore" \
+            --seajson "${DEPS_ROOT}/SeaJson"
 
           cd "${WORKSPACE_ROOT}/SoonLink-Core"
           cjpm build
