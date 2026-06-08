@@ -16,6 +16,13 @@ on:
       - cjpm.toml
       - .github/workflows/release-artifacts.yml
       - .github/workflows/version-package.yml
+      - src/**
+      - web/**
+      - config/**
+      - Dockerfile
+      - compose.yaml
+      - compose.release.yaml
+      - .env.example
       - scripts/build_release_bundle.sh
       - scripts/build_release_target.sh
       - scripts/apply_tls_dep_compat.sh
