@@ -490,7 +490,6 @@ public class RelayFeature {
             let prepareResp = client.send(prepareReq)
             let prepareStatus = Int64(prepareResp.status)
             let prepareRespBody = readLocalSendHttpBody(prepareResp)
-            prepareResp.close()
             if (prepareStatus < 200 || prepareStatus >= 300) {
                 result.statusCode = prepareStatus
                 result.responseBody = prepareRespBody
@@ -518,7 +517,6 @@ public class RelayFeature {
             let uploadResp = client.send(uploadReq)
             let uploadStatus = Int64(uploadResp.status)
             let uploadRespBody = readLocalSendHttpBody(uploadResp)
-            uploadResp.close()
 
             result.statusCode = uploadStatus
             result.responseBody = uploadRespBody
@@ -567,7 +565,6 @@ public class RelayFeature {
             let downloadResp = client.send(downloadReq)
             let status = Int64(downloadResp.status)
             let payload = readLocalSendHttpBytes(downloadResp)
-            downloadResp.close()
 
             result.statusCode = status
             if (status < 200 || status >= 300) {
