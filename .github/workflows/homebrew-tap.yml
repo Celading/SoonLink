@@ -88,8 +88,8 @@ jobs:
           fi
 
           release_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}"
-          amd_asset="soonlink-core-${release_version}-darwin-x86_64.tar.gz"
-          arm_asset="soonlink-core-${release_version}-darwin-aarch64.tar.gz"
+          amd_asset="SoonLnk-${release_version}_macOS-x86_64.tar.gz"
+          arm_asset="SoonLnk-${release_version}_macOS-aarch64.tar.gz"
 
           {
             echo "version=${release_version}"

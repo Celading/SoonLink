@@ -18,13 +18,13 @@ SoonLink 现在同时维护 GitHub 与 GitCode 两套自动化入口：
   - 同时已加入可选的 `OpenHarmony aarch64` 交叉构建烟测：当 Linux SDK 可用，且 `DEVECO_CANGJIE_OHOS_AARCH64_URL` 已配置或能从 GitCode nightly 自动解析到可达地址时，会额外执行一次 `aarch64-linux-ohos` 构建。
 - `.github/workflows/release-artifacts.yml`
   用于生成 GitHub Release 制品，默认覆盖：
-  - `linux-x86_64`
-  - `linux-aarch64`
-  - `darwin-x86_64`
-  - `darwin-aarch64`
-  - `windows-x86_64`
+  - `Linux-x86_64`
+  - `Linux-aarch64`
+  - `macOS-x86_64`
+  - `macOS-aarch64`
+  - `Windows-x86_64-exe`
   - 当 OpenHarmony 工具链可解析时，会追加：
-    - `ohos-aarch64`
+    - `OHOS-aarch64`
   - 若已配置 `CANGJIE_STDX_RELEASE_VERSION`，release 打包会直接复用指定版本的官方 `stdx` 预构建包；若未配置，macOS / Windows / OpenHarmony 会先尝试与 `CANGJIE_STDX_GIT_REF` 对齐的 release 版本，必要时再回退到 `1.0.0.1`。
   - 每个平台默认同时输出 `.tar.gz` 与 `.zip` 两种 bundle，便于直接下载解压。
   - 每个平台 job 先产出并上传制品，再统一由 Ubuntu `publish` job 收拢并写入 GitHub Release，避免 macOS / Windows runner 直接上传 release asset 时的差异。
@@ -51,7 +51,7 @@ SoonLink 现在同时维护 GitHub 与 GitCode 两套自动化入口：
 - `.gitcode/workflows/release-linux.yml`
   用于 GitCode 上的 tag Linux bundle 组装。
   - 触发方式为手动触发，或推送 `x.y.z` / `x.y.z.n` 形式的 tag。
-  - 当前只产出 `linux-x86_64` 的 `.tar.gz` 与 `.zip`，并在 `dist/gitcode-release/` 下补一份 `SHA256SUMS`。
+  - 当前只产出 `Linux-x86_64` 的 `.tar.gz` 与 `.zip`，并在 `dist/gitcode-release/` 下补一份 `SHA256SUMS`。
   - 这条链路优先解决“GitCode 远端可验证、可复跑、可看到 tag 制品组装日志”，而不是替代 GitHub 的完整多平台 Release 发布。
 
 ## 需要配置的变量与凭据
@@ -61,7 +61,7 @@ SoonLink 现在同时维护 GitHub 与 GitCode 两套自动化入口：
   - GitHub `core-ci` 若未配置会跳过真实构建。
   - GitCode workflow 若未配置，会回退到当前默认的 `1.1.0-beta.25` Linux x64 SDK 下载地址。
 - `CANGJIE_SDK_LINUX_ARM64_URL`
-  Linux ARM64 runner 使用的仓颉 SDK 下载地址；`linux-aarch64` release bundle 默认走 `ubuntu-24.04-arm` 原生 runner。
+  Linux ARM64 runner 使用的仓颉 SDK 下载地址；`Linux-aarch64` release bundle 默认走 `ubuntu-24.04-arm` 原生 runner。
 - `CANGJIE_SDK_MACOS_AMD64_URL`
   macOS Intel runner 使用的 SDK 下载地址。未配置时，默认回退到官方 `1.1.0-beta.25` SDK。
 - `CANGJIE_SDK_MACOS_ARM64_URL`
@@ -134,15 +134,17 @@ GitCode workflow 本身不会直接读取 GitHub 风格的 repository variables 
 ```bash
 ./scripts/build_release_target.sh \
   --target x86_64-unknown-linux-gnu \
-  --target-dir ./target-release/linux-x86_64 \
-  --archive-platform linux-x86_64 \
+  --target-dir ./target-release/Linux-x86_64 \
+  --archive-platform Linux-x86_64 \
   --version 0.5.56
 ```
 
 这条命令会先执行 `cjpm build --target ...`，再自动生成：
 
-- `dist/releases/soonlink-core-<version>-<platform>.tar.gz`
-- `dist/releases/soonlink-core-<version>-<platform>.zip`
+- `dist/releases/SoonLnk-<version>_<platform>.tar.gz`
+- `dist/releases/SoonLnk-<version>_<platform>.zip`
+
+Windows bundle 会使用 `SoonLnk-<version>_Windows-x86_64-exe.*`，归档内可执行文件名为 `soonlnk.exe`。
 
 两个 bundle 都会一起打入：
 
@@ -179,16 +181,16 @@ GitCode workflow 本身不会直接读取 GitHub 风格的 repository variables 
 - 如果你希望“版本号一次 action 打包”恢复到日常习惯，推荐流程是：先改 `cjpm.toml` 版本并合主线，等待 `version-package` 产出 artifact；确认无误后，再推同版本 tag 触发正式 Release / Docker / Homebrew。
 - GitCode 的 tag workflow 当前只收口到 Linux x86_64 bundle，完整多平台资产仍以 GitHub Release 为主发布面。
 - tag 版本必须与当前提交中的 `cjpm.toml` 版本一致，或使用 `cjpm` 三段版本后再追加一个修订号，例如 `0.5.56.1` 对应包版本 `0.5.56`。
-- `linux-aarch64` 已改成 `ubuntu-24.04-arm` + ARM64 SDK 的原生构建链，避免 x86_64 Linux SDK 缺失 `linux_aarch64_cjnative` 模块目录时导致 release bundle 缺包。
+- `Linux-aarch64` 已改成 `ubuntu-24.04-arm` + ARM64 SDK 的原生构建链，避免 x86_64 Linux SDK 缺失 `linux_aarch64_cjnative` 模块目录时导致 release bundle 缺包。
 - `release-artifacts` 现在默认会尝试五个平台，并在 OpenHarmony 工具链可用时追加第六个平台：
-  - `linux-x86_64`
-  - `linux-aarch64`
-  - `darwin-x86_64`
-  - `darwin-aarch64`
-  - `windows-x86_64`
+  - `Linux-x86_64`
+  - `Linux-aarch64`
+  - `macOS-x86_64`
+  - `macOS-aarch64`
+  - `Windows-x86_64-exe`
 - GitHub Actions 已显式打开 `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`，用来提前规避 2026 年的 Node 20 action 运行时退场告警。
-- `darwin-x86_64` 已从旧的 `macos-13` runner 切到 `macos-15-intel`，用来规避此前 Intel macOS job 被平台侧取消的问题。
+- `macOS-x86_64` 已从旧的 `macos-13` runner 切到 `macos-15-intel`，用来规避此前 Intel macOS job 被平台侧取消的问题。
 - OpenHarmony 的 nightly tag 现在优先通过 GitCode API 拉取，而不是依赖 `git ls-remote`。
 - 若你后续想切到更新 SDK，可继续用 repository variables 覆盖默认下载地址。
 - `homebrew-tap` 的手动触发现在会在未显式填写 `release_tag` 时自动回退到当前 `cjpm.toml` 版本，不再因为空值回退错误而炸掉。
-- Windows 当前只纳入 `windows-x86_64`。ARM64 Windows 还不建议提前承诺，等仓颉 SDK 与 stdx 目录形态稳定后再补第六条 matrix。
+- Windows 当前只纳入 `Windows-x86_64-exe`。ARM64 Windows 还不建议提前承诺，等仓颉 SDK 与 stdx 目录形态稳定后再补第六条 matrix。

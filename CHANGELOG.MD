@@ -23,6 +23,9 @@ SoonLink / 溯联的主要变更记录。
 - `=工程` GitHub / GitCode 的 Linux 构建链统一切到共享依赖预装脚本，并补齐 `cmake`、`ninja`、`gcc/g++`、`pkg-config` 与 OpenSSL 开发头，避免 `stdx` 源码构建在 CMake 配置阶段缺原生工具链
 - `=工程` CI / Release 默认依赖源切到公开可拉取的 `Ignite / lisi / jinguiSSL` 线上仓地址，降低远端工作副本准备阶段在依赖克隆上的漂移
 - `=工程` CI / Release / Docker 投影链补齐 `JinguiCore` 与 `SeaJson` 依赖克隆和本地 `path` 改写，并记录 GitCode 默认源与 GitHub 镜像源矩阵
+- `=工程` Release / 预览包命名改为 `SoonLnk-<version>_<platform>`，Windows 资产使用 `SoonLnk-<version>_Windows-x86_64-exe.*` 并继续在归档内提供 `soonlnk.exe`
+- `=工程` 公开包版本、运行时版本回退值与 README 徽标同步推进到 `0.7.27`，用于真实 PR 与后续 tag/release 构建验证
+- `=工程` Release 构建脚本现在会对 `cjpm build` 做一次有限重试，降低 Windows runner / 编译器瞬态内部错误导致整轮多平台预览失败的概率
 
 ---
 

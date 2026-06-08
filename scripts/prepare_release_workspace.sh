@@ -135,6 +135,18 @@ rewrite_dependency_path() {
   sedi "s#^  $dependency_name = { .*#  $dependency_name = { path = \"$dependency_path\" }#" "$manifest_path"
 }
 
+rewrite_dependency_path_if_present() {
+  manifest_path="$1"
+  dependency_name="$2"
+  dependency_path="$3"
+
+  if ! grep -q "^  $dependency_name = {" "$manifest_path"; then
+    return 0
+  fi
+
+  sedi "s#^  $dependency_name = { .*#  $dependency_name = { path = \"$dependency_path\" }#" "$manifest_path"
+}
+
 ensure_windows_target() {
   manifest_path="$1"
   package_kind="$2"
@@ -219,9 +231,10 @@ rewrite_dependency_path "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "lisi" "../lisi"
 rewrite_dependency_path "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "JinguiSSL" "../jinguiSSL"
 rewrite_dependency_path "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "jinguissl_core" "../JinguiCore"
 rewrite_dependency_path "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "seajson" "../SeaJson"
-rewrite_dependency_path "$OUTPUT_DIR/Ignite0500/cjpm.toml" "JinguiSSL" "../jinguiSSL"
-rewrite_dependency_path "$OUTPUT_DIR/Ignite0500/cjpm.toml" "jinguissl_core" "../JinguiCore"
-rewrite_dependency_path "$OUTPUT_DIR/Ignite0500/cjpm.toml" "seajson" "../SeaJson"
+rewrite_dependency_path_if_present "$OUTPUT_DIR/Ignite0500/cjpm.toml" "JinguiSSL" "../jinguiSSL"
+rewrite_dependency_path_if_present "$OUTPUT_DIR/Ignite0500/cjpm.toml" "jinguissl_core" "../JinguiCore"
+rewrite_dependency_path_if_present "$OUTPUT_DIR/Ignite0500/cjpm.toml" "seajson" "../SeaJson"
+rewrite_dependency_path_if_present "$OUTPUT_DIR/jinguiSSL/cjpm.toml" "jinguissl_core" "../JinguiCore"
 
 ensure_windows_target "$OUTPUT_DIR/SoonLink-Core/cjpm.toml" "core"
 ensure_windows_target "$OUTPUT_DIR/Ignite0500/cjpm.toml" "ignite"

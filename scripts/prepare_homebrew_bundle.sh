@@ -74,12 +74,16 @@ fi
 
 OS_NAME="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH_NAME="$(uname -m | tr '[:upper:]' '[:lower:]')"
+case "$OS_NAME" in
+  darwin) OS_NAME="macOS" ;;
+  linux) OS_NAME="Linux" ;;
+esac
 case "$ARCH_NAME" in
   arm64) ARCH_NAME="aarch64" ;;
   amd64) ARCH_NAME="x86_64" ;;
 esac
 PLATFORM="${OS_NAME}-${ARCH_NAME}"
-STAGE_NAME="soonlink-core-${VERSION}-${PLATFORM}"
+STAGE_NAME="SoonLnk-${VERSION}_${PLATFORM}"
 STAGE_DIR="$DIST_DIR/$STAGE_NAME"
 TARBALL_PATH="$DIST_DIR/${STAGE_NAME}.tar.gz"
 

@@ -165,13 +165,13 @@ jobs:
           fi
 
           bundle_matrix='{"include":['
-          bundle_matrix="${bundle_matrix}{\"runner\":\"ubuntu-latest\",\"target\":\"x86_64-unknown-linux-gnu\",\"artifact_platform\":\"linux-x86_64\",\"sdk_url\":\"${linux_amd64_sdk_url}\"}"
-          bundle_matrix="${bundle_matrix},{\"runner\":\"ubuntu-24.04-arm\",\"target\":\"aarch64-unknown-linux-gnu\",\"artifact_platform\":\"linux-aarch64\",\"sdk_url\":\"${linux_arm64_sdk_url}\"}"
-          bundle_matrix="${bundle_matrix},{\"runner\":\"macos-15-intel\",\"target\":\"x86_64-apple-darwin\",\"artifact_platform\":\"darwin-x86_64\",\"sdk_url\":\"${macos_amd64_sdk_url}\"}"
-          bundle_matrix="${bundle_matrix},{\"runner\":\"macos-14\",\"target\":\"aarch64-apple-darwin\",\"artifact_platform\":\"darwin-aarch64\",\"sdk_url\":\"${macos_arm64_sdk_url}\"}"
-          bundle_matrix="${bundle_matrix},{\"runner\":\"windows-latest\",\"target\":\"x86_64-w64-mingw32\",\"artifact_platform\":\"windows-x86_64\",\"sdk_url\":\"${windows_amd64_sdk_url}\"}"
+          bundle_matrix="${bundle_matrix}{\"runner\":\"ubuntu-latest\",\"target\":\"x86_64-unknown-linux-gnu\",\"artifact_platform\":\"Linux-x86_64\",\"artifact_suffix\":\"\",\"sdk_url\":\"${linux_amd64_sdk_url}\"}"
+          bundle_matrix="${bundle_matrix},{\"runner\":\"ubuntu-24.04-arm\",\"target\":\"aarch64-unknown-linux-gnu\",\"artifact_platform\":\"Linux-aarch64\",\"artifact_suffix\":\"\",\"sdk_url\":\"${linux_arm64_sdk_url}\"}"
+          bundle_matrix="${bundle_matrix},{\"runner\":\"macos-15-intel\",\"target\":\"x86_64-apple-darwin\",\"artifact_platform\":\"macOS-x86_64\",\"artifact_suffix\":\"\",\"sdk_url\":\"${macos_amd64_sdk_url}\"}"
+          bundle_matrix="${bundle_matrix},{\"runner\":\"macos-14\",\"target\":\"aarch64-apple-darwin\",\"artifact_platform\":\"macOS-aarch64\",\"artifact_suffix\":\"\",\"sdk_url\":\"${macos_arm64_sdk_url}\"}"
+          bundle_matrix="${bundle_matrix},{\"runner\":\"windows-latest\",\"target\":\"x86_64-w64-mingw32\",\"artifact_platform\":\"Windows-x86_64\",\"artifact_suffix\":\"-exe\",\"sdk_url\":\"${windows_amd64_sdk_url}\"}"
           if [[ -n "${deveco_ohos_aarch64_url}" ]]; then
-            bundle_matrix="${bundle_matrix},{\"runner\":\"ubuntu-latest\",\"target\":\"aarch64-linux-ohos\",\"artifact_platform\":\"ohos-aarch64\",\"sdk_url\":\"${linux_amd64_sdk_url}\",\"deveco_sdk_url\":\"${deveco_ohos_aarch64_url}\"}"
+            bundle_matrix="${bundle_matrix},{\"runner\":\"ubuntu-latest\",\"target\":\"aarch64-linux-ohos\",\"artifact_platform\":\"OHOS-aarch64\",\"artifact_suffix\":\"\",\"sdk_url\":\"${linux_amd64_sdk_url}\",\"deveco_sdk_url\":\"${deveco_ohos_aarch64_url}\"}"
           fi
 
           bundle_matrix="${bundle_matrix}]}"
@@ -371,39 +371,57 @@ jobs:
             exit 1
           fi
 
-          tar -tzf "${tarball_path}" | grep -E '/web/views/index\.html$' >/dev/null
-          tar -tzf "${tarball_path}" | grep -E '/web/static/js/main\.js$' >/dev/null
-          tar -tzf "${tarball_path}" | grep -E '/web/static/manifest\.webmanifest$' >/dev/null
-          tar -tzf "${tarball_path}" | grep -E '/config/soonlink\.toml$' >/dev/null
-
           python_bin="$(command -v python3 || command -v python || true)"
           if [[ -z "${python_bin}" ]]; then
-            echo "python is required to inspect staged zip archive contents" >&2
+            echo "python is required to inspect staged archive contents" >&2
             exit 1
           fi
 
-          "${python_bin}" - "${zip_path}" <<'PY'
+          "${python_bin}" - "${tarball_path}" "${zip_path}" <<'PY'
           import sys
+          import tarfile
           import zipfile
 
-          zip_path = sys.argv[1]
+          tarball_path = sys.argv[1]
+          zip_path = sys.argv[2]
           required = [
-              "/web/views/index.html",
-              "/web/static/js/main.js",
-              "/web/static/manifest.webmanifest",
-              "/config/soonlink.toml",
+              "web/views/index.html",
+              "web/static/js/main.js",
+              "web/static/manifest.webmanifest",
+              "config/soonlink.toml",
           ]
 
+          def normalize(name):
+              return name.replace("\\", "/").lstrip("./")
+
+          def check_archive(kind, archive_path, names):
+              normalized = [normalize(name) for name in names]
+              print(f"{kind} archive entries:")
+              for name in normalized[:80]:
+                  print(f"  {name}")
+              if len(normalized) > 80:
+                  print(f"  ... {len(normalized) - 80} more entries")
+
+              missing = []
+              for suffix in required:
+                  if not any(name.endswith(suffix) for name in normalized):
+                      missing.append(suffix)
+
+              if missing:
+                  print(f"{kind} archive is missing required packaged paths: " + ", ".join(missing), file=sys.stderr)
+                  return False
+              return True
+
+          with tarfile.open(tarball_path, "r:gz") as archive:
+              tar_names = archive.getnames()
+
           with zipfile.ZipFile(zip_path) as archive:
-              names = archive.namelist()
+              zip_names = archive.namelist()
 
-          missing = []
-          for suffix in required:
-              if not any(name.endswith(suffix) for name in names):
-                  missing.append(suffix)
-
-          if missing:
-              print("zip archive is missing required packaged paths: " + ", ".join(missing), file=sys.stderr)
+          ok = True
+          ok = check_archive("tar.gz", tarball_path, tar_names) and ok
+          ok = check_archive("zip", zip_path, zip_names) and ok
+          if not ok:
               sys.exit(1)
           PY
 
@@ -412,7 +430,7 @@ jobs:
         id: artifact_upload
         uses: actions/upload-artifact@v4
         with:
-          name: soonlink-core-${{ matrix.artifact_platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: SoonLnk-${{ needs.metadata.outputs.release_version }}_${{ matrix.artifact_platform }}${{ matrix.artifact_suffix }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: bundle-artifacts/${{ matrix.artifact_platform }}/*
           if-no-files-found: error
           overwrite: true
@@ -456,7 +474,7 @@ jobs:
       - name: Download platform bundle artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: soonlink-core-*
+          pattern: SoonLnk-*
           path: dist/release-assets
           merge-multiple: true
 
@@ -496,11 +514,11 @@ jobs:
             echo "Platform bundle publishing is collected from matrix artifacts and published by this job for the current release tag."
             echo
             echo "Expected release bundle groups:"
-            echo "- linux-x86_64"
-            echo "- linux-aarch64"
-            echo "- darwin-x86_64"
-            echo "- darwin-aarch64"
-            echo "- windows-x86_64"
+            echo "- Linux-x86_64"
+            echo "- Linux-aarch64"
+            echo "- macOS-x86_64"
+            echo "- macOS-aarch64"
+            echo "- Windows-x86_64-exe"
             echo
             echo "> OpenHarmony bundle publication remains conditional on the resolved toolchain URL."
             echo

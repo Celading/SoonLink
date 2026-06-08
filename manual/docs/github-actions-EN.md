@@ -18,13 +18,13 @@ That split keeps the repository validation path lightweight while leaving the fu
   - It now also includes an optional OpenHarmony `aarch64` cross-build smoke lane. When the Linux SDK is available and an OpenHarmony DEVECO bundle can be configured or auto-resolved, CI runs one `aarch64-linux-ohos` build as well.
 - `.github/workflows/release-artifacts.yml`
   Builds GitHub Release bundles for:
-  - `linux-x86_64`
-  - `linux-aarch64`
-  - `darwin-x86_64`
-  - `darwin-aarch64`
-  - `windows-x86_64`
+  - `Linux-x86_64`
+  - `Linux-aarch64`
+  - `macOS-x86_64`
+  - `macOS-aarch64`
+  - `Windows-x86_64-exe`
   - When the OpenHarmony toolchain can be resolved, it also adds:
-    - `ohos-aarch64`
+    - `OHOS-aarch64`
   - When `CANGJIE_STDX_RELEASE_VERSION` is configured, release jobs reuse that official per-platform `stdx` bundle. When it is unset, macOS / Windows / OpenHarmony jobs first try the release version derived from `CANGJIE_STDX_GIT_REF` and only then fall back to `1.0.0.1`.
   - Each platform now emits both `.tar.gz` and `.zip` bundles so users can unpack a full runtime bundle more directly.
   - Each platform job now uploads staged artifacts first, and the Ubuntu `publish` job publishes the final GitHub Release assets in one place.
@@ -50,7 +50,7 @@ That split keeps the repository validation path lightweight while leaving the fu
 - `.gitcode/workflows/release-linux.yml`
   Builds a GitCode-side Linux release bundle for tags and manual runs.
   - Triggered by `x.y.z` or `x.y.z.n` tags, or manually from the GitCode UI.
-  - Currently emits `linux-x86_64` `.tar.gz` and `.zip` bundles plus `SHA256SUMS` under `dist/gitcode-release/`.
+  - Currently emits `Linux-x86_64` `.tar.gz` and `.zip` bundles plus `SHA256SUMS` under `dist/gitcode-release/`.
   - This workflow is meant to give the GitCode remote a reproducible tag packaging lane, not to replace the full GitHub multi-platform release publication.
 
 ## Variables and Credentials
@@ -60,7 +60,7 @@ That split keeps the repository validation path lightweight while leaving the fu
   - GitHub `core-ci` skips the real build when it is unset.
   - GitCode workflows fall back to the current default `1.1.0-beta.25` Linux x64 SDK URL when it is unset.
 - `CANGJIE_SDK_LINUX_ARM64_URL`
-  Cangjie SDK download URL used by Linux ARM64 runners. The `linux-aarch64` release bundle now runs on a native `ubuntu-24.04-arm` runner.
+  Cangjie SDK download URL used by Linux ARM64 runners. The `Linux-aarch64` release bundle now runs on a native `ubuntu-24.04-arm` runner.
 - `CANGJIE_SDK_MACOS_AMD64_URL`
   SDK URL for macOS Intel runners. When unset, the workflow falls back to the official `1.1.0-beta.25` SDK.
 - `CANGJIE_SDK_MACOS_ARM64_URL`
@@ -133,15 +133,17 @@ Once `CANGJIE_HOME` and `CANGJIE_STDX_PATH` are available locally, the same rele
 ```bash
 ./scripts/build_release_target.sh \
   --target x86_64-unknown-linux-gnu \
-  --target-dir ./target-release/linux-x86_64 \
-  --archive-platform linux-x86_64 \
+  --target-dir ./target-release/Linux-x86_64 \
+  --archive-platform Linux-x86_64 \
   --version 0.5.56
 ```
 
 That command runs `cjpm build --target ...` and then produces:
 
-- `dist/releases/soonlink-core-<version>-<platform>.tar.gz`
-- `dist/releases/soonlink-core-<version>-<platform>.zip`
+- `dist/releases/SoonLnk-<version>_<platform>.tar.gz`
+- `dist/releases/SoonLnk-<version>_<platform>.zip`
+
+Windows bundles use `SoonLnk-<version>_Windows-x86_64-exe.*`, and the executable inside the archive is `soonlnk.exe`.
 
 Both bundle formats include:
 
@@ -178,16 +180,16 @@ Both bundle formats include:
 - If you want the old "one version bump, one action packaging run" rhythm back, the recommended flow is: bump `cjpm.toml`, merge to the mainline, wait for `version-package` artifacts, verify them, then push the matching tag for formal Release / Docker / Homebrew publishing.
 - The GitCode tag workflow is intentionally limited to the Linux x86_64 bundle. GitHub remains the primary multi-platform release surface.
 - The pushed tag must either match the `cjpm.toml` version exactly or append one extra dotted revision, for example release tag `0.5.56.1` on package version `0.5.56`.
-- `linux-aarch64` now uses a native `ubuntu-24.04-arm` runner with an ARM64 SDK so release bundles do not depend on x86_64 Linux SDK layouts that omit `linux_aarch64_cjnative` modules.
+- `Linux-aarch64` now uses a native `ubuntu-24.04-arm` runner with an ARM64 SDK so release bundles do not depend on x86_64 Linux SDK layouts that omit `linux_aarch64_cjnative` modules.
 - `release-artifacts` now attempts all five default platforms by default and adds a sixth OpenHarmony bundle when the toolchain is available:
-  - `linux-x86_64`
-  - `linux-aarch64`
-  - `darwin-x86_64`
-  - `darwin-aarch64`
-  - `windows-x86_64`
+  - `Linux-x86_64`
+  - `Linux-aarch64`
+  - `macOS-x86_64`
+  - `macOS-aarch64`
+  - `Windows-x86_64-exe`
 - GitHub Actions now explicitly opts JavaScript-based actions into the Node 24 runtime via `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`, which removes the current Node 20 deprecation warning path.
-- `darwin-x86_64` now runs on `macos-15-intel` instead of the previous `macos-13` label, which had started getting cancelled upstream.
+- `macOS-x86_64` now runs on `macos-15-intel` instead of the previous `macos-13` label, which had started getting cancelled upstream.
 - OpenHarmony nightly tag discovery now prefers the GitCode tags API instead of `git ls-remote`.
 - If you want to move to a newer SDK later, repository variables can still override these default download URLs.
 - Manual `homebrew-tap` runs now fall back to the current `cjpm.toml` version when `release_tag` is left empty, avoiding the previous empty-value failure.
-- Windows is currently limited to `windows-x86_64`. Do not promise Windows ARM64 early until the SDK and stdx layout become reproducible.
+- Windows is currently limited to `Windows-x86_64-exe`. Do not promise Windows ARM64 early until the SDK and stdx layout become reproducible.

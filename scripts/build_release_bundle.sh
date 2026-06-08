@@ -8,7 +8,7 @@ TARGET_DIR="$ROOT_DIR/target"
 BIN_PATH=""
 VERSION_OVERRIDE=""
 ARCHIVE_PLATFORM=""
-PACKAGE_PREFIX="soonlink-core"
+PACKAGE_PREFIX="SoonLnk"
 PACKAGE_BIN_NAME="soonlnk"
 
 usage() {
@@ -27,18 +27,49 @@ EOF
 
 resolve_platform() {
   case "$1" in
-    x86_64-unknown-linux-gnu) printf '%s\n' "linux-x86_64" ;;
-    aarch64-unknown-linux-gnu) printf '%s\n' "linux-aarch64" ;;
-    aarch64-linux-ohos) printf '%s\n' "ohos-aarch64" ;;
-    aarch64-linux-ohos-cjnative) printf '%s\n' "ohos-aarch64" ;;
-    x86_64-apple-darwin) printf '%s\n' "darwin-x86_64" ;;
-    aarch64-apple-darwin) printf '%s\n' "darwin-aarch64" ;;
-    x86_64-w64-mingw32) printf '%s\n' "windows-x86_64" ;;
+    x86_64-unknown-linux-gnu) printf '%s\n' "Linux-x86_64" ;;
+    aarch64-unknown-linux-gnu) printf '%s\n' "Linux-aarch64" ;;
+    aarch64-linux-ohos) printf '%s\n' "OHOS-aarch64" ;;
+    aarch64-linux-ohos-cjnative) printf '%s\n' "OHOS-aarch64" ;;
+    x86_64-apple-darwin) printf '%s\n' "macOS-x86_64" ;;
+    aarch64-apple-darwin) printf '%s\n' "macOS-aarch64" ;;
+    x86_64-w64-mingw32) printf '%s\n' "Windows-x86_64" ;;
     *)
       os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
       arch_name="$(uname -m | tr '[:upper:]' '[:lower:]')"
+      case "$os_name" in
+        darwin) os_name="macOS" ;;
+        linux) os_name="Linux" ;;
+        msys*|mingw*|cygwin*|windows*) os_name="Windows" ;;
+      esac
+      case "$arch_name" in
+        arm64) arch_name="aarch64" ;;
+        amd64) arch_name="x86_64" ;;
+      esac
       printf '%s-%s\n' "$os_name" "$arch_name"
       ;;
+  esac
+}
+
+normalize_archive_platform() {
+  case "$1" in
+    linux-x86_64) printf '%s\n' "Linux-x86_64" ;;
+    linux-aarch64) printf '%s\n' "Linux-aarch64" ;;
+    darwin-x86_64) printf '%s\n' "macOS-x86_64" ;;
+    darwin-aarch64) printf '%s\n' "macOS-aarch64" ;;
+    windows-x86_64) printf '%s\n' "Windows-x86_64" ;;
+    ohos-aarch64) printf '%s\n' "OHOS-aarch64" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+stage_name_for_platform() {
+  version="$1"
+  platform="$2"
+
+  case "$platform" in
+    Windows-*) printf '%s\n' "${PACKAGE_PREFIX}-${version}_${platform}-exe" ;;
+    *) printf '%s\n' "${PACKAGE_PREFIX}-${version}_${platform}" ;;
   esac
 }
 
@@ -155,6 +186,8 @@ fi
 
 if [ -z "$ARCHIVE_PLATFORM" ]; then
   ARCHIVE_PLATFORM="$(resolve_platform "$TARGET_TRIPLE")"
+else
+  ARCHIVE_PLATFORM="$(normalize_archive_platform "$ARCHIVE_PLATFORM")"
 fi
 
 if [ -z "$BIN_PATH" ]; then
@@ -187,7 +220,7 @@ fi
 
 mkdir -p "$DIST_DIR"
 
-STAGE_NAME="${PACKAGE_PREFIX}-${VERSION_OVERRIDE}-${ARCHIVE_PLATFORM}"
+STAGE_NAME="$(stage_name_for_platform "$VERSION_OVERRIDE" "$ARCHIVE_PLATFORM")"
 STAGE_DIR="$DIST_DIR/$STAGE_NAME"
 TARBALL_PATH="$DIST_DIR/${STAGE_NAME}.tar.gz"
 ZIP_PATH="$DIST_DIR/${STAGE_NAME}.zip"

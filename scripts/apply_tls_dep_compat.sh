@@ -126,14 +126,52 @@ patch_lisi_tls_tool() {
   sedi 's/X509Certificate.decodeFromPem、GeneralPrivateKey.decodeFromPem/X509Certificate.decodeFromPem、兼容私钥解码 helper/' "$file"
 }
 
+strip_ignite_raw_pem_private_key_fallback() {
+  file="$1"
+  python_bin="$(command -v python3 || command -v python || true)"
+  [ -n "$python_bin" ] || return 0
+
+  "$python_bin" - "$file" <<'PY'
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fh:
+    lines = fh.readlines()
+
+out = []
+skip_until = None
+for line in lines:
+    stripped = line.strip()
+    if stripped == "import stdx.crypto.common.{Pem, PemEntry, DerBlob, PrivateKey}":
+        continue
+    if line.startswith("class RawPemPrivateKey <: PrivateKey {"):
+        skip_until = "public func tlsToIgniteErrorCode"
+        continue
+    if line.startswith("func decodePrivateKeyWithoutDescribeOrThrow("):
+        skip_until = "func normalizeAlpnProtocolsFallback"
+        continue
+    if skip_until is not None:
+        if line.startswith(skip_until):
+            skip_until = None
+            out.append(line)
+        continue
+    out.append(line)
+
+with open(path, "w", encoding="utf-8") as fh:
+    fh.writelines(out)
+PY
+}
+
 patch_ignite_tls_api() {
   file="$IGNITE_DIR/src/api2/tls.cj"
   [ -f "$file" ] || return 0
 
   sedi '/import stdx.crypto.keys.GeneralPrivateKey/d' "$file"
   sedi 's/let certKey = GeneralPrivateKey.decodeFromPem(keyPem)/var tlsConfig = buildTlsServerConfigFromPemWithCompat(certChain, keyPem)/' "$file"
+  sedi 's/let certKey = decodePrivateKeyWithoutDescribeOrThrow(material.keyPem)/var tlsConfig = buildTlsServerConfigFromPemWithCompat(certChain, material.keyPem)/' "$file"
   sedi '/var tlsConfig = TlsServerConfig(certChain, certKey)/d' "$file"
   sedi 's/X509Certificate.decodeFromPem, GeneralPrivateKey.decodeFromPem/X509Certificate.decodeFromPem and a compatibility private-key helper/' "$file"
+  strip_ignite_raw_pem_private_key_fallback "$file"
 }
 
 write_lisi_helper

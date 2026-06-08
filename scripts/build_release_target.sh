@@ -65,6 +65,28 @@ require_command_success() {
   return 1
 }
 
+require_command_success_with_retry() {
+  label="$1"
+  retry_count="$2"
+  shift 2
+
+  attempt=1
+  while [ "$attempt" -le "$retry_count" ]; do
+    if require_command_success "$label attempt ${attempt}/${retry_count}" "$@"; then
+      return 0
+    fi
+
+    if [ "$attempt" -lt "$retry_count" ]; then
+      echo "$label failed on attempt ${attempt}/${retry_count}; retrying once to absorb transient runner/compiler failures" >&2
+      sleep 3
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  annotate_github_error "$label failed after ${retry_count} attempts"
+  return 1
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -114,7 +136,7 @@ CJPM_BIN="$(cjpm_command || true)"
   exit 1
 }
 
-require_command_success "cjpm build for ${TARGET_TRIPLE}" \
+require_command_success_with_retry "cjpm build for ${TARGET_TRIPLE}" 2 \
   "$CJPM_BIN" build --target "$TARGET_TRIPLE" --target-dir "$TARGET_DIR"
 
 set -- \
