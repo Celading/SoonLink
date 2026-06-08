@@ -24,6 +24,7 @@ SoonLink / 溯联的主要变更记录。
 - `=工程` CI / Release 默认依赖源切到公开可拉取的 `Ignite / lisi / jinguiSSL` 线上仓地址，降低远端工作副本准备阶段在依赖克隆上的漂移
 - `=工程` CI / Release / Docker 投影链补齐 `JinguiCore` 与 `SeaJson` 依赖克隆和本地 `path` 改写，并记录 GitCode 默认源与 GitHub 镜像源矩阵
 - `=工程` Release / 预览包命名改为 `SoonLnk-<version>_<platform>`，Windows 资产使用 `SoonLnk-<version>_Windows-x86_64-exe.*` 并继续在归档内提供 `soonlnk.exe`
+- `=工程` 公开包版本、运行时版本回退值与 README 徽标同步推进到 `0.7.27`，用于真实 PR 与后续 tag/release 构建验证
 
 ---
 

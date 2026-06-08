@@ -24,6 +24,7 @@ Notes:
 - `=Chore` Switched the default CI / release dependency sources to the public `Ignite / lisi / jinguiSSL` remote repositories so remote workspace projection no longer drifts on dependency clone setup
 - `=Chore` Added `JinguiCore` and `SeaJson` cloning plus local `path` rewrites to the CI / Release / Docker projection lanes, and documented the GitCode defaults with GitHub mirror overrides
 - `=Chore` Renamed Release / preview bundles to `SoonLnk-<version>_<platform>`; Windows assets now use `SoonLnk-<version>_Windows-x86_64-exe.*` while still packaging `soonlnk.exe` inside the archive
+- `=Chore` Advanced the public package version, runtime fallback, and README badges to `0.7.27` for the real PR path and later tag/release build verification
 
 ---
 
