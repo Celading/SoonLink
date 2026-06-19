@@ -2,6 +2,9 @@ name: Hap hosted proof
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - h027-hosted-proof-disposable-20260619
 
 jobs:
   hap-hosted-proof:
