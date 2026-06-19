@@ -60,7 +60,7 @@ jobs:
                   test -n "$receipt"
                   test -n "$recipe_output"
                   write_json "$receipt" '{"schema":"happub-hapcli-ci-project-bridge-receipt-v0","ok":true,"buildExit":0,"testExit":0,"runTests":true,"buildActionTaken":true,"testActionTaken":true,"canonMutation":false}'
-                  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'printf "h027 project bridge executed\n"' > "$recipe_output"
+                  printf '%s\n' '#!/bin/sh' 'set -eu' 'printf "h027 project bridge executed\n"' > "$recipe_output"
                   chmod +x "$recipe_output"
                   ;;
                 executor-recipe)
@@ -83,7 +83,7 @@ jobs:
                     sh "$bridge_script"
                   fi
                   write_json "$receipt" '{"schema":"happub-hapcli-ci-executor-receipt-v0","ok":true,"bridgeExit":0,"executionActionTaken":true,"workflowMutationActionTaken":false,"canonMutation":false}'
-                  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'printf "h027 executor executed\n"' > "$recipe_output"
+                  printf '%s\n' '#!/bin/sh' 'set -eu' 'printf "h027 executor executed\n"' > "$recipe_output"
                   chmod +x "$recipe_output"
                   ;;
                 *)
