@@ -1,0 +1,82 @@
+name: Hap hosted proof
+
+on:
+  workflow_dispatch:
+
+jobs:
+  hap-hosted-proof:
+    runs-on: ubuntu-latest
+    env:
+      HAP_REVIEW_TOKEN: ${{ secrets.HAP_REVIEW_TOKEN }}
+      HAP_FLAGSHIP_ASSET_URL: ${{ vars.HAP_FLAGSHIP_ASSET_URL }}
+      HAP_FLAGSHIP_ASSET_SHA256: ${{ vars.HAP_FLAGSHIP_ASSET_SHA256 }}
+      HAP_INSTALL_DIR: /tmp/hap/bin
+      HAP_PROOF_DIR: ${{ runner.temp }}/hap-hosted-proof
+      HAP_TARGET: linux-amd64
+      HAP_PLATFORM: linux_x86_64_cjnative
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare proof directory
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p "$HAP_PROOF_DIR" "$HAP_INSTALL_DIR"
+          test -n "$HAP_REVIEW_TOKEN"
+          test -n "$HAP_FLAGSHIP_ASSET_URL"
+          test -n "$HAP_FLAGSHIP_ASSET_SHA256"
+      - name: Reviewed hapup bootstrap
+        shell: bash
+        run: |
+          set -eu
+          curl --noproxy '*' -fL -o "$HAP_PROOF_DIR/hapup.sh" 'https://cli.hap.pub/install/hapup.sh'
+          printf '%s  %s\n' '109a43a89673d1e0643cf5840a35e385d03222e8a362f55654b29438b99fb4bd' "$HAP_PROOF_DIR/hapup.sh" | sha256sum -c -
+          chmod +x "$HAP_PROOF_DIR/hapup.sh"
+          "$HAP_PROOF_DIR/hapup.sh" install-flagship --asset "$HAP_FLAGSHIP_ASSET_URL" --sha256 "$HAP_FLAGSHIP_ASSET_SHA256" --install-dir "$HAP_INSTALL_DIR" --receipt "$HAP_PROOF_DIR/bootstrap.receipt.json" --review-token "$HAP_REVIEW_TOKEN"
+          echo "$HAP_INSTALL_DIR" >> "$GITHUB_PATH"
+      - name: Generate reviewed project bridge and executor
+        shell: bash
+        run: |
+          set -eu
+          hap version
+          hap ci project-bridge-recipe --project '.' --receipt "$HAP_PROOF_DIR/project-bridge.receipt.json" --recipe-output "$HAP_PROOF_DIR/project-bridge.sh" --review-token "$HAP_REVIEW_TOKEN" --run-tests
+          hap ci executor-recipe --project-bridge-script "$HAP_PROOF_DIR/project-bridge.sh" --receipt "$HAP_PROOF_DIR/executor.receipt.json" --recipe-output "$HAP_PROOF_DIR/executor.sh" --review-token "$HAP_REVIEW_TOKEN"
+          sh "$HAP_PROOF_DIR/executor.sh"
+          test -s "$HAP_PROOF_DIR/bootstrap.receipt.json"
+          test -s "$HAP_PROOF_DIR/project-bridge.receipt.json"
+          test -s "$HAP_PROOF_DIR/executor.receipt.json"
+      - name: Write hosted provenance receipt
+        shell: bash
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          proof_dir = pathlib.Path(os.environ["HAP_PROOF_DIR"])
+          run_id = os.environ.get("GITHUB_RUN_ID", "")
+          repository = os.environ.get("GITHUB_REPOSITORY", "")
+          server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+          run_url = f"{server_url}/{repository}/actions/runs/{run_id}" if repository and run_id else ""
+          receipt = {
+              "schema": "happub-hapcli-ci-hosted-provenance-receipt-v0",
+              "ok": True,
+              "githubRunId": run_id,
+              "githubRunUrl": run_url,
+              "githubRepository": repository,
+              "githubWorkflow": os.environ.get("GITHUB_WORKFLOW", ""),
+              "githubEventName": os.environ.get("GITHUB_EVENT_NAME", ""),
+              "runnerOs": os.environ.get("RUNNER_OS", ""),
+              "artifactName": "hap-hosted-proof-receipts",
+          }
+          (proof_dir / "hosted-provenance.receipt.json").write_text(
+              json.dumps(receipt, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          test -s "$HAP_PROOF_DIR/hosted-provenance.receipt.json"
+      - name: Upload Hap proof receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hap-hosted-proof-receipts
+          path: ${{ runner.temp }}/hap-hosted-proof
