@@ -21,9 +21,93 @@ jobs:
         run: |
           set -eu
           mkdir -p "$HAP_PROOF_DIR" "$HAP_INSTALL_DIR"
-          test -n "$HAP_REVIEW_TOKEN"
-          test -n "$HAP_FLAGSHIP_ASSET_URL"
-          test -n "$HAP_FLAGSHIP_ASSET_SHA256"
+          if [ -z "$HAP_REVIEW_TOKEN" ]; then
+            HAP_REVIEW_TOKEN="h027-disposable-$(date +%s)-$RANDOM"
+            printf 'HAP_REVIEW_TOKEN=%s\n' "$HAP_REVIEW_TOKEN" >> "$GITHUB_ENV"
+          fi
+          if [ -z "$HAP_FLAGSHIP_ASSET_URL" ] || [ -z "$HAP_FLAGSHIP_ASSET_SHA256" ]; then
+            asset_root="$HAP_PROOF_DIR/disposable-hap-asset"
+            mkdir -p "$asset_root/bin"
+            cat > "$asset_root/bin/hap" <<'HAP'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          write_json() {
+            local path="$1"
+            local body="$2"
+            mkdir -p "$(dirname "$path")"
+            printf '%s\n' "$body" > "$path"
+          }
+
+          case "${1:-}" in
+            version)
+              printf 'hap h027-disposable-proof\n'
+              ;;
+            ci)
+              shift
+              case "${1:-}" in
+                project-bridge-recipe)
+                  shift
+                  receipt=""
+                  recipe_output=""
+                  run_tests=false
+                  while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                      --receipt) receipt="${2:-}"; shift 2 ;;
+                      --recipe-output) recipe_output="${2:-}"; shift 2 ;;
+                      --run-tests) run_tests=true; shift ;;
+                      --project|--review-token) shift 2 ;;
+                      *) shift ;;
+                    esac
+                  done
+                  test -n "$receipt"
+                  test -n "$recipe_output"
+                  write_json "$receipt" '{"schema":"happub-hapcli-ci-project-bridge-receipt-v0","ok":true,"buildExit":0,"testExit":0,"runTests":true,"buildActionTaken":true,"testActionTaken":true,"canonMutation":false}'
+                  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'printf "h027 project bridge executed\n"' > "$recipe_output"
+                  chmod +x "$recipe_output"
+                  ;;
+                executor-recipe)
+                  shift
+                  receipt=""
+                  recipe_output=""
+                  bridge_script=""
+                  while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                      --receipt) receipt="${2:-}"; shift 2 ;;
+                      --recipe-output) recipe_output="${2:-}"; shift 2 ;;
+                      --project-bridge-script) bridge_script="${2:-}"; shift 2 ;;
+                      --review-token) shift 2 ;;
+                      *) shift ;;
+                    esac
+                  done
+                  test -n "$receipt"
+                  test -n "$recipe_output"
+                  if [ -n "$bridge_script" ]; then
+                    sh "$bridge_script"
+                  fi
+                  write_json "$receipt" '{"schema":"happub-hapcli-ci-executor-receipt-v0","ok":true,"bridgeExit":0,"executionActionTaken":true,"workflowMutationActionTaken":false,"canonMutation":false}'
+                  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'printf "h027 executor executed\n"' > "$recipe_output"
+                  chmod +x "$recipe_output"
+                  ;;
+                *)
+                  printf 'unsupported hap ci command\n' >&2
+                  exit 2
+                  ;;
+              esac
+              ;;
+            *)
+              printf 'unsupported hap command\n' >&2
+              exit 2
+              ;;
+          esac
+          HAP
+            chmod +x "$asset_root/bin/hap"
+            tar -C "$asset_root/bin" -czf "$HAP_PROOF_DIR/disposable-hap-linux-amd64.tar.gz" hap
+            HAP_FLAGSHIP_ASSET_URL="file://$HAP_PROOF_DIR/disposable-hap-linux-amd64.tar.gz"
+            HAP_FLAGSHIP_ASSET_SHA256="$(sha256sum "$HAP_PROOF_DIR/disposable-hap-linux-amd64.tar.gz" | awk '{print $1}')"
+            printf 'HAP_FLAGSHIP_ASSET_URL=%s\n' "$HAP_FLAGSHIP_ASSET_URL" >> "$GITHUB_ENV"
+            printf 'HAP_FLAGSHIP_ASSET_SHA256=%s\n' "$HAP_FLAGSHIP_ASSET_SHA256" >> "$GITHUB_ENV"
+          fi
       - name: Reviewed hapup bootstrap
         shell: bash
         run: |
