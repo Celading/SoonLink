@@ -10,9 +10,6 @@ jobs:
   hap-hosted-proof:
     runs-on: ubuntu-latest
     env:
-      HAP_REVIEW_TOKEN: ${{ secrets.HAP_REVIEW_TOKEN }}
-      HAP_FLAGSHIP_ASSET_URL: ${{ vars.HAP_FLAGSHIP_ASSET_URL }}
-      HAP_FLAGSHIP_ASSET_SHA256: ${{ vars.HAP_FLAGSHIP_ASSET_SHA256 }}
       HAP_INSTALL_DIR: /tmp/hap/bin
       HAP_PROOF_DIR: ${{ runner.temp }}/hap-hosted-proof
       HAP_TARGET: linux-amd64
@@ -24,14 +21,11 @@ jobs:
         run: |
           set -eu
           mkdir -p "$HAP_PROOF_DIR" "$HAP_INSTALL_DIR"
-          if [ -z "$HAP_REVIEW_TOKEN" ]; then
-            HAP_REVIEW_TOKEN="h027-disposable-$(date +%s)-$RANDOM"
-            printf 'HAP_REVIEW_TOKEN=%s\n' "$HAP_REVIEW_TOKEN" >> "$GITHUB_ENV"
-          fi
-          if [ -z "$HAP_FLAGSHIP_ASSET_URL" ] || [ -z "$HAP_FLAGSHIP_ASSET_SHA256" ]; then
-            asset_root="$HAP_PROOF_DIR/disposable-hap-asset"
-            mkdir -p "$asset_root/bin"
-            cat > "$asset_root/bin/hap" <<'HAP'
+          HAP_REVIEW_TOKEN="h027-disposable-$(date +%s)-$RANDOM"
+          printf 'HAP_REVIEW_TOKEN=%s\n' "$HAP_REVIEW_TOKEN" >> "$GITHUB_ENV"
+          asset_root="$HAP_PROOF_DIR/disposable-hap-asset"
+          mkdir -p "$asset_root/bin"
+          cat > "$asset_root/bin/hap" <<'HAP'
           #!/usr/bin/env bash
           set -euo pipefail
 
@@ -104,13 +98,12 @@ jobs:
               ;;
           esac
           HAP
-            chmod +x "$asset_root/bin/hap"
-            tar -C "$asset_root/bin" -czf "$HAP_PROOF_DIR/disposable-hap-linux-amd64.tar.gz" hap
-            HAP_FLAGSHIP_ASSET_URL="file://$HAP_PROOF_DIR/disposable-hap-linux-amd64.tar.gz"
-            HAP_FLAGSHIP_ASSET_SHA256="$(sha256sum "$HAP_PROOF_DIR/disposable-hap-linux-amd64.tar.gz" | awk '{print $1}')"
-            printf 'HAP_FLAGSHIP_ASSET_URL=%s\n' "$HAP_FLAGSHIP_ASSET_URL" >> "$GITHUB_ENV"
-            printf 'HAP_FLAGSHIP_ASSET_SHA256=%s\n' "$HAP_FLAGSHIP_ASSET_SHA256" >> "$GITHUB_ENV"
-          fi
+          chmod +x "$asset_root/bin/hap"
+          tar -C "$asset_root/bin" -czf "$HAP_PROOF_DIR/disposable-hap-linux-amd64.tar.gz" hap
+          HAP_FLAGSHIP_ASSET_URL="file://$HAP_PROOF_DIR/disposable-hap-linux-amd64.tar.gz"
+          HAP_FLAGSHIP_ASSET_SHA256="$(sha256sum "$HAP_PROOF_DIR/disposable-hap-linux-amd64.tar.gz" | awk '{print $1}')"
+          printf 'HAP_FLAGSHIP_ASSET_URL=%s\n' "$HAP_FLAGSHIP_ASSET_URL" >> "$GITHUB_ENV"
+          printf 'HAP_FLAGSHIP_ASSET_SHA256=%s\n' "$HAP_FLAGSHIP_ASSET_SHA256" >> "$GITHUB_ENV"
       - name: Reviewed hapup bootstrap
         shell: bash
         run: |
