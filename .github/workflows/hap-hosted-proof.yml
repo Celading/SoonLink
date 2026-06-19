@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HAP_INSTALL_DIR: /tmp/hap/bin
-      HAP_PROOF_DIR: ${{ runner.temp }}/hap-hosted-proof
+      HAP_PROOF_DIR: /tmp/hap-hosted-proof
       HAP_TARGET: linux-amd64
       HAP_PLATFORM: linux_x86_64_cjnative
     steps:
@@ -159,4 +159,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hap-hosted-proof-receipts
-          path: ${{ runner.temp }}/hap-hosted-proof
+          path: /tmp/hap-hosted-proof
