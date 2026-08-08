@@ -204,12 +204,26 @@ jobs:
           curl --proto '=https' --tlsv1.2 --location --fail --silent --show-error \
             "${CANGJIE_SDK_MIRROR_BASE}/${{ needs.metadata.outputs.sdk_tag }}/manifest.v1.json" \
             -o "$manifest"
-          "$ci_dir/bootstrap-cangjie-from-mirror.sh" \
+          bootstrap_log="${RUNNER_TEMP}/receipts/sdk-bootstrap.log"
+          set +e
+          bash "$ci_dir/bootstrap-cangjie-from-mirror.sh" \
             "$manifest" \
             "${{ matrix.sdk_platform }}" \
             "${RUNNER_TEMP}/cangjie" \
             "${RUNNER_TEMP}/cangjie-env.sh" \
-            "${RUNNER_TEMP}/receipts/sdk-resolution.json"
+            "${RUNNER_TEMP}/receipts/sdk-resolution.json" 2>&1 | tee "$bootstrap_log"
+          bootstrap_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$bootstrap_status" -ne 0 ]]; then
+            python3 - "$bootstrap_log" "$bootstrap_status" <<'PY'
+          import pathlib, sys
+          log = pathlib.Path(sys.argv[1]).read_text(errors="replace")[-6000:]
+          status = sys.argv[2]
+          message = log.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=SoonLink SDK bootstrap failed::exit={status}; {message}")
+          PY
+            exit "$bootstrap_status"
+          fi
           stdx_asset="$(python3 - "$manifest" "${{ matrix.stdx_platform }}" <<'PY'
           import json, sys
           manifest, platform = sys.argv[1:]
@@ -221,10 +235,23 @@ jobs:
           print(matches[0])
           PY
           )"
-          "$ci_dir/resolve-nightly-sdk.py" \
+          set +e
+          python3 "$ci_dir/resolve-nightly-sdk.py" \
             --manifest "$manifest" \
             --asset-name "$stdx_asset" \
-            > "${RUNNER_TEMP}/receipts/stdx-resolution.json"
+            > "${RUNNER_TEMP}/receipts/stdx-resolution.json" 2> "${RUNNER_TEMP}/receipts/stdx-resolution.log"
+          stdx_status=$?
+          set -e
+          if [[ "$stdx_status" -ne 0 ]]; then
+            python3 - "${RUNNER_TEMP}/receipts/stdx-resolution.log" "$stdx_status" <<'PY'
+          import pathlib, sys
+          log = pathlib.Path(sys.argv[1]).read_text(errors="replace")[-6000:]
+          status = sys.argv[2]
+          message = log.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=SoonLink stdx resolution failed::exit={status}; {message}")
+          PY
+            exit "$stdx_status"
+          fi
           cat "${RUNNER_TEMP}/receipts/sdk-resolution.json"
           cat "${RUNNER_TEMP}/receipts/stdx-resolution.json"
 
