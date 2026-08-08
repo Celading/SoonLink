@@ -265,6 +265,17 @@ jobs:
           set -u
           echo "CANGJIE_HOME=$CANGJIE_HOME" >> "$GITHUB_ENV"
           echo "PATH=$PATH" >> "$GITHUB_ENV"
+          if [[ -n "${LD_LIBRARY_PATH:-}" ]]; then
+            echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+          fi
+          if [[ -n "${DYLD_LIBRARY_PATH:-}" ]]; then
+            echo "DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH" >> "$GITHUB_ENV"
+          fi
+          if [[ "${RUNNER_OS:-}" == macOS ]]; then
+            sdkroot="$(xcrun --sdk macosx --show-sdk-path)"
+            [[ -d "$sdkroot" ]] || { echo "macOS SDKROOT is unavailable: $sdkroot" >&2; exit 1; }
+            echo "SDKROOT=$sdkroot" >> "$GITHUB_ENV"
+          fi
 
       - name: Install OpenHarmony native sysroot
         id: ohos
@@ -313,10 +324,11 @@ jobs:
               raise SystemExit(f"expected one extracted stdx root, got {candidates}")
           source = candidates[0]
           target = root / alias
-          try:
-              target.symlink_to(source.name, target_is_directory=True)
-          except OSError:
-              shutil.copytree(source, target)
+          if source != target:
+              try:
+                  target.symlink_to(source.name, target_is_directory=True)
+              except OSError:
+                  shutil.copytree(source, target)
           if not (target / "static" / "stdx").is_dir():
               raise SystemExit(f"stdx alias is incomplete: {target}")
           pathlib.Path(receipt).write_text(json.dumps({
