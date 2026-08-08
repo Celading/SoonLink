@@ -214,7 +214,9 @@ jobs:
         run: |
           set -euo pipefail
           # The mirror installer writes cangjie-env.sh; no shell rc is modified.
+          set +u
           source "${RUNNER_TEMP}/cangjie-env.sh"
+          set -u
           echo "CANGJIE_HOME=$CANGJIE_HOME" >> "$GITHUB_ENV"
           echo "PATH=$PATH" >> "$GITHUB_ENV"
 
@@ -234,7 +236,9 @@ jobs:
           DEVECO_CANGJIE_HOME: ${{ steps.ohos.outputs.ohos_sdk_native }}
         run: |
           set -euo pipefail
+          set +u
           source "${RUNNER_TEMP}/cangjie-env.sh"
+          set -u
           export GITHUB_ENV GITHUB_PATH
           chmod +x ./scripts/install_cangjie_ci.sh
           prepare_log="${RUNNER_TEMP}/receipts/toolchain-prepare.log"
@@ -263,7 +267,15 @@ jobs:
               "logTail": log[-12000:]
           }, indent=2) + "\n")
           PY
-          [[ "$prepare_status" -eq 0 ]] || exit "$prepare_status"
+          if [[ "$prepare_status" -ne 0 ]]; then
+            python3 - "$prepare_log" <<'PY'
+          import pathlib, sys
+          tail = pathlib.Path(sys.argv[1]).read_text(errors="replace")[-4000:]
+          message = tail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=SoonLink toolchain preparation failed::{message}")
+          PY
+            exit "$prepare_status"
+          fi
           if [[ "${{ matrix.runtime_smoke }}" == link-only ]]; then
             [[ -d "${DEVECO_CANGJIE_HOME:-}" ]] || { echo 'OpenHarmony native sysroot is required' >&2; exit 1; }
           fi
@@ -330,7 +342,9 @@ jobs:
           HAP_BIN: ${{ steps.hap.outputs.hap_bin }}
         run: |
           set -euo pipefail
+          set +u
           source "${RUNNER_TEMP}/cangjie-env.sh"
+          set -u
           "$HAP_BIN" build --project . --target "${{ matrix.target }}" > "${RUNNER_TEMP}/receipts/hap-build.json"
           python3 - "${RUNNER_TEMP}/receipts/hap-build.json" <<'PY'
           import json, pathlib, sys
@@ -344,7 +358,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          set +u
           source "${RUNNER_TEMP}/cangjie-env.sh"
+          set -u
           binary="target/release/bin/main"
           if [[ "${{ matrix.target }}" == *-w64-mingw32 ]]; then binary="target/release/bin/main.exe"; fi
           if [[ "${{ matrix.runtime_smoke }}" == link-only ]]; then binary="target/${{ matrix.target }}/release/bin/main"; fi
