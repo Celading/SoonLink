@@ -10,7 +10,7 @@
 [dependencies]
   ignite = { git = "https://gitcode.com/cinyu/ignite-cangjie.git" }
   lisi = { git = "https://gitcode.com/cinyu/lisi" }
-  JinguiSSL = { git = "https://gitcode.com/cinyu/jinguiSSL.git" }
+  jinguissl = { git = "https://gitcode.com/cinyu/jinguiSSL.git" }
   jinguissl_core = { git = "https://gitcode.com/CjKu/JinguiCore.git" }
   seajson = { git = "https://gitcode.com/CjKu/SeaJson.git" }
 

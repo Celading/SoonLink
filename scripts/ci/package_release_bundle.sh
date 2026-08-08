@@ -88,7 +88,8 @@ copy_runtime_files() {
   done < <(find "$source_root" -type f \( -name '*.so' -o -name '*.so.*' -o -name '*.dylib' -o -name '*.dll' \) -print)
   while IFS= read -r library_link; do
     [[ -L "$library_link" ]] || continue
-    cp -P "$library_link" "$stage_root/lib/$(basename "$library_link")"
+    # Release archives must not retain links back into the temporary SDK tree.
+    cp -L "$library_link" "$stage_root/lib/$(basename "$library_link")"
   done < <(find "$source_root" -type l \( -name '*.so' -o -name '*.so.*' -o -name '*.dylib' -o -name '*.dll' \) -print)
 }
 

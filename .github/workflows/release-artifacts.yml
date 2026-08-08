@@ -93,13 +93,13 @@ jobs:
           if [[ "${GITHUB_REF_TYPE:-}" == tag ]]; then publish='true'; fi
           if [[ "${GITHUB_EVENT_NAME}" == workflow_dispatch && "${{ inputs.publish_release }}" == true ]]; then publish='true'; fi
           matrix='{"include":['
-          matrix+='{ "runner":"ubuntu-24.04", "target":"x86_64-unknown-linux-gnu", "sdk_platform":"linux-x64", "artifact_platform":"Linux-x86_64", "runtime_smoke":"native", "hap_asset":"hap-0.1.0-linux-amd64.tar.gz", "hap_sha256":"5491927c019acdbdd1e65261512d6d00e1351d4ac4e1e293687d24bdb80eb1ea" }'
-          matrix+=',{"runner":"ubuntu-24.04-arm", "target":"aarch64-unknown-linux-gnu", "sdk_platform":"linux-aarch64", "artifact_platform":"Linux-aarch64", "runtime_smoke":"native", "hap_asset":"hap-0.1.0-linux-arm64.tar.gz", "hap_sha256":"71b6856ca8427b473a3d441719b8e26b35172295b0ee7f574041e20b10481ac2" }'
-          matrix+=',{"runner":"macos-15-intel", "target":"x86_64-apple-darwin", "sdk_platform":"mac-x64", "artifact_platform":"macOS-x86_64", "runtime_smoke":"native", "hap_asset":"hap-0.1.0-darwin-amd64.tar.gz", "hap_sha256":"66fdf4ccbd8283b5559a4683ad23d0f4768ed0d32df522eca0e2fd248139df9b" }'
-          matrix+=',{"runner":"macos-14", "target":"aarch64-apple-darwin", "sdk_platform":"mac-aarch64", "artifact_platform":"macOS-aarch64", "runtime_smoke":"native", "hap_asset":"hap-0.1.0-darwin-arm64.tar.gz", "hap_sha256":"0257945efeaedd28220edbef5b900de6ac0813373415da585348f43c1a3846e8" }'
-          matrix+=',{"runner":"windows-2025", "target":"x86_64-w64-mingw32", "sdk_platform":"windows-x64", "artifact_platform":"Windows-x86_64-exe", "runtime_smoke":"native", "hap_asset":"hap-0.1.0-windows-amd64.zip", "hap_sha256":"1ae16ae3ed14691c899f4efdd23182f92127e0cb8e4695852fc1ef6ad07f0434" }'
-          matrix+=',{"runner":"ubuntu-24.04", "target":"aarch64-linux-ohos", "sdk_platform":"linux-x64-ohos", "artifact_platform":"OHOS-aarch64", "runtime_smoke":"link-only", "ohos_arch":"arm64", "hap_asset":"hap-0.1.0-linux-amd64.tar.gz", "hap_sha256":"5491927c019acdbdd1e65261512d6d00e1351d4ac4e1e293687d24bdb80eb1ea" }'
-          matrix+=',{"runner":"ubuntu-24.04", "target":"x86_64-linux-ohos", "sdk_platform":"linux-x64-ohos", "artifact_platform":"OHOS-x86_64", "runtime_smoke":"link-only", "ohos_arch":"amd64", "hap_asset":"hap-0.1.0-linux-amd64.tar.gz", "hap_sha256":"5491927c019acdbdd1e65261512d6d00e1351d4ac4e1e293687d24bdb80eb1ea" }'
+          matrix+='{ "runner":"ubuntu-24.04", "target":"x86_64-unknown-linux-gnu", "sdk_platform":"linux-x64", "stdx_platform":"linux-x64", "stdx_alias":"linux_x86_64_llvm", "artifact_platform":"Linux-x86_64", "runtime_smoke":"native", "hap_asset":"hap-0.1.0-linux-amd64.tar.gz", "hap_sha256":"5491927c019acdbdd1e65261512d6d00e1351d4ac4e1e293687d24bdb80eb1ea" }'
+          matrix+=',{"runner":"ubuntu-24.04-arm", "target":"aarch64-unknown-linux-gnu", "sdk_platform":"linux-aarch64", "stdx_platform":"linux-aarch64", "stdx_alias":"linux_aarch64_llvm", "artifact_platform":"Linux-aarch64", "runtime_smoke":"native", "hap_asset":"hap-0.1.0-linux-arm64.tar.gz", "hap_sha256":"71b6856ca8427b473a3d441719b8e26b35172295b0ee7f574041e20b10481ac2" }'
+          matrix+=',{"runner":"macos-15-intel", "target":"x86_64-apple-darwin", "sdk_platform":"mac-x64", "stdx_platform":"mac-x64", "stdx_alias":"cj_stdx_darwin_x86_64_llvm", "artifact_platform":"macOS-x86_64", "runtime_smoke":"native", "hap_asset":"hap-0.1.0-darwin-amd64.tar.gz", "hap_sha256":"66fdf4ccbd8283b5559a4683ad23d0f4768ed0d32df522eca0e2fd248139df9b" }'
+          matrix+=',{"runner":"macos-14", "target":"aarch64-apple-darwin", "sdk_platform":"mac-aarch64", "stdx_platform":"mac-aarch64", "stdx_alias":"cj_stdx_darwin_aarch64_llvm", "artifact_platform":"macOS-aarch64", "runtime_smoke":"native", "hap_asset":"hap-0.1.0-darwin-arm64.tar.gz", "hap_sha256":"0257945efeaedd28220edbef5b900de6ac0813373415da585348f43c1a3846e8" }'
+          matrix+=',{"runner":"windows-2025", "target":"x86_64-w64-mingw32", "sdk_platform":"windows-x64", "stdx_platform":"windows-x64", "stdx_alias":"windows_x86_64_cjnative", "artifact_platform":"Windows-x86_64-exe", "runtime_smoke":"native", "hap_asset":"hap-0.1.0-windows-amd64.zip", "hap_sha256":"1ae16ae3ed14691c899f4efdd23182f92127e0cb8e4695852fc1ef6ad07f0434" }'
+          matrix+=',{"runner":"ubuntu-24.04", "target":"aarch64-linux-ohos", "sdk_platform":"linux-x64-ohos", "stdx_platform":"ohos-aarch64", "stdx_alias":"linux_ohos_aarch64_cjnative", "artifact_platform":"OHOS-aarch64", "runtime_smoke":"link-only", "ohos_arch":"arm64", "hap_asset":"hap-0.1.0-linux-amd64.tar.gz", "hap_sha256":"5491927c019acdbdd1e65261512d6d00e1351d4ac4e1e293687d24bdb80eb1ea" }'
+          matrix+=',{"runner":"ubuntu-24.04", "target":"x86_64-linux-ohos", "sdk_platform":"linux-x64-ohos", "stdx_platform":"ohos-x64", "stdx_alias":"linux_ohos_x86_64_cjnative", "artifact_platform":"OHOS-x86_64", "runtime_smoke":"link-only", "ohos_arch":"amd64", "hap_asset":"hap-0.1.0-linux-amd64.tar.gz", "hap_sha256":"5491927c019acdbdd1e65261512d6d00e1351d4ac4e1e293687d24bdb80eb1ea" }'
           matrix+=']}'
           {
             echo "package_version=$version"
@@ -198,16 +198,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          manifest="${CANGJIE_SDK_MIRROR_BASE}/${{ needs.metadata.outputs.sdk_tag }}/manifest.v1.json"
+          manifest="${RUNNER_TEMP}/manifest.v1.json"
           mkdir -p "${RUNNER_TEMP}/cangjie" "${RUNNER_TEMP}/receipts"
+          curl --proto '=https' --tlsv1.2 --location --fail --silent --show-error \
+            "${CANGJIE_SDK_MIRROR_BASE}/${{ needs.metadata.outputs.sdk_tag }}/manifest.v1.json" \
+            -o "$manifest"
           "$ci_dir/bootstrap-cangjie-from-mirror.sh" \
             "$manifest" \
             "${{ matrix.sdk_platform }}" \
             "${RUNNER_TEMP}/cangjie" \
             "${RUNNER_TEMP}/cangjie-env.sh" \
             "${RUNNER_TEMP}/receipts/sdk-resolution.json"
+          stdx_asset="$(python3 - "$manifest" "${{ matrix.stdx_platform }}" <<'PY'
+          import json, sys
+          manifest, platform = sys.argv[1:]
+          prefix = f"cangjie-stdx-{platform}-"
+          matches = [item["name"] for item in json.load(open(manifest, encoding="utf-8"))["assets"]
+                     if item.get("classification") == "stdx" and item["name"].startswith(prefix) and item["name"].endswith(".zip")]
+          if len(matches) != 1:
+              raise SystemExit(f"expected exactly one stdx asset for {platform}, got {matches}")
+          print(matches[0])
+          PY
+          )"
+          "$ci_dir/resolve-nightly-sdk.py" \
+            --manifest "$manifest" \
+            --asset-name "$stdx_asset" \
+            > "${RUNNER_TEMP}/receipts/stdx-resolution.json"
           cat "${RUNNER_TEMP}/receipts/sdk-resolution.json"
-          echo "sdk_url=$(python3 -c 'import json; print(json.load(open("'"${RUNNER_TEMP}"'/receipts/sdk-resolution.json"))["sdkUrl"])')" >> "$GITHUB_OUTPUT"
+          cat "${RUNNER_TEMP}/receipts/stdx-resolution.json"
 
       - name: Source generated Cangjie environment
         shell: bash
@@ -230,54 +248,62 @@ jobs:
           cache: "true"
           mirror: "true"
 
-      - name: Prepare stdx and OpenHarmony sysroot in runner temporary space
+      - name: Install exact stdx asset and prepare OpenHarmony sysroot
         shell: bash
         env:
           DEVECO_CANGJIE_HOME: ${{ steps.ohos.outputs.ohos_sdk_native }}
         run: |
           set -euo pipefail
-          set +u
-          source "${RUNNER_TEMP}/cangjie-env.sh"
-          set -u
-          export GITHUB_ENV GITHUB_PATH
-          chmod +x ./scripts/install_cangjie_ci.sh
-          prepare_log="${RUNNER_TEMP}/receipts/toolchain-prepare.log"
-          set +e
-          ./scripts/install_cangjie_ci.sh \
-            --sdk-url "${{ steps.sdk.outputs.sdk_url }}" \
-            --sdk-dir "${RUNNER_TEMP}/cangjie" \
-            --stdx-dir "${RUNNER_TEMP}/cangjie_stdx" \
-            --stdx-repo "$CANGJIE_STDX_REPO" \
-            --stdx-ref "$CANGJIE_STDX_GIT_REF" \
-            --stdx-release-version "${CANGJIE_STDX_RELEASE_VERSION:-}" \
-            --stdx-target "${{ matrix.target }}" \
-            --deveco-dir "${DEVECO_CANGJIE_HOME:-${RUNNER_TEMP}/deveco_cangjie}" \
-            2>&1 | tee "$prepare_log"
-          prepare_status=${PIPESTATUS[0]}
-          set -e
-          python3 - "${RUNNER_TEMP}/receipts/toolchain-prepare.json" "$prepare_log" "$prepare_status" "${{ matrix.target }}" <<'PY'
-          import json, pathlib, sys
-          output, log_path, status, target = sys.argv[1:]
-          log = pathlib.Path(log_path).read_text(errors="replace")
-          pathlib.Path(output).write_text(json.dumps({
-              "schema": "soonlink-toolchain-prepare-receipt-v1",
-              "ok": status == "0",
-              "target": target,
-              "exitCode": int(status),
-              "logTail": log[-12000:]
+          stdx_root="${RUNNER_TEMP}/cangjie_stdx"
+          stdx_archive="${RUNNER_TEMP}/stdx-${{ matrix.stdx_platform }}.zip"
+          mkdir -p "$stdx_root"
+          stdx_url="$(python3 - "${RUNNER_TEMP}/receipts/stdx-resolution.json" <<'PY'
+          import json, sys
+          print(json.load(open(sys.argv[1], encoding="utf-8"))["sdkUrl"])
+          PY
+          )"
+          stdx_sha256="$(python3 - "${RUNNER_TEMP}/receipts/stdx-resolution.json" <<'PY'
+          import json, sys
+          print(json.load(open(sys.argv[1], encoding="utf-8"))["sdkSha256"])
+          PY
+          )"
+          curl --proto '=https' --tlsv1.2 --location --fail --silent --show-error \
+            "$stdx_url" -o "$stdx_archive"
+          python3 - "$stdx_sha256" "$stdx_archive" <<'PY'
+          import hashlib, pathlib, sys
+          expected, path = sys.argv[1:]
+          actual = hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+          if actual != expected:
+              raise SystemExit(f"stdx checksum mismatch: expected={expected} actual={actual}")
+          PY
+          python3 "$ci_dir/safe-extract-sdk.py" "$stdx_archive" "$stdx_root"
+          python3 - "$stdx_root" "${{ matrix.stdx_alias }}" "${RUNNER_TEMP}/receipts/stdx-install.json" <<'PY'
+          import json, pathlib, shutil, sys
+          root, alias, receipt = map(pathlib.Path, sys.argv[1:])
+          candidates = sorted(path.parent.parent for path in root.glob("*/static/stdx") if path.is_dir())
+          if len(candidates) != 1:
+              raise SystemExit(f"expected one extracted stdx root, got {candidates}")
+          source = candidates[0]
+          target = root / alias
+          try:
+              target.symlink_to(source.name, target_is_directory=True)
+          except OSError:
+              shutil.copytree(source, target)
+          if not (target / "static" / "stdx").is_dir():
+              raise SystemExit(f"stdx alias is incomplete: {target}")
+          pathlib.Path(receipt).write_text(json.dumps({
+              "schema": "soonlink-stdx-install-receipt-v1",
+              "ok": True,
+              "sourceRoot": str(source),
+              "alias": str(target),
+              "target": "${{ matrix.target }}",
+              "manifestSelected": True
           }, indent=2) + "\n")
           PY
-          if [[ "$prepare_status" -ne 0 ]]; then
-            python3 - "$prepare_log" <<'PY'
-          import pathlib, sys
-          tail = pathlib.Path(sys.argv[1]).read_text(errors="replace")[-4000:]
-          message = tail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-          print(f"::error title=SoonLink toolchain preparation failed::{message}")
-          PY
-            exit "$prepare_status"
-          fi
+          echo "CANGJIE_STDX_PATH=$stdx_root" >> "$GITHUB_ENV"
           if [[ "${{ matrix.runtime_smoke }}" == link-only ]]; then
             [[ -d "${DEVECO_CANGJIE_HOME:-}" ]] || { echo 'OpenHarmony native sysroot is required' >&2; exit 1; }
+            echo "DEVECO_CANGJIE_HOME=$DEVECO_CANGJIE_HOME" >> "$GITHUB_ENV"
           fi
 
       - name: Install native packaging tools
@@ -315,7 +341,20 @@ jobs:
             --run-tests \
             --review-token "$HAP_REVIEW_TOKEN" > "${RUNNER_TEMP}/receipts/project-bridge-plan.json"
           chmod +x "${RUNNER_TEMP}/project-bridge.sh"
-          bash "${RUNNER_TEMP}/project-bridge.sh"
+          bridge_log="${RUNNER_TEMP}/receipts/project-bridge.log"
+          set +e
+          bash "${RUNNER_TEMP}/project-bridge.sh" 2>&1 | tee "$bridge_log"
+          bridge_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$bridge_status" -ne 0 ]]; then
+            python3 - "$bridge_log" <<'PY'
+          import pathlib, sys
+          tail = pathlib.Path(sys.argv[1]).read_text(errors="replace")[-4000:]
+          message = tail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=SoonLink project bridge failed::{message}")
+          PY
+            exit "$bridge_status"
+          fi
 
       - name: Record OHOS test boundary
         if: ${{ matrix.runtime_smoke == 'link-only' }}
