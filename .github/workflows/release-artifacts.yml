@@ -216,7 +216,7 @@ jobs:
       - name: Install OpenHarmony native sysroot
         id: ohos
         if: ${{ matrix.runtime_smoke == 'link-only' }}
-        uses: openharmony-rs/setup-ohos-sdk@eb82b94ef522b07269679195c2512f22e922ef3
+        uses: openharmony-rs/setup-ohos-sdk@eb82b94ef522b07269679195c2512f22e922ef3b
         with:
           version: "6.1"
           components: native
