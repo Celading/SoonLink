@@ -4,7 +4,7 @@
   name = "soonlnk"
   output-type = "executable"
   src-dir = "src"
-  compile-option = "-Woff unused"
+  compile-option = "-Woff unused --set-runtime-rpath"
   description = "SoonLink / 溯联 file transfer service powered by Ignite"
 
 [dependencies]
@@ -34,6 +34,12 @@
 [target.aarch64-linux-ohos-cjnative]
   [target.aarch64-linux-ohos-cjnative.bin-dependencies]
     path-option = ["${CANGJIE_STDX_PATH}/linux_ohos_aarch64_cjnative/static/stdx"]
+
+[target.x86_64-linux-ohos]
+  compile-option = "-B \"${DEVECO_CANGJIE_HOME}/compiler/third_party/llvm/bin\" -B \"${DEVECO_CANGJIE_HOME}/musl/usr/lib/x86_64-linux-ohos\" -L \"${DEVECO_CANGJIE_HOME}/musl/usr/lib/x86_64-linux-ohos\" --sysroot \"${DEVECO_CANGJIE_HOME}/musl\""
+
+[target.x86_64-linux-ohos.bin-dependencies]
+  path-option = ["${CANGJIE_STDX_PATH}/linux_ohos_x86_64_cjnative/static/stdx"]
 
 [target.x86_64-apple-darwin]
   [target.x86_64-apple-darwin.bin-dependencies]

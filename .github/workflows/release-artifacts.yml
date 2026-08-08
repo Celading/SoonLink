@@ -13,534 +13,419 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing or target release tag, for example 0.5.22
+        description: Existing or target release tag, for example 0.7.27.1
         required: false
         type: string
       publish_release:
-        description: Publish uploaded bundles to GitHub Releases
+        description: Publish verified bundles to GitHub Releases
         required: false
         default: false
         type: boolean
   push:
+    branches:
+      - "features/hap-self-contained-release-*"
     tags:
       - "*.*.*"
       - "*.*.*.*"
 
 permissions:
   contents: write
+  actions: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  HAP_UPSTREAM_REF: 3dd69816af109d5da2378ee54cedb1311fa12842
+  HAP_RAW_BASE: https://raw.githubusercontent.com/HapPub/Hap/3dd69816af109d5da2378ee54cedb1311fa12842/scripts/ci
+  CANGJIE_SDK_MIRROR_BASE: https://github.com/HapPub/CangjieSDK-Mirror/releases/download
+  CANGJIE_SDK_MIRROR_TAG: ${{ vars.CANGJIE_SDK_MIRROR_TAG }}
   CANGJIE_STDX_GIT_REF: ${{ vars.CANGJIE_STDX_GIT_REF != '' && vars.CANGJIE_STDX_GIT_REF || 'v1.1.0-beta.25' }}
   CANGJIE_STDX_REPO: ${{ vars.CANGJIE_STDX_REPO != '' && vars.CANGJIE_STDX_REPO || 'https://gitcode.com/Cangjie/cangjie_stdx' }}
   CANGJIE_STDX_RELEASE_VERSION: ${{ vars.CANGJIE_STDX_RELEASE_VERSION }}
-  CANGJIE_NIGHTLY_TAGS_API: ${{ vars.CANGJIE_NIGHTLY_TAGS_API != '' && vars.CANGJIE_NIGHTLY_TAGS_API || 'https://api.gitcode.com/api/v5/repos/Cangjie/nightly_build/tags?per_page=100' }}
+  HAPUP_URL: ${{ vars.HAPUP_URL != '' && vars.HAPUP_URL || 'https://cli.hap.pub/install/hapup.sh' }}
+  HAPUP_SHA256: ${{ vars.HAPUP_SHA256 != '' && vars.HAPUP_SHA256 || '109a43a89673d1e0643cf5840a35e385d03222e8a362f55654b29438b99fb4bd' }}
   IGNITE_GIT_URL: ${{ vars.IGNITE_GIT_URL != '' && vars.IGNITE_GIT_URL || 'https://gitcode.com/cinyu/ignite-cangjie.git' }}
   LISI_GIT_URL: ${{ vars.LISI_GIT_URL != '' && vars.LISI_GIT_URL || 'https://gitcode.com/cinyu/lisi.git' }}
   JINGUISSL_GIT_URL: ${{ vars.JINGUISSL_GIT_URL != '' && vars.JINGUISSL_GIT_URL || 'https://gitcode.com/cinyu/jinguiSSL.git' }}
-  JINGUISSL_CORE_GIT_URL: ${{ vars.JINGUISSL_CORE_GIT_URL != '' && vars.JINGUISSL_CORE_GIT_URL || 'https://gitcode.com/CjKu/JinguiCore.git' }}
-  SEAJSON_GIT_URL: ${{ vars.SEAJSON_GIT_URL != '' && vars.SEAJSON_GIT_URL || 'https://gitcode.com/CjKu/SeaJson.git' }}
 
 jobs:
   metadata:
     runs-on: ubuntu-latest
     outputs:
       package_version: ${{ steps.meta.outputs.package_version }}
-      release_version: ${{ steps.meta.outputs.release_version }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
       publish_release: ${{ steps.meta.outputs.publish_release }}
-      bundle_matrix: ${{ steps.meta.outputs.bundle_matrix }}
+      sdk_tag: ${{ steps.meta.outputs.sdk_tag }}
+      matrix: ${{ steps.meta.outputs.matrix }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Resolve release metadata
+      - uses: actions/checkout@v4
+      - name: Resolve release matrix
         id: meta
         shell: bash
-        env:
-          GITCODE_API_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         run: |
           set -euo pipefail
-
-          normalize_release_version() {
-            case "$1" in
-              v*) printf '%s\n' "${1#v}" ;;
-              *) printf '%s\n' "$1" ;;
-            esac
-          }
-
-          resolve_gitcode_latest_tag() {
-            if [[ -z "${GITCODE_API_TOKEN:-}" ]]; then
-              return 1
-            fi
-
-            curl --retry 3 --retry-delay 2 -fsSL "${CANGJIE_NIGHTLY_TAGS_API}" \
-              -H 'Accept: application/json' \
-              -H "private-token: ${GITCODE_API_TOKEN}" \
-              | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next((item.get("name","") for item in data if item.get("name")), ""))'
-          }
-
-          resolve_first_reachable_url() {
-            for candidate in "$@"; do
-              if [[ -z "${candidate}" ]]; then
-                continue
-              fi
-              if curl --retry 2 --retry-delay 2 -fsI "${candidate}" >/dev/null; then
-                printf '%s\n' "${candidate}"
-                return 0
-              fi
-            done
-
-            return 1
-          }
-
-          package_version="$(sed -n 's/^  version = "\(.*\)"/\1/p' cjpm.toml | head -n 1)"
-          if [[ -z "${package_version}" ]]; then
-            echo "failed to resolve version from cjpm.toml" >&2
+          version="$(sed -n 's/^  version = "\(.*\)"/\1/p' cjpm.toml | head -n 1)"
+          [[ -n "$version" ]] || { echo 'cjpm.toml version is missing' >&2; exit 1; }
+          tag="${GITHUB_REF_NAME:-}"
+          if [[ "${GITHUB_REF_TYPE:-}" != tag ]]; then
+            tag="${{ inputs.release_tag }}"
+          fi
+          [[ -n "$tag" ]] || tag="$version"
+          tag="${tag#v}"
+          [[ "$tag" == "$version" || "$tag" == "$version".* ]] || {
+            echo "release tag $tag does not match package version $version" >&2
             exit 1
+          }
+          if [[ -z "${CANGJIE_SDK_MIRROR_TAG}" ]]; then
+            curl --proto '=https' --tlsv1.2 --location --fail --silent --show-error \
+              'https://api.github.com/repos/HapPub/CangjieSDK-Mirror/releases?per_page=20' \
+              -o "${RUNNER_TEMP}/cangjie-sdk-releases.json"
+            CANGJIE_SDK_MIRROR_TAG="$(python3 - "${RUNNER_TEMP}/cangjie-sdk-releases.json" <<'PY'
+          import json, sys
+          releases = json.load(open(sys.argv[1], encoding='utf-8'))
+          release = next((item for item in releases if not item.get('draft')), None)
+          if not release:
+              raise SystemExit('no published CangjieSDK-Mirror release found')
+          print(release['tag_name'])
+          PY
+            )"
           fi
-
-          release_tag=""
-          publish_release="false"
-
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
-            release_tag="${GITHUB_REF_NAME}"
-            publish_release="true"
-          else
-            release_tag="${{ inputs.release_tag }}"
-            publish_release="${{ inputs.publish_release }}"
-          fi
-
-          if [[ -z "${release_tag}" ]]; then
-            release_tag="${package_version}"
-          fi
-
-          release_version="$(normalize_release_version "${release_tag}")"
-          if [[ ! "${release_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-            echo "release tag must use x.y.z or x.y.z.n, got: ${release_tag}" >&2
-            exit 1
-          fi
-
-          if [[ "${release_version}" != "${package_version}" && "${release_version}" != "${package_version}".* ]]; then
-            echo "release tag ${release_tag} must match cjpm.toml version ${package_version} or use ${package_version}.n" >&2
-            exit 1
-          fi
-
-          linux_amd64_sdk_url="${{ vars.CANGJIE_SDK_LINUX_AMD64_URL }}"
-          if [[ -z "${linux_amd64_sdk_url}" ]]; then
-            linux_amd64_sdk_url='https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-linux-x64-1.1.0-beta.25.tar.gz&objectKey=69cb718e6e8ed61e6e07fd42'
-          fi
-
-          linux_arm64_sdk_url="${{ vars.CANGJIE_SDK_LINUX_ARM64_URL }}"
-          if [[ -z "${linux_arm64_sdk_url}" ]]; then
-            linux_arm64_sdk_url='https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-linux-aarch64-1.1.0-beta.25.tar.gz&objectKey=69cb74a76e8ed61e6e07fd45'
-          fi
-
-          macos_amd64_sdk_url="${{ vars.CANGJIE_SDK_MACOS_AMD64_URL }}"
-          if [[ -z "${macos_amd64_sdk_url}" ]]; then
-            macos_amd64_sdk_url='https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-mac-x64-1.1.0-beta.25.tar.gz&objectKey=69cb71666e8ed61e6e07fd41'
-          fi
-
-          macos_arm64_sdk_url="${{ vars.CANGJIE_SDK_MACOS_ARM64_URL }}"
-          if [[ -z "${macos_arm64_sdk_url}" ]]; then
-            macos_arm64_sdk_url='https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-mac-aarch64-1.1.0-beta.25.tar.gz&objectKey=69cb73ec6e8ed61e6e07fd43'
-          fi
-
-          windows_amd64_sdk_url="${{ vars.CANGJIE_SDK_WINDOWS_AMD64_URL }}"
-          if [[ -z "${windows_amd64_sdk_url}" ]]; then
-            windows_amd64_sdk_url='https://cangjie-lang.cn/v1/files/auth/downLoad?nsId=142267&fileName=cangjie-sdk-windows-x64-1.1.0-beta.25.zip&objectKey=69cb95dc6e8ed61e6e07fd46'
-          fi
-
-          deveco_ohos_aarch64_url="${{ vars.DEVECO_CANGJIE_OHOS_AARCH64_URL }}"
-          nightly_tag=""
-          if [[ -z "${deveco_ohos_aarch64_url}" ]]; then
-            nightly_tag="$(resolve_gitcode_latest_tag || true)"
-            if [[ -n "${nightly_tag}" ]]; then
-              deveco_ohos_aarch64_url="$(resolve_first_reachable_url \
-                "https://gitcode.com/Cangjie/nightly_build/releases/download/${nightly_tag}/cangjie-sdk-ohos-aarch64-${nightly_tag}.tar.gz" \
-                "https://gitcode.com/Cangjie/nightly_build/-/releases/download/${nightly_tag}/cangjie-sdk-ohos-aarch64-${nightly_tag}.tar.gz" \
-                "https://gitcode.com/Cangjie/nightly_build/-/releases/${nightly_tag}/downloads/cangjie-sdk-ohos-aarch64-${nightly_tag}.tar.gz" \
-              || true)"
-            fi
-          fi
-
-          bundle_matrix='{"include":['
-          bundle_matrix="${bundle_matrix}{\"runner\":\"ubuntu-latest\",\"target\":\"x86_64-unknown-linux-gnu\",\"artifact_platform\":\"Linux-x86_64\",\"artifact_suffix\":\"\",\"sdk_url\":\"${linux_amd64_sdk_url}\"}"
-          bundle_matrix="${bundle_matrix},{\"runner\":\"ubuntu-24.04-arm\",\"target\":\"aarch64-unknown-linux-gnu\",\"artifact_platform\":\"Linux-aarch64\",\"artifact_suffix\":\"\",\"sdk_url\":\"${linux_arm64_sdk_url}\"}"
-          bundle_matrix="${bundle_matrix},{\"runner\":\"macos-15-intel\",\"target\":\"x86_64-apple-darwin\",\"artifact_platform\":\"macOS-x86_64\",\"artifact_suffix\":\"\",\"sdk_url\":\"${macos_amd64_sdk_url}\"}"
-          bundle_matrix="${bundle_matrix},{\"runner\":\"macos-14\",\"target\":\"aarch64-apple-darwin\",\"artifact_platform\":\"macOS-aarch64\",\"artifact_suffix\":\"\",\"sdk_url\":\"${macos_arm64_sdk_url}\"}"
-          bundle_matrix="${bundle_matrix},{\"runner\":\"windows-latest\",\"target\":\"x86_64-w64-mingw32\",\"artifact_platform\":\"Windows-x86_64\",\"artifact_suffix\":\"-exe\",\"sdk_url\":\"${windows_amd64_sdk_url}\"}"
-          if [[ -n "${deveco_ohos_aarch64_url}" ]]; then
-            bundle_matrix="${bundle_matrix},{\"runner\":\"ubuntu-latest\",\"target\":\"aarch64-linux-ohos\",\"artifact_platform\":\"OHOS-aarch64\",\"artifact_suffix\":\"\",\"sdk_url\":\"${linux_amd64_sdk_url}\",\"deveco_sdk_url\":\"${deveco_ohos_aarch64_url}\"}"
-          fi
-
-          bundle_matrix="${bundle_matrix}]}"
-
+          publish='false'
+          if [[ "${GITHUB_REF_TYPE:-}" == tag ]]; then publish='true'; fi
+          if [[ "${GITHUB_EVENT_NAME}" == workflow_dispatch && "${{ inputs.publish_release }}" == true ]]; then publish='true'; fi
+          matrix='{"include":['
+          matrix+='{ "runner":"ubuntu-latest", "target":"x86_64-unknown-linux-gnu", "sdk_platform":"linux-x64", "artifact_platform":"Linux-x86_64", "runtime_smoke":"native" }'
+          matrix+=',{"runner":"ubuntu-24.04-arm", "target":"aarch64-unknown-linux-gnu", "sdk_platform":"linux-aarch64", "artifact_platform":"Linux-aarch64", "runtime_smoke":"native" }'
+          matrix+=',{"runner":"macos-15-intel", "target":"x86_64-apple-darwin", "sdk_platform":"mac-x64", "artifact_platform":"macOS-x86_64", "runtime_smoke":"native" }'
+          matrix+=',{"runner":"macos-14", "target":"aarch64-apple-darwin", "sdk_platform":"mac-aarch64", "artifact_platform":"macOS-aarch64", "runtime_smoke":"native" }'
+          matrix+=',{"runner":"windows-latest", "target":"x86_64-w64-mingw32", "sdk_platform":"windows-x64", "artifact_platform":"Windows-x86_64-exe", "runtime_smoke":"native" }'
+          matrix+=',{"runner":"ubuntu-latest", "target":"aarch64-linux-ohos", "sdk_platform":"linux-x64-ohos", "artifact_platform":"OHOS-aarch64", "runtime_smoke":"link-only", "ohos_arch":"arm64" }'
+          matrix+=',{"runner":"ubuntu-latest", "target":"x86_64-linux-ohos", "sdk_platform":"linux-x64-ohos", "artifact_platform":"OHOS-x86_64", "runtime_smoke":"link-only", "ohos_arch":"amd64" }'
+          matrix+=']}'
           {
-            echo "package_version=${package_version}"
-            echo "release_version=${release_version}"
-            echo "release_tag=${release_tag}"
-            echo "publish_release=${publish_release}"
-            echo "bundle_matrix=${bundle_matrix}"
-            echo "nightly_tag=${nightly_tag}"
-            echo "deveco_ohos_aarch64_url=${deveco_ohos_aarch64_url}"
-          } >> "${GITHUB_OUTPUT}"
-
-      - name: Show resolved release matrix
-        shell: bash
-        run: |
-          echo "nightly_tag=${{ steps.meta.outputs.nightly_tag }}"
-          echo "deveco_ohos_aarch64_url=${{ steps.meta.outputs.deveco_ohos_aarch64_url }}"
-          echo '${{ steps.meta.outputs.bundle_matrix }}'
-
-      - name: Create or refresh GitHub release stub
-        if: ${{ steps.meta.outputs.publish_release == 'true' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.meta.outputs.release_tag }}
-          target_commitish: ${{ github.sha }}
-          body: "Preparing SoonLink Core release assets..."
+            echo "package_version=$version"
+            echo "release_tag=$tag"
+            echo "publish_release=$publish"
+            echo "sdk_tag=$CANGJIE_SDK_MIRROR_TAG"
+            echo "matrix=$matrix"
+          } >> "$GITHUB_OUTPUT"
 
   bundles:
     needs: metadata
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.metadata.outputs.bundle_matrix) }}
+      matrix: ${{ fromJson(needs.metadata.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Resolve bundle availability
-        id: availability
+      - name: Bootstrap Hap when the runner does not provide it
+        id: hap
         shell: bash
+        env:
+          HAP_REVIEW_TOKEN: ${{ secrets.HAP_REVIEW_TOKEN }}
+          HAP_FLAGSHIP_ASSET_URL: ${{ vars.HAP_FLAGSHIP_ASSET_URL }}
+          HAP_FLAGSHIP_ASSET_SHA256: ${{ vars.HAP_FLAGSHIP_ASSET_SHA256 }}
         run: |
-          if [[ -z "${{ matrix.sdk_url }}" ]]; then
-            echo "enabled=false" >> "${GITHUB_OUTPUT}"
-            echo "::warning::Skipping ${{ matrix.artifact_platform }} bundle because the matching CANGJIE_SDK_*_URL repository variable is not configured."
-            exit 0
+          set -euo pipefail
+          if command -v hap >/dev/null 2>&1; then
+            hap_bin="$(command -v hap)"
+          else
+            [[ -n "${HAPUP_SHA256}" ]] || { echo 'HAPUP_SHA256 repository variable is required when Hap is not preinstalled' >&2; exit 1; }
+            [[ -n "${HAP_REVIEW_TOKEN}" ]] || { echo 'HAP_REVIEW_TOKEN secret is required when Hap is not preinstalled' >&2; exit 1; }
+            [[ -n "${HAP_FLAGSHIP_ASSET_URL}" && -n "${HAP_FLAGSHIP_ASSET_SHA256}" ]] || {
+              echo 'HAP_FLAGSHIP_ASSET_URL and HAP_FLAGSHIP_ASSET_SHA256 are required when Hap is not preinstalled' >&2
+              exit 1
+            }
+            hap_dir="${RUNNER_TEMP}/hap/bin"
+            mkdir -p "$hap_dir"
+            curl --proto '=https' --tlsv1.2 --location --fail --silent --show-error "$HAPUP_URL" -o "${RUNNER_TEMP}/hapup.sh"
+            python3 - "$HAPUP_SHA256" "${RUNNER_TEMP}/hapup.sh" <<'PY'
+          import hashlib, pathlib, sys
+          expected, path = sys.argv[1:]
+          actual = hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+          if actual != expected:
+              raise SystemExit(f"hapup checksum mismatch: expected={expected} actual={actual}")
+          PY
+            bash "${RUNNER_TEMP}/hapup.sh" install-flagship \
+              --asset "$HAP_FLAGSHIP_ASSET_URL" \
+              --sha256 "$HAP_FLAGSHIP_ASSET_SHA256" \
+              --install-dir "$hap_dir" \
+              --review-token "$HAP_REVIEW_TOKEN" \
+              --receipt "${RUNNER_TEMP}/hapup-install-receipt.json"
+            echo "$hap_dir" >> "$GITHUB_PATH"
+            hap_bin="$(find "$hap_dir" -type f \( -name hap -o -name hap.exe \) -print -quit)"
+            [[ -n "$hap_bin" ]] || { echo 'hapup did not install a Hap binary' >&2; exit 1; }
           fi
-          echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          "$hap_bin" version
+          echo "hap_bin=$hap_bin" >> "$GITHUB_OUTPUT"
 
-      - name: Configure GitCode Credentials
-        if: ${{ steps.availability.outputs.enabled == 'true' }}
+      - name: Hap action-doctor (read-only)
         shell: bash
-        run: |
-          if [[ -n "${{ secrets.GITCODE_USERNAME }}" && -n "${{ secrets.GITCODE_TOKEN }}" ]]; then
-            git config --global url."https://${{ secrets.GITCODE_USERNAME }}:${{ secrets.GITCODE_TOKEN }}@gitcode.com/".insteadOf "https://gitcode.com/"
-            exit 0
-          fi
-
-          echo "GitCode credentials are not configured; continuing with public clone access."
-
-      - name: Clone dependency repositories
-        if: ${{ steps.availability.outputs.enabled == 'true' }}
-        shell: bash
+        env:
+          HAP_BIN: ${{ steps.hap.outputs.hap_bin }}
         run: |
           set -euo pipefail
-          clone_dependency() {
-            local primary_url="$1"
-            local dest_dir="$2"
-            local fallback_url="${3:-}"
-
-            if git clone --depth 1 "${primary_url}" "${dest_dir}"; then
-              return 0
-            fi
-
-            if [[ -n "${fallback_url}" && "${fallback_url}" != "${primary_url}" ]]; then
-              echo "::warning::Falling back from ${primary_url} to ${fallback_url}"
-              git clone --depth 1 "${fallback_url}" "${dest_dir}"
-              return 0
-            fi
-
-            return 1
-          }
-
-          deps_root="${RUNNER_TEMP}/soonlink-release-deps"
-          mkdir -p "${deps_root}"
-          clone_dependency "${IGNITE_GIT_URL}" "${deps_root}/Ignite0500" "https://gitcode.com/cinyu/ignite-cangjie.git"
-          clone_dependency "${LISI_GIT_URL}" "${deps_root}/lisi"
-          clone_dependency "${JINGUISSL_GIT_URL}" "${deps_root}/jinguiSSL" "https://gitcode.com/cinyu/jinguiSSL.git"
-          clone_dependency "${JINGUISSL_CORE_GIT_URL}" "${deps_root}/JinguiCore" "https://gitcode.com/CjKu/JinguiCore.git"
-          clone_dependency "${SEAJSON_GIT_URL}" "${deps_root}/SeaJson" "https://gitcode.com/CjKu/SeaJson.git"
-
-      - name: Prepare release workspace
-        id: workspace
-        if: ${{ steps.availability.outputs.enabled == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          chmod +x ./scripts/prepare_release_workspace.sh
-          workspace_root="${RUNNER_TEMP}/soonlink-release-workspace/${{ matrix.artifact_platform }}"
-          deps_root="${RUNNER_TEMP}/soonlink-release-deps"
-          ./scripts/prepare_release_workspace.sh \
-            --output "${workspace_root}" \
-            --ignite "${deps_root}/Ignite0500" \
-            --lisi "${deps_root}/lisi" \
-            --jinguissl "${deps_root}/jinguiSSL" \
-            --jinguissl-core "${deps_root}/JinguiCore" \
-            --seajson "${deps_root}/SeaJson"
-          {
-            echo "root=${workspace_root}"
-            echo "core_dir=${workspace_root}/SoonLink-Core"
-          } >> "${GITHUB_OUTPUT}"
-
-      - name: Install build prerequisites on Linux
-        if: ${{ steps.availability.outputs.enabled == 'true' && runner.os == 'Linux' }}
-        shell: bash
-        run: |
-          chmod +x ./scripts/install_ci_prerequisites.sh
-          ./scripts/install_ci_prerequisites.sh
-
-      - name: Install macOS prerequisites
-        if: ${{ steps.availability.outputs.enabled == 'true' && runner.os == 'macOS' }}
-        shell: bash
-        run: |
-          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
-
-      - name: Install Cangjie SDK and stdx
-        id: sdk
-        if: ${{ steps.availability.outputs.enabled == 'true' }}
-        continue-on-error: true
-        shell: bash
-        run: |
-          chmod +x ./scripts/install_cangjie_ci.sh
-          ./scripts/install_cangjie_ci.sh \
-            --sdk-url "${{ matrix.sdk_url }}" \
-            --sdk-dir "${RUNNER_TEMP}/cangjie" \
-            --stdx-dir "${RUNNER_TEMP}/cangjie_stdx" \
-            --stdx-repo "${{ env.CANGJIE_STDX_REPO }}" \
-            --stdx-ref "${{ env.CANGJIE_STDX_GIT_REF }}" \
-            --stdx-release-version "${{ env.CANGJIE_STDX_RELEASE_VERSION }}" \
-            --stdx-target "${{ matrix.target }}" \
-            --deveco-sdk-url "${{ matrix.deveco_sdk_url }}" \
-            --deveco-dir "${RUNNER_TEMP}/deveco_cangjie"
-
-      - name: Build release bundle
-        id: bundle
-        if: ${{ steps.availability.outputs.enabled == 'true' && steps.sdk.conclusion == 'success' }}
-        continue-on-error: true
-        shell: bash
-        working-directory: ${{ steps.workspace.outputs.core_dir }}
-        run: |
-          set -euo pipefail
-          chmod +x ./scripts/build_release_bundle.sh ./scripts/build_release_target.sh
-          bundle_paths="$(./scripts/build_release_target.sh \
-            --target "${{ matrix.target }}" \
-            --target-dir "${RUNNER_TEMP}/build-${{ matrix.artifact_platform }}" \
-            --archive-platform "${{ matrix.artifact_platform }}" \
-            --version "${{ needs.metadata.outputs.release_version }}")"
-          {
-            echo "bundle_paths<<EOF"
-            printf '%s\n' "${bundle_paths}"
-            echo "EOF"
-          } >> "${GITHUB_OUTPUT}"
-
-      - name: Upload bundle
-        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          stage_dir="${GITHUB_WORKSPACE}/bundle-artifacts/${{ matrix.artifact_platform }}"
-          rm -rf "${stage_dir}"
-          mkdir -p "${stage_dir}"
-
-          while IFS= read -r bundle_path; do
-            if [[ -z "${bundle_path}" ]]; then
-              continue
-            fi
-            cp "${bundle_path}" "${stage_dir}/"
-          done <<'EOF'
-          ${{ steps.bundle.outputs.bundle_paths }}
-          EOF
-
-      - name: Show staged bundle files
-        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          stage_dir="${GITHUB_WORKSPACE}/bundle-artifacts/${{ matrix.artifact_platform }}"
-          echo "artifact stage dir: ${stage_dir}"
-          find "${stage_dir}" -maxdepth 1 -type f -print | sort
-
-          tarball_path="$(find "${stage_dir}" -maxdepth 1 -type f -name '*.tar.gz' | head -n 1)"
-          zip_path="$(find "${stage_dir}" -maxdepth 1 -type f -name '*.zip' | head -n 1)"
-
-          if [[ -z "${tarball_path}" || -z "${zip_path}" ]]; then
-            echo "staged bundle must include both .tar.gz and .zip archives" >&2
-            exit 1
-          fi
-
-          python_bin="$(command -v python3 || command -v python || true)"
-          if [[ -z "${python_bin}" ]]; then
-            echo "python is required to inspect staged archive contents" >&2
-            exit 1
-          fi
-
-          "${python_bin}" - "${tarball_path}" "${zip_path}" <<'PY'
-          import sys
-          import tarfile
-          import zipfile
-
-          tarball_path = sys.argv[1]
-          zip_path = sys.argv[2]
-          required = [
-              "web/views/index.html",
-              "web/static/js/main.js",
-              "web/static/manifest.webmanifest",
-              "config/soonlink.toml",
-          ]
-
-          def normalize(name):
-              return name.replace("\\", "/").lstrip("./")
-
-          def check_archive(kind, archive_path, names):
-              normalized = [normalize(name) for name in names]
-              print(f"{kind} archive entries:")
-              for name in normalized[:80]:
-                  print(f"  {name}")
-              if len(normalized) > 80:
-                  print(f"  ... {len(normalized) - 80} more entries")
-
-              missing = []
-              for suffix in required:
-                  if not any(name.endswith(suffix) for name in normalized):
-                      missing.append(suffix)
-
-              if missing:
-                  print(f"{kind} archive is missing required packaged paths: " + ", ".join(missing), file=sys.stderr)
-                  return False
-              return True
-
-          with tarfile.open(tarball_path, "r:gz") as archive:
-              tar_names = archive.getnames()
-
-          with zipfile.ZipFile(zip_path) as archive:
-              zip_names = archive.namelist()
-
-          ok = True
-          ok = check_archive("tar.gz", tarball_path, tar_names) and ok
-          ok = check_archive("zip", zip_path, zip_names) and ok
-          if not ok:
-              sys.exit(1)
+          "$HAP_BIN" ci action-doctor \
+            --workflow .github/workflows/release-artifacts.yml \
+            --target "${{ matrix.target }}" | tee "${RUNNER_TEMP}/action-doctor.json"
+          python3 - "${RUNNER_TEMP}/action-doctor.json" <<'PY'
+          import json, pathlib, sys
+          data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          if not data.get("ok"):
+              raise SystemExit("Hap action-doctor rejected the release workflow")
           PY
 
-      - name: Upload staged bundle artifact
-        if: ${{ steps.availability.outputs.enabled == 'true' && steps.bundle.conclusion == 'success' }}
-        id: artifact_upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: SoonLnk-${{ needs.metadata.outputs.release_version }}_${{ matrix.artifact_platform }}${{ matrix.artifact_suffix }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: bundle-artifacts/${{ matrix.artifact_platform }}/*
-          if-no-files-found: error
-          overwrite: true
-          compression-level: 0
-
-      - name: Verify bundle job result
-        if: ${{ steps.availability.outputs.enabled == 'true' }}
+      - name: Fetch pinned Hap CI scripts
         shell: bash
         run: |
           set -euo pipefail
+          ci_dir="${RUNNER_TEMP}/hap-ci"
+          mkdir -p "$ci_dir"
+          for script in bootstrap-cangjie-from-mirror.sh resolve-nightly-sdk.py install-cangjie-sdk.sh safe-extract-sdk.py; do
+            curl --proto '=https' --tlsv1.2 --location --fail --silent --show-error \
+              "${HAP_RAW_BASE}/${script}" -o "$ci_dir/$script"
+          done
+          chmod +x "$ci_dir"/*.sh
+          echo "ci_dir=$ci_dir" >> "$GITHUB_ENV"
 
-          if [[ "${{ steps.sdk.conclusion }}" != "success" ]]; then
-            echo "Cangjie SDK/stdx installation failed for ${{ matrix.artifact_platform }}." >&2
-            exit 1
+      - name: Resolve target SDK with the mirror manifest
+        id: sdk
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="${CANGJIE_SDK_MIRROR_BASE}/${{ needs.metadata.outputs.sdk_tag }}/manifest.v1.json"
+          mkdir -p "${RUNNER_TEMP}/cangjie" "${RUNNER_TEMP}/receipts"
+          "$ci_dir/bootstrap-cangjie-from-mirror.sh" \
+            "$manifest" \
+            "${{ matrix.sdk_platform }}" \
+            "${RUNNER_TEMP}/cangjie" \
+            "${RUNNER_TEMP}/cangjie-env.sh" \
+            "${RUNNER_TEMP}/receipts/sdk-resolution.json"
+          cat "${RUNNER_TEMP}/receipts/sdk-resolution.json"
+          echo "sdk_url=$(python3 -c 'import json; print(json.load(open("'"${RUNNER_TEMP}"'/receipts/sdk-resolution.json"))["sdkUrl"])')" >> "$GITHUB_OUTPUT"
+
+      - name: Source generated Cangjie environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The mirror installer writes cangjie-env.sh; no shell rc is modified.
+          source "${RUNNER_TEMP}/cangjie-env.sh"
+          echo "CANGJIE_HOME=$CANGJIE_HOME" >> "$GITHUB_ENV"
+          echo "PATH=$PATH" >> "$GITHUB_ENV"
+
+      - name: Install OpenHarmony native sysroot
+        id: ohos
+        if: ${{ matrix.runtime_smoke == 'link-only' }}
+        uses: openharmony-rs/setup-ohos-sdk@eb82b94ef522b07269679195c2512f22e922ef3
+        with:
+          version: "6.1"
+          components: native
+          cache: "true"
+          mirror: "true"
+
+      - name: Prepare stdx and OpenHarmony sysroot in runner temporary space
+        shell: bash
+        env:
+          DEVECO_CANGJIE_HOME: ${{ steps.ohos.outputs.ohos_sdk_native }}
+        run: |
+          set -euo pipefail
+          source "${RUNNER_TEMP}/cangjie-env.sh"
+          export GITHUB_ENV GITHUB_PATH
+          chmod +x ./scripts/install_cangjie_ci.sh
+          ./scripts/install_cangjie_ci.sh \
+            --sdk-url "${{ steps.sdk.outputs.sdk_url }}" \
+            --sdk-dir "${RUNNER_TEMP}/cangjie" \
+            --stdx-dir "${RUNNER_TEMP}/cangjie_stdx" \
+            --stdx-repo "$CANGJIE_STDX_REPO" \
+            --stdx-ref "$CANGJIE_STDX_GIT_REF" \
+            --stdx-release-version "$CANGJIE_STDX_RELEASE_VERSION" \
+            --stdx-target "${{ matrix.target }}" \
+            --deveco-dir "${DEVECO_CANGJIE_HOME:-${RUNNER_TEMP}/deveco_cangjie}"
+          if [[ "${{ matrix.runtime_smoke }}" == link-only ]]; then
+            [[ -d "${DEVECO_CANGJIE_HOME:-}" ]] || { echo 'OpenHarmony native sysroot is required' >&2; exit 1; }
           fi
 
-          if [[ "${{ steps.bundle.conclusion }}" != "success" ]]; then
-            echo "Release bundle build failed for ${{ matrix.artifact_platform }}." >&2
-            exit 1
+      - name: Install native packaging tools
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -o Acquire::Retries=5
+          sudo apt-get install -y --no-install-recommends patchelf unzip zip
+
+      - name: Run Hap stdx/runtime probes
+        shell: bash
+        env:
+          HAP_BIN: ${{ steps.hap.outputs.hap_bin }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/receipts"
+          "$HAP_BIN" doctor stdx --project . --target "${{ matrix.target }}" > "${RUNNER_TEMP}/receipts/stdx-probe.json"
+          "$HAP_BIN" doctor runtime --project . --target "${{ matrix.target }}" > "${RUNNER_TEMP}/receipts/runtime-probe.json"
+
+      - name: Generate and execute reviewed Hap project bridge
+        shell: bash
+        env:
+          HAP_BIN: ${{ steps.hap.outputs.hap_bin }}
+          HAP_REVIEW_TOKEN: ${{ secrets.HAP_REVIEW_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The reviewed bridge executes the fixed cjpm build and cjpm test commands.
+          echo 'reviewed Hap bridge contract: cjpm build; cjpm test'
+          [[ -n "$HAP_REVIEW_TOKEN" ]] || { echo 'HAP_REVIEW_TOKEN is required for the reviewed Hap bridge receipt' >&2; exit 1; }
+          "$HAP_BIN" ci project-bridge-recipe \
+            --project . \
+            --receipt "${RUNNER_TEMP}/receipts/project-bridge.json" \
+            --recipe-output "${RUNNER_TEMP}/project-bridge.sh" \
+            --run-tests \
+            --review-token "$HAP_REVIEW_TOKEN" > "${RUNNER_TEMP}/receipts/project-bridge-plan.json"
+          chmod +x "${RUNNER_TEMP}/project-bridge.sh"
+          bash "${RUNNER_TEMP}/project-bridge.sh"
+
+      - name: Build exact target with Hap
+        id: build
+        shell: bash
+        env:
+          HAP_BIN: ${{ steps.hap.outputs.hap_bin }}
+        run: |
+          set -euo pipefail
+          source "${RUNNER_TEMP}/cangjie-env.sh"
+          "$HAP_BIN" build --project . --target "${{ matrix.target }}" > "${RUNNER_TEMP}/receipts/hap-build.json"
+          python3 - "${RUNNER_TEMP}/receipts/hap-build.json" <<'PY'
+          import json, pathlib, sys
+          data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          if not data.get("ok"):
+              raise SystemExit("Hap exact-target build receipt is not successful")
+          PY
+
+      - name: Package binary and WebPanel together
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "${RUNNER_TEMP}/cangjie-env.sh"
+          binary="target/release/bin/main"
+          if [[ "${{ matrix.target }}" == *-w64-mingw32 ]]; then binary="target/release/bin/main.exe"; fi
+          if [[ "${{ matrix.runtime_smoke }}" == link-only ]]; then binary="target/${{ matrix.target }}/release/bin/main"; fi
+          [[ -f "$binary" ]] || { echo "target binary not found: $binary" >&2; exit 1; }
+          chmod +x ./scripts/ci/package_release_bundle.sh
+          ./scripts/ci/package_release_bundle.sh \
+            --root . \
+            --binary "$binary" \
+            --target "${{ matrix.target }}" \
+            --version "${{ needs.metadata.outputs.package_version }}" \
+            --output-dir "${RUNNER_TEMP}/release-bundles" \
+            --runtime-root "${CANGJIE_HOME}"
+          mkdir -p "${RUNNER_TEMP}/receipts"
+          python3 - "${RUNNER_TEMP}/receipts/package-receipt.json" "${RUNNER_TEMP}/release-bundles" <<'PY'
+          import hashlib, json, pathlib, sys
+          receipt, directory = map(pathlib.Path, sys.argv[1:])
+          archives = sorted(directory.glob("*.zip")) + sorted(directory.glob("*.tar.gz"))
+          if len(archives) != 2:
+              raise SystemExit("package did not produce one zip and one tar.gz")
+          def sha(path):
+              h = hashlib.sha256()
+              with path.open("rb") as source:
+                  for chunk in iter(lambda: source.read(1024 * 1024), b""): h.update(chunk)
+              return h.hexdigest()
+          payload = {"schema":"soonlink-package-receipt-v1", "ok":True, "target":"${{ matrix.target }}", "archives":[{"name":p.name,"sha256":sha(p)} for p in archives], "webpanelIncluded":True}
+          receipt.write_text(json.dumps(payload, indent=2) + "\n")
+          PY
+
+      - name: Native runtime smoke or OHOS link-only proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/receipts"
+          if [[ "${{ matrix.runtime_smoke }}" == native ]]; then
+            archive="$(find "${RUNNER_TEMP}/release-bundles" -name '*.zip' -maxdepth 1 | head -n 1)"
+            smoke="${RUNNER_TEMP}/runtime-smoke"
+            rm -rf "$smoke"; mkdir -p "$smoke"
+            if [[ "${{ matrix.target }}" == *-w64-mingw32 ]]; then
+              python3 - "$archive" "$smoke" <<'PY'
+          import pathlib, sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              archive.extractall(sys.argv[2])
+          PY
+              binary="$(find "$smoke" -name 'soonlnk.exe' -type f | head -n 1)"
+              env -i SYSTEMROOT="${SYSTEMROOT:-C:\\Windows}" PATH=/usr/bin:/bin "$binary" --help >/dev/null
+            else
+              unzip -q "$archive" -d "$smoke"
+              binary="$(find "$smoke" -name soonlnk -type f | head -n 1)"
+              env -i HOME="$smoke" TMPDIR="$smoke" PATH=/usr/bin:/bin LANG=C LC_ALL=C "$binary" --help >/dev/null
+            fi
+            python3 - "${RUNNER_TEMP}/receipts/runtime-smoke.json" "${{ matrix.target }}" <<'PY'
+          import json, pathlib, sys
+          pathlib.Path(sys.argv[1]).write_text(json.dumps({"schema":"soonlink-runtime-smoke-receipt-v1","ok":True,"target":sys.argv[2],"sdkIndependentEnvironment":True,"command":"soonlnk --help"}, indent=2) + "\n")
+          PY
+          else
+            python3 - "${RUNNER_TEMP}/receipts/runtime-smoke.json" "${{ matrix.target }}" <<'PY'
+          import json, pathlib, sys
+          pathlib.Path(sys.argv[1]).write_text(json.dumps({"schema":"soonlink-cross-link-receipt-v1","ok":True,"target":sys.argv[2],"runtimeSmokeVerified":False,"status":"cross-built-link-proof-only","nonClaims":["OHOS artifact was not executed on this runner"]}, indent=2) + "\n")
+          PY
           fi
 
-          if [[ "${{ steps.artifact_upload.conclusion }}" != "success" ]]; then
-            echo "Artifact upload failed for ${{ matrix.artifact_platform }}." >&2
-            exit 1
-          fi
+      - name: Upload receipts and release bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoonLnk-${{ needs.metadata.outputs.package_version }}-${{ matrix.artifact_platform }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/receipts/*.json
+            ${{ runner.temp }}/release-bundles/*.zip
+            ${{ runner.temp }}/release-bundles/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
 
   publish:
-    needs:
-      - metadata
-      - bundles
+    needs: [metadata, bundles]
     if: ${{ needs.metadata.outputs.publish_release == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Prepare release asset directory
-        shell: bash
-        run: mkdir -p dist/release-assets
-
-      - name: Download platform bundle artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          pattern: SoonLnk-*
+          pattern: SoonLnk-${{ needs.metadata.outputs.package_version }}-*
           path: dist/release-assets
           merge-multiple: true
-
-      - name: Show downloaded release assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          find dist/release-assets -maxdepth 1 -type f -print | sort
-
-      - name: Add compose deployment assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp compose.yaml dist/release-assets/soonlink-core-compose.yaml
-          cp compose.release.yaml dist/release-assets/soonlink-core-compose.release.yaml
-          cp .env.example dist/release-assets/soonlink-core.env.example
-
-      - name: Build checksum file
+      - name: Aggregate artifact checksums
         shell: bash
         run: |
           set -euo pipefail
           cd dist/release-assets
-          sha256sum ./* > SHA256SUMS
-
-      - name: Build release body
-        id: body
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          body_path="dist/release-body.md"
-          {
-            echo "SoonLink Core release assets for \`${{ needs.metadata.outputs.release_tag }}\`."
-            echo
-            echo "Package version: \`${{ needs.metadata.outputs.package_version }}\`."
-            echo
-            echo "Platform bundle publishing is collected from matrix artifacts and published by this job for the current release tag."
-            echo
-            echo "Expected release bundle groups:"
-            echo "- Linux-x86_64"
-            echo "- Linux-aarch64"
-            echo "- macOS-x86_64"
-            echo "- macOS-aarch64"
-            echo "- Windows-x86_64-exe"
-            echo
-            echo "> OpenHarmony bundle publication remains conditional on the resolved toolchain URL."
-            echo
-            echo "Each bundle already includes the runtime binary together with:"
-            echo "- web/"
-            echo "- config/"
-            echo "- README / CHANGELOG"
-            echo "- compose and env examples"
-            echo
-            echo "Included deployment assets:"
-            echo "- soonlink-core-compose.yaml"
-            echo "- soonlink-core-compose.release.yaml"
-            echo "- soonlink-core.env.example"
-            echo "- SHA256SUMS"
-          } > "${body_path}"
-
-          echo "path=${body_path}" >> "${GITHUB_OUTPUT}"
-
-      - name: Publish GitHub release
+          find . -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          test -s SHA256SUMS
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.metadata.outputs.release_tag }}
           target_commitish: ${{ github.sha }}
           files: dist/release-assets/*
-          body_path: ${{ steps.body.outputs.path }}
+
+  dispatch-homebrew-tap:
+    needs: [metadata, publish]
+    if: ${{ needs.metadata.outputs.publish_release == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      HOMEBREW_TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Dispatch Homebrew tap publish
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+          TAP_BRANCH: ${{ vars.HOMEBREW_TAP_BRANCH != '' && vars.HOMEBREW_TAP_BRANCH || 'main' }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$HOMEBREW_TAP_REPO" || -z "$HOMEBREW_TAP_TOKEN" ]]; then
+            echo "::warning::Skipping Homebrew tap dispatch because repository variables or token are not configured."
+            exit 0
+          fi
+          payload="$(python3 -c 'import json, os; print(json.dumps({"ref": os.environ["GITHUB_REF_NAME"], "inputs": {"release_tag": os.environ["RELEASE_TAG"], "tap_repo": os.environ["HOMEBREW_TAP_REPO"], "tap_branch": os.environ["TAP_BRANCH"]}}))')"
+          curl --retry 3 --retry-delay 2 -fsSL \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/homebrew-tap.yml/dispatches" \
+            -d "$payload"

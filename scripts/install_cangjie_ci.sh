@@ -273,9 +273,19 @@ find_stdx_alias_source() {
         \( -name 'windows_x86_64_cjnative' -o -name '*windows*x86_64*cjnative*' -o -name '*x86_64*w64*mingw32*' \) \
         2>/dev/null | head -n 1
       ;;
+    windows_aarch64_cjnative)
+      find "$stdx_root" -mindepth 1 -maxdepth 1 -type d \
+        \( -name 'windows_aarch64_cjnative' -o -name '*windows*aarch64*cjnative*' -o -name '*windows*arm64*cjnative*' -o -name '*aarch64*w64*mingw32*' \) \
+        2>/dev/null | head -n 1
+      ;;
     linux_ohos_aarch64_cjnative)
       find "$stdx_root" -mindepth 1 -maxdepth 1 -type d \
         \( -name 'linux_ohos_aarch64_cjnative' -o -name '*linux*ohos*aarch64*cjnative*' -o -name '*ohos*aarch64*llvm*' \) \
+        2>/dev/null | head -n 1
+      ;;
+    linux_ohos_x86_64_cjnative)
+      find "$stdx_root" -mindepth 1 -maxdepth 1 -type d \
+        \( -name 'linux_ohos_x86_64_cjnative' -o -name '*linux*ohos*x86_64*cjnative*' -o -name '*ohos*x86_64*llvm*' \) \
         2>/dev/null | head -n 1
       ;;
     *)
@@ -303,8 +313,10 @@ stdx_alias_name_for_target() {
     x86_64-apple-darwin) printf '%s\n' "cj_stdx_darwin_x86_64_llvm" ;;
     aarch64-apple-darwin) printf '%s\n' "cj_stdx_darwin_aarch64_llvm" ;;
     x86_64-w64-mingw32) printf '%s\n' "windows_x86_64_cjnative" ;;
+    aarch64-w64-mingw32) printf '%s\n' "windows_aarch64_cjnative" ;;
     aarch64-linux-ohos) printf '%s\n' "linux_ohos_aarch64_cjnative" ;;
     aarch64-linux-ohos-cjnative) printf '%s\n' "linux_ohos_aarch64_cjnative" ;;
+    x86_64-linux-ohos) printf '%s\n' "linux_ohos_x86_64_cjnative" ;;
     *)
       return 1
       ;;
@@ -318,8 +330,10 @@ stdx_release_platform_for_target() {
     x86_64-apple-darwin) printf '%s\n' "mac-x64" ;;
     aarch64-apple-darwin) printf '%s\n' "mac-aarch64" ;;
     x86_64-w64-mingw32) printf '%s\n' "windows-x64" ;;
+    aarch64-w64-mingw32) printf '%s\n' "windows-aarch64" ;;
     aarch64-linux-ohos) printf '%s\n' "ohos-aarch64" ;;
     aarch64-linux-ohos-cjnative) printf '%s\n' "ohos-aarch64" ;;
+    x86_64-linux-ohos) printf '%s\n' "ohos-x64" ;;
     *)
       return 1
       ;;
@@ -328,14 +342,14 @@ stdx_release_platform_for_target() {
 
 requires_deveco_target() {
   case "$1" in
-    aarch64-linux-ohos|aarch64-linux-ohos-cjnative) return 0 ;;
+    aarch64-linux-ohos|aarch64-linux-ohos-cjnative|x86_64-linux-ohos) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 stdx_prefers_release_bundle_for_target() {
   case "$1" in
-    x86_64-apple-darwin|aarch64-apple-darwin|x86_64-w64-mingw32|aarch64-linux-ohos|aarch64-linux-ohos-cjnative)
+    x86_64-apple-darwin|aarch64-apple-darwin|x86_64-w64-mingw32|aarch64-w64-mingw32|aarch64-linux-ohos|aarch64-linux-ohos-cjnative|x86_64-linux-ohos)
       return 0
       ;;
     *)
@@ -858,7 +872,9 @@ if [ -d "$CANGJIE_STDX_PATH" ]; then
   ensure_stdx_alias "$CANGJIE_STDX_PATH" "cj_stdx_darwin_x86_64_llvm"
   ensure_stdx_alias "$CANGJIE_STDX_PATH" "cj_stdx_darwin_aarch64_llvm"
   ensure_stdx_alias "$CANGJIE_STDX_PATH" "windows_x86_64_cjnative"
+  ensure_stdx_alias "$CANGJIE_STDX_PATH" "windows_aarch64_cjnative"
   ensure_stdx_alias "$CANGJIE_STDX_PATH" "linux_ohos_aarch64_cjnative"
+  ensure_stdx_alias "$CANGJIE_STDX_PATH" "linux_ohos_x86_64_cjnative"
 fi
 
 verify_requested_stdx_targets "$CANGJIE_STDX_PATH"
