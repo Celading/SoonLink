@@ -8,10 +8,9 @@
   description = "SoonLink / 溯联 file transfer service powered by Ignite"
 
 [dependencies]
-  ignite = { git = "https://gitcode.com/cinyu/ignite-cangjie.git" }
-  lisi = { git = "https://gitcode.com/cinyu/lisi" }
-  jinguissl = { git = "https://gitcode.com/cinyu/jinguiSSL.git" }
-  jinguissl_core = { git = "https://gitcode.com/CjKu/JinguiCore.git" }
+  ignite = { git = "https://github.com/Celading/Ignite.git" }
+  lisi = { git = "https://gitcode.com/cinyu/lisi.git" }
+  JinguiSSL = { git = "https://github.com/CangjieKu/JinGuiSSL.git" }
   seajson = { git = "https://gitcode.com/CjKu/SeaJson.git" }
 
 [target.x86_64-w64-mingw32]

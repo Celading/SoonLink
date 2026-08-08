@@ -44,9 +44,11 @@ env:
   CANGJIE_STDX_GIT_REF: ${{ vars.CANGJIE_STDX_GIT_REF != '' && vars.CANGJIE_STDX_GIT_REF || 'v1.1.0-beta.25' }}
   CANGJIE_STDX_REPO: ${{ vars.CANGJIE_STDX_REPO != '' && vars.CANGJIE_STDX_REPO || 'https://gitcode.com/Cangjie/cangjie_stdx' }}
   CANGJIE_STDX_RELEASE_VERSION: ${{ vars.CANGJIE_STDX_RELEASE_VERSION }}
-  IGNITE_GIT_URL: ${{ vars.IGNITE_GIT_URL != '' && vars.IGNITE_GIT_URL || 'https://gitcode.com/cinyu/ignite-cangjie.git' }}
+  IGNITE_GIT_URL: ${{ vars.IGNITE_GIT_URL != '' && vars.IGNITE_GIT_URL || 'https://github.com/Celading/Ignite.git' }}
   LISI_GIT_URL: ${{ vars.LISI_GIT_URL != '' && vars.LISI_GIT_URL || 'https://gitcode.com/cinyu/lisi.git' }}
-  JINGUISSL_GIT_URL: ${{ vars.JINGUISSL_GIT_URL != '' && vars.JINGUISSL_GIT_URL || 'https://gitcode.com/cinyu/jinguiSSL.git' }}
+  JINGUISSL_GIT_URL: ${{ vars.JINGUISSL_GIT_URL != '' && vars.JINGUISSL_GIT_URL || 'https://github.com/CangjieKu/JinGuiSSL.git' }}
+  JINGUISSL_CORE_GIT_URL: ${{ vars.JINGUISSL_CORE_GIT_URL != '' && vars.JINGUISSL_CORE_GIT_URL || 'https://github.com/CangjieKu/JinGuiSSLCore.git' }}
+  SEAJSON_GIT_URL: ${{ vars.SEAJSON_GIT_URL != '' && vars.SEAJSON_GIT_URL || 'https://gitcode.com/CjKu/SeaJson.git' }}
 
 jobs:
   metadata:
@@ -59,6 +61,7 @@ jobs:
       matrix: ${{ steps.meta.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
+
       - name: Resolve release matrix
         id: meta
         shell: bash
@@ -118,6 +121,32 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Prepare GitHub dependency projection
+        shell: bash
+        run: |
+          set -euo pipefail
+          deps_root="${RUNNER_TEMP}/soonlink-deps"
+          workspace_root="${RUNNER_TEMP}/soonlink-release-workspace"
+          mkdir -p "$deps_root"
+          clone_dependency() {
+            local url="$1"
+            local destination="$2"
+            git clone --depth 1 "$url" "$destination"
+          }
+          clone_dependency "$IGNITE_GIT_URL" "$deps_root/Ignite0500"
+          clone_dependency "$LISI_GIT_URL" "$deps_root/lisi"
+          clone_dependency "$JINGUISSL_GIT_URL" "$deps_root/jinguiSSL"
+          clone_dependency "$JINGUISSL_CORE_GIT_URL" "$deps_root/JinguiCore"
+          clone_dependency "$SEAJSON_GIT_URL" "$deps_root/SeaJson"
+          sh ./scripts/prepare_release_workspace.sh \
+            --output "$workspace_root" \
+            --ignite "$deps_root/Ignite0500" \
+            --lisi "$deps_root/lisi" \
+            --jinguissl "$deps_root/jinguiSSL" \
+            --jinguissl-core "$deps_root/JinguiCore" \
+            --seajson "$deps_root/SeaJson"
+          echo "SOONLINK_PROJECT_DIR=$workspace_root/SoonLink-Core" >> "$GITHUB_ENV"
 
       - name: Bootstrap pinned HapPub/Hap release asset
         id: hap
@@ -361,8 +390,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/receipts"
-          "$HAP_BIN" doctor stdx --project . --target "${{ matrix.target }}" > "${RUNNER_TEMP}/receipts/stdx-probe.json"
-          "$HAP_BIN" doctor runtime --project . --target "${{ matrix.target }}" > "${RUNNER_TEMP}/receipts/runtime-probe.json"
+          "$HAP_BIN" doctor stdx --project "$SOONLINK_PROJECT_DIR" --target "${{ matrix.target }}" > "${RUNNER_TEMP}/receipts/stdx-probe.json"
+          "$HAP_BIN" doctor runtime --project "$SOONLINK_PROJECT_DIR" --target "${{ matrix.target }}" > "${RUNNER_TEMP}/receipts/runtime-probe.json"
 
       - name: Generate and execute reviewed Hap project bridge
         if: ${{ matrix.runtime_smoke == 'native' }}
@@ -375,7 +404,7 @@ jobs:
           # The reviewed bridge executes the fixed cjpm build and cjpm test commands.
           echo 'reviewed Hap bridge contract: cjpm build; cjpm test'
           "$HAP_BIN" ci project-bridge-recipe \
-            --project . \
+            --project "$SOONLINK_PROJECT_DIR" \
             --receipt "${RUNNER_TEMP}/receipts/project-bridge.json" \
             --recipe-output "${RUNNER_TEMP}/project-bridge.sh" \
             --run-tests \
@@ -424,7 +453,7 @@ jobs:
           set +u
           source "${RUNNER_TEMP}/cangjie-env.sh"
           set -u
-          "$HAP_BIN" build --project . --target "${{ matrix.target }}" > "${RUNNER_TEMP}/receipts/hap-build.json"
+          "$HAP_BIN" build --project "$SOONLINK_PROJECT_DIR" --target "${{ matrix.target }}" > "${RUNNER_TEMP}/receipts/hap-build.json"
           python3 - "${RUNNER_TEMP}/receipts/hap-build.json" <<'PY'
           import json, pathlib, sys
           data = json.loads(pathlib.Path(sys.argv[1]).read_text())
@@ -440,13 +469,13 @@ jobs:
           set +u
           source "${RUNNER_TEMP}/cangjie-env.sh"
           set -u
-          binary="target/release/bin/main"
-          if [[ "${{ matrix.target }}" == *-w64-mingw32 ]]; then binary="target/release/bin/main.exe"; fi
-          if [[ "${{ matrix.runtime_smoke }}" == link-only ]]; then binary="target/${{ matrix.target }}/release/bin/main"; fi
+          binary="$SOONLINK_PROJECT_DIR/target/release/bin/main"
+          if [[ "${{ matrix.target }}" == *-w64-mingw32 ]]; then binary="$SOONLINK_PROJECT_DIR/target/release/bin/main.exe"; fi
+          if [[ "${{ matrix.runtime_smoke }}" == link-only ]]; then binary="$SOONLINK_PROJECT_DIR/target/${{ matrix.target }}/release/bin/main"; fi
           [[ -f "$binary" ]] || { echo "target binary not found: $binary" >&2; exit 1; }
-          chmod +x ./scripts/ci/package_release_bundle.sh
-          ./scripts/ci/package_release_bundle.sh \
-            --root . \
+          chmod +x "$SOONLINK_PROJECT_DIR/scripts/ci/package_release_bundle.sh"
+          "$SOONLINK_PROJECT_DIR/scripts/ci/package_release_bundle.sh" \
+            --root "$SOONLINK_PROJECT_DIR" \
             --binary "$binary" \
             --target "${{ matrix.target }}" \
             --version "${{ needs.metadata.outputs.package_version }}" \

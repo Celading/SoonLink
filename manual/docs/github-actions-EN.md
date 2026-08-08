@@ -105,8 +105,8 @@ GitHub mirrors can be supplied when needed:
 
 ```toml
 ignite = { git = "https://github.com/Celading/Ignite.git" }
-JinguiSSL = { git = "https://github.com/CangjieKu/JinGuiSSLCore.git" }
-jinguissl_core = { git = "https://github.com/CangjieKu/JinGuiSSL.git" }
+JinguiSSL = { git = "https://github.com/CangjieKu/JinGuiSSL.git" }
+jinguissl_core = { git = "https://github.com/CangjieKu/JinGuiSSLCore.git" }
 seajson = { git = "https://github.com/CangjieKu/SeaJson.git" }
 ```
 

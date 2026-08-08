@@ -24,8 +24,8 @@ env:
   DEVECO_CANGJIE_OHOS_AARCH64_URL: ${{ vars.DEVECO_CANGJIE_OHOS_AARCH64_URL }}
   IGNITE_GIT_URL: ${{ vars.IGNITE_GIT_URL != '' && vars.IGNITE_GIT_URL || 'https://gitcode.com/cinyu/ignite-cangjie.git' }}
   LISI_GIT_URL: ${{ vars.LISI_GIT_URL != '' && vars.LISI_GIT_URL || 'https://gitcode.com/cinyu/lisi.git' }}
-  JINGUISSL_GIT_URL: ${{ vars.JINGUISSL_GIT_URL != '' && vars.JINGUISSL_GIT_URL || 'https://gitcode.com/cinyu/jinguiSSL.git' }}
-  JINGUISSL_CORE_GIT_URL: ${{ vars.JINGUISSL_CORE_GIT_URL != '' && vars.JINGUISSL_CORE_GIT_URL || 'https://gitcode.com/CjKu/JinguiCore.git' }}
+  JINGUISSL_GIT_URL: ${{ vars.JINGUISSL_GIT_URL != '' && vars.JINGUISSL_GIT_URL || 'https://github.com/CangjieKu/JinGuiSSL.git' }}
+  JINGUISSL_CORE_GIT_URL: ${{ vars.JINGUISSL_CORE_GIT_URL != '' && vars.JINGUISSL_CORE_GIT_URL || 'https://github.com/CangjieKu/JinGuiSSLCore.git' }}
   SEAJSON_GIT_URL: ${{ vars.SEAJSON_GIT_URL != '' && vars.SEAJSON_GIT_URL || 'https://gitcode.com/CjKu/SeaJson.git' }}
 
 jobs:

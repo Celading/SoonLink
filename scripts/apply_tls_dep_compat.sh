@@ -68,6 +68,51 @@ resolve_package_dir() {
 LISI_DIR="$(resolve_package_dir "$WORKSPACE_DIR/lisi" "lisi")"
 IGNITE_DIR="$(resolve_package_dir "$WORKSPACE_DIR/Ignite0500" "ignite")"
 
+patch_ignite_jinguissl_facade() {
+  manifest="$IGNITE_DIR/cjpm.toml"
+  if grep -q '^  jinguissl = {' "$manifest"; then
+    sedi 's#^  jinguissl = { .*#  JinguiSSL = { path = "../jinguiSSL" }#' "$manifest"
+  fi
+
+  find "$IGNITE_DIR/src" -type f -name '*.cj' | while IFS= read -r file; do
+    if grep -q '^import jinguissl\.' "$file"; then
+      sedi 's/^import jinguissl\./import JinguiSSL.jinguissl./' "$file"
+    fi
+  done
+}
+
+patch_ignite_facade_api_moves() {
+  python_bin="$(command -v python3 || command -v python || true)"
+  [ -n "$python_bin" ] || return 0
+
+  "$python_bin" - "$IGNITE_DIR" <<'PY'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+live_import = "import JinguiSSL.jinguissl.live.ContractTlsSessionCache\n"
+
+tls_api = root / "src/api2/tls.cj"
+if tls_api.is_file():
+    lines = tls_api.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines = [line for line in lines if line.strip() != "ContractTlsSessionCache,"]
+    if not any(line.strip() == live_import.strip() for line in lines):
+        for index, line in enumerate(lines):
+            if line.startswith("import JinguiSSL.jinguissl.contract."):
+                lines.insert(index, live_import)
+                break
+    tls_api.write_text("".join(lines), encoding="utf-8")
+
+link_test = root / "src/tests/jinguissl_contract_link_test.cj"
+if link_test.is_file():
+    text = link_test.read_text(encoding="utf-8")
+    if "ContractTlsSessionCache" in text and live_import.strip() not in text:
+        marker = "import JinguiSSL.jinguissl.contract.*\n"
+        text = text.replace(marker, marker + live_import, 1)
+        link_test.write_text(text, encoding="utf-8")
+PY
+}
+
 write_lisi_helper() {
   file="$LISI_DIR/src/net/TlsTool/private_key_compat.cj"
   mkdir -p "$(dirname "$file")"
@@ -174,6 +219,8 @@ patch_ignite_tls_api() {
   strip_ignite_raw_pem_private_key_fallback "$file"
 }
 
+patch_ignite_jinguissl_facade
+patch_ignite_facade_api_moves
 write_lisi_helper
 write_ignite_helper
 patch_lisi_tls_tool
