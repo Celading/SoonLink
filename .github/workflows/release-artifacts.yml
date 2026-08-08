@@ -237,15 +237,33 @@ jobs:
           source "${RUNNER_TEMP}/cangjie-env.sh"
           export GITHUB_ENV GITHUB_PATH
           chmod +x ./scripts/install_cangjie_ci.sh
+          prepare_log="${RUNNER_TEMP}/receipts/toolchain-prepare.log"
+          set +e
           ./scripts/install_cangjie_ci.sh \
             --sdk-url "${{ steps.sdk.outputs.sdk_url }}" \
             --sdk-dir "${RUNNER_TEMP}/cangjie" \
             --stdx-dir "${RUNNER_TEMP}/cangjie_stdx" \
             --stdx-repo "$CANGJIE_STDX_REPO" \
             --stdx-ref "$CANGJIE_STDX_GIT_REF" \
-            --stdx-release-version "$CANGJIE_STDX_RELEASE_VERSION" \
+            --stdx-release-version "${CANGJIE_STDX_RELEASE_VERSION:-}" \
             --stdx-target "${{ matrix.target }}" \
-            --deveco-dir "${DEVECO_CANGJIE_HOME:-${RUNNER_TEMP}/deveco_cangjie}"
+            --deveco-dir "${DEVECO_CANGJIE_HOME:-${RUNNER_TEMP}/deveco_cangjie}" \
+            2>&1 | tee "$prepare_log"
+          prepare_status=${PIPESTATUS[0]}
+          set -e
+          python3 - "${RUNNER_TEMP}/receipts/toolchain-prepare.json" "$prepare_log" "$prepare_status" "${{ matrix.target }}" <<'PY'
+          import json, pathlib, sys
+          output, log_path, status, target = sys.argv[1:]
+          log = pathlib.Path(log_path).read_text(errors="replace")
+          pathlib.Path(output).write_text(json.dumps({
+              "schema": "soonlink-toolchain-prepare-receipt-v1",
+              "ok": status == "0",
+              "target": target,
+              "exitCode": int(status),
+              "logTail": log[-12000:]
+          }, indent=2) + "\n")
+          PY
+          [[ "$prepare_status" -eq 0 ]] || exit "$prepare_status"
           if [[ "${{ matrix.runtime_smoke }}" == link-only ]]; then
             [[ -d "${DEVECO_CANGJIE_HOME:-}" ]] || { echo 'OpenHarmony native sysroot is required' >&2; exit 1; }
           fi
