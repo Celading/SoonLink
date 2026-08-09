@@ -453,13 +453,34 @@ jobs:
           set +u
           source "${RUNNER_TEMP}/cangjie-env.sh"
           set -u
-          "$HAP_BIN" build --project "$SOONLINK_PROJECT_DIR" --target "${{ matrix.target }}" > "${RUNNER_TEMP}/receipts/hap-build.json"
-          python3 - "${RUNNER_TEMP}/receipts/hap-build.json" <<'PY'
+          build_log="${RUNNER_TEMP}/receipts/hap-build.log"
+          build_receipt="${RUNNER_TEMP}/receipts/hap-build.json"
+          set +e
+          "$HAP_BIN" build --project "$SOONLINK_PROJECT_DIR" --target "${{ matrix.target }}" 2>&1 | tee "$build_log"
+          build_status=${PIPESTATUS[0]}
+          set -e
+          python3 - "$build_receipt" "$build_log" "$build_status" "${{ matrix.target }}" <<'PY'
           import json, pathlib, sys
-          data = json.loads(pathlib.Path(sys.argv[1]).read_text())
-          if not data.get("ok"):
-              raise SystemExit("Hap exact-target build receipt is not successful")
+          receipt, log_path, status, target = sys.argv[1:]
+          log = pathlib.Path(log_path).read_text(errors="replace")
+          pathlib.Path(receipt).write_text(json.dumps({
+              "schema": "soonlink-hap-exact-target-build-receipt-v1",
+              "ok": status == "0",
+              "target": target,
+              "exitCode": int(status),
+              "hapOutput": log[-12000:],
+              "source": "Hap build exit status plus preserved output",
+          }, indent=2) + "\n")
           PY
+          if [[ "$build_status" -ne 0 ]]; then
+            python3 - "$build_log" "$build_status" <<'PY'
+          import pathlib, sys
+          log = pathlib.Path(sys.argv[1]).read_text(errors="replace")[-6000:]
+          message = log.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=SoonLink Hap exact-target build failed::exit={sys.argv[2]}; {message}")
+          PY
+            exit "$build_status"
+          fi
 
       - name: Package binary and WebPanel together
         id: package
@@ -537,6 +558,7 @@ jobs:
           name: SoonLnk-${{ needs.metadata.outputs.package_version }}-${{ matrix.artifact_platform }}-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/receipts/*.json
+            ${{ runner.temp }}/receipts/*.log
             ${{ runner.temp }}/release-bundles/*.zip
             ${{ runner.temp }}/release-bundles/*.tar.gz
           if-no-files-found: warn
