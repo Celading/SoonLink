@@ -407,6 +407,7 @@ jobs:
             --root "$(dirname "$SOONLINK_PROJECT_DIR")"
             --target "${{ matrix.target }}"
             --receipt "${RUNNER_TEMP}/receipts/exact-target-projection.json"
+            --stdx-alias "${{ matrix.stdx_alias }}"
           )
           if [[ "${{ matrix.runtime_smoke }}" == link-only ]]; then
             arch="x86_64"

@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ohos-sysroot", type=pathlib.Path)
     parser.add_argument("--ohos-target-lib", type=pathlib.Path)
     parser.add_argument("--ohos-llvm-target-lib", type=pathlib.Path)
+    parser.add_argument("--stdx-alias")
     return parser.parse_args()
 
 
@@ -53,6 +54,47 @@ def ohos_compile_option(args: argparse.Namespace) -> str | None:
         parts.append(f'-L "{args.ohos_llvm_target_lib}"')
     parts.append(f'--sysroot "{args.ohos_sysroot}"')
     return "  compile-option = \"" + " ".join(parts).replace('"', '\\"') + "\"\n"
+
+
+def project_ohos_bin_dependency(output: list[str], args: argparse.Namespace) -> list[str]:
+    if not args.stdx_alias or "linux-ohos" not in args.target:
+        return output
+
+    section = f"target.{args.target}.bin-dependencies"
+    header_index: int | None = None
+    next_header_index = len(output)
+    for index, line in enumerate(output):
+        match = HEADER_PATTERN.match(line.rstrip("\r\n"))
+        if not match:
+            continue
+        current = match.group(1).strip()
+        if current == section:
+            header_index = index
+            continue
+        if header_index is not None:
+            next_header_index = index
+            break
+
+    path_option = (
+        "    path-option = [\"${CANGJIE_STDX_PATH}/"
+        + args.stdx_alias
+        + "/static/stdx\"]\n"
+    )
+    if header_index is None:
+        if output and output[-1].strip():
+            output.append("\n")
+        output.extend([f"  [{section}]\n", path_option, "\n"])
+        return output
+
+    replaced = False
+    for index in range(header_index + 1, next_header_index):
+        if re.match(r"^\s*path-option\s*=", output[index]):
+            output[index] = path_option
+            replaced = True
+            break
+    if not replaced:
+        output.insert(header_index + 1, path_option)
+    return output
 
 
 def project_manifest(path: pathlib.Path, args: argparse.Namespace) -> list[str]:
@@ -118,6 +160,8 @@ def project_manifest(path: pathlib.Path, args: argparse.Namespace) -> list[str]:
                     output.append("\n")
                 output.extend(insertion)
 
+    output = project_ohos_bin_dependency(output, args)
+
     projected = "".join(output)
     if projected != original:
         with tempfile.NamedTemporaryFile(
@@ -163,6 +207,9 @@ def main() -> int:
                 "manifests": manifests,
                 "ohosCompileOptionRewritten": bool(
                     args.ohos_sysroot and "linux-ohos" in args.target
+                ),
+                "ohosBinDependencyProjected": bool(
+                    args.stdx_alias and "linux-ohos" in args.target
                 ),
                 "projectionManifestsMutated": any(
                     item["removedTargetSections"] for item in manifests
