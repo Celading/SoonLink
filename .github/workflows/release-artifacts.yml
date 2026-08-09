@@ -399,6 +399,15 @@ jobs:
           sudo apt-get update -o Acquire::Retries=5
           sudo apt-get install -y --no-install-recommends patchelf unzip zip
 
+      - name: Project temporary manifests to the exact target
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/scripts/ci/project_exact_target_manifest.py" \
+            --root "$(dirname "$SOONLINK_PROJECT_DIR")" \
+            --target "${{ matrix.target }}" \
+            --receipt "${RUNNER_TEMP}/receipts/exact-target-projection.json"
+
       - name: Run Hap stdx/runtime probes
         shell: bash
         env:
@@ -417,14 +426,20 @@ jobs:
           HAP_REVIEW_TOKEN: reviewed-${{ github.sha }}-${{ matrix.target }}
         run: |
           set -euo pipefail
-          # The reviewed bridge executes the fixed cjpm build and cjpm test commands.
-          echo 'reviewed Hap bridge contract: cjpm build; cjpm test'
-          "$HAP_BIN" ci project-bridge-recipe \
-            --project "$SOONLINK_PROJECT_DIR" \
-            --receipt "${RUNNER_TEMP}/receipts/project-bridge.json" \
-            --recipe-output "${RUNNER_TEMP}/project-bridge.sh" \
-            --run-tests \
-            --review-token "$HAP_REVIEW_TOKEN" > "${RUNNER_TEMP}/receipts/project-bridge-plan.json"
+          bridge_args=(
+            --project "$SOONLINK_PROJECT_DIR"
+            --receipt "${RUNNER_TEMP}/receipts/project-bridge.json"
+            --recipe-output "${RUNNER_TEMP}/project-bridge.sh"
+            --review-token "$HAP_REVIEW_TOKEN"
+          )
+          if [[ "${{ matrix.target }}" != *-w64-mingw32 ]]; then
+            bridge_args+=(--run-tests)
+            echo 'reviewed Hap bridge contract: cjpm build; cjpm test'
+          else
+            echo 'reviewed Hap bridge contract: cjpm build; serialized cjpm test follows'
+          fi
+          "$HAP_BIN" ci project-bridge-recipe "${bridge_args[@]}" \
+            > "${RUNNER_TEMP}/receipts/project-bridge-plan.json"
           chmod +x "${RUNNER_TEMP}/project-bridge.sh"
           bridge_log="${RUNNER_TEMP}/receipts/project-bridge.log"
           set +e
@@ -439,6 +454,44 @@ jobs:
           print(f"::error title=SoonLink project bridge failed::{message}")
           PY
             exit "$bridge_status"
+          fi
+
+      - name: Run serialized Windows tests
+        if: ${{ matrix.target == 'x86_64-w64-mingw32' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +u
+          source "${RUNNER_TEMP}/cangjie-env.sh"
+          set -u
+          test_log="${RUNNER_TEMP}/receipts/windows-test.log"
+          test_receipt="${RUNNER_TEMP}/receipts/windows-test.json"
+          set +e
+          (cd "$SOONLINK_PROJECT_DIR" && cjpm test --jobs 1 --parallel 1 --no-progress) 2>&1 | tee "$test_log"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          python3 - "$test_receipt" "$test_log" "$test_status" <<'PY'
+          import json, pathlib, sys
+          receipt, log_path, status = sys.argv[1:]
+          log = pathlib.Path(log_path).read_text(errors="replace")
+          pathlib.Path(receipt).write_text(json.dumps({
+              "schema": "soonlink-windows-serialized-test-receipt-v1",
+              "ok": status == "0",
+              "target": "x86_64-w64-mingw32",
+              "exitCode": int(status),
+              "command": "cjpm test --jobs 1 --parallel 1 --no-progress",
+              "reason": "avoid hosted Windows unittest worker result merge drift",
+              "output": log[-12000:]
+          }, indent=2) + "\n")
+          PY
+          if [[ "$test_status" -ne 0 ]]; then
+            python3 - "$test_log" "$test_status" <<'PY'
+          import pathlib, sys
+          log = pathlib.Path(sys.argv[1]).read_text(errors="replace")[-6000:]
+          message = log.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=SoonLink serialized Windows tests failed::exit={sys.argv[2]}; {message}")
+          PY
+            exit "$test_status"
           fi
 
       - name: Record OHOS test boundary
