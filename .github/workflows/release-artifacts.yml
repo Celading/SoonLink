@@ -716,6 +716,25 @@ jobs:
           pattern: SoonLnk-${{ needs.metadata.outputs.package_version }}-*
           path: dist/release-assets
           merge-multiple: true
+      - name: Flatten release bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          flat_dir="${RUNNER_TEMP}/soonlink-release-assets"
+          rm -rf "$flat_dir"
+          mkdir -p "$flat_dir"
+          find dist/release-assets -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print0 \
+            | while IFS= read -r -d '' archive; do
+                cp "$archive" "$flat_dir/$(basename "$archive")"
+              done
+          archive_count="$(find "$flat_dir" -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) | wc -l | tr -d ' ')"
+          [[ "$archive_count" == "14" ]] || {
+            echo "expected 14 platform archives (7 targets x 2 formats), found $archive_count" >&2
+            find "$flat_dir" -maxdepth 1 -type f -print >&2
+            exit 1
+          }
+          rm -rf dist/release-assets
+          mv "$flat_dir" dist/release-assets
       - name: Aggregate artifact checksums
         shell: bash
         run: |
