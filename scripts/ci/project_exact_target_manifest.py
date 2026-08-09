@@ -44,6 +44,7 @@ def ohos_compile_option(args: argparse.Namespace) -> str | None:
     parts = [
         f'-B "{args.cangjie_llvm_bin}"',
         f'-B "{args.ohos_llvm_bin}"',
+        f'-B "{sysroot_target_lib}"',
         f'-L "{sysroot_target_lib}"',
     ]
     if args.ohos_target_lib and args.ohos_target_lib != sysroot_target_lib:
