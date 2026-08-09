@@ -92,21 +92,30 @@ def project_manifest(path: pathlib.Path, args: argparse.Namespace) -> list[str]:
             output.append(line)
 
     if replacement and not rewritten_compile_option:
-        rebuilt: list[str] = []
-        active_section = ""
-        inserted = False
-        for line in output:
+        base_section = f"target.{target}"
+        base_header_index: int | None = None
+        first_nested_index: int | None = None
+        for index, line in enumerate(output):
             match = HEADER_PATTERN.match(line.rstrip("\r\n"))
-            if match:
-                active_section = match.group(1).strip()
-            rebuilt.append(line)
-            if active_section == f"target.{target}" and line.rstrip("\r\n").startswith(
-                f"[target.{target}]"
-            ):
-                rebuilt.append(replacement)
-                inserted = True
-        if inserted:
-            output = rebuilt
+            if not match:
+                continue
+            section = match.group(1).strip()
+            if section == base_section:
+                base_header_index = index
+                break
+            if section.startswith(base_section + ".") and first_nested_index is None:
+                first_nested_index = index
+
+        if base_header_index is not None:
+            output.insert(base_header_index + 1, replacement)
+        else:
+            insertion = [f"[target.{target}]\n", replacement, "\n"]
+            if first_nested_index is not None:
+                output[first_nested_index:first_nested_index] = insertion
+            else:
+                if output and output[-1].strip():
+                    output.append("\n")
+                output.extend(insertion)
 
     projected = "".join(output)
     if projected != original:

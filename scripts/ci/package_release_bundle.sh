@@ -63,7 +63,7 @@ copy_tree() {
   if command -v rsync >/dev/null 2>&1; then
     rsync -a --exclude='.git/' --exclude='.DS_Store' "$source/" "$destination/"
   else
-    tar --exclude='.git' --exclude='.DS_Store' -cf - -C "$source" . | tar -xf - -C "$destination"
+    cp -R "$source/." "$destination/"
   fi
 }
 
@@ -196,18 +196,20 @@ payload = {
 pathlib.Path(out).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 PY
 
-python3 - "$stage_root" "$archive_root.zip" <<'PY'
+python3 - "$stage_root" "$archive_root.zip" "$archive_root.tar.gz" <<'PY'
 import pathlib
 import sys
+import tarfile
 import zipfile
 
-source, archive = map(pathlib.Path, sys.argv[1:])
-with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
+source, zip_archive, tar_archive = map(pathlib.Path, sys.argv[1:])
+with zipfile.ZipFile(zip_archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
     for path in sorted(source.rglob("*")):
         if path.is_file():
             output.write(path, path.relative_to(source.parent))
+with tarfile.open(tar_archive, "w:gz") as output:
+    output.add(source, arcname=source.name)
 PY
-tar -czf "$archive_root.tar.gz" -C "$OUTPUT_DIR" "$stage_name"
 
 python3 - "$archive_root.zip" "$archive_root.tar.gz" "$OUTPUT_DIR/SHA256SUMS" <<'PY'
 import hashlib
