@@ -472,7 +472,7 @@ jobs:
           build_log="${RUNNER_TEMP}/receipts/hap-build.log"
           build_receipt="${RUNNER_TEMP}/receipts/hap-build.json"
           set +e
-          "$HAP_BIN" build --project "$SOONLINK_PROJECT_DIR" --target "${{ matrix.target }}" 2>&1 | tee "$build_log"
+          "$HAP_BIN" build --project "$SOONLINK_PROJECT_DIR" --target "${{ matrix.target }}" --verbose 2>&1 | tee "$build_log"
           build_status=${PIPESTATUS[0]}
           set -e
           python3 - "$build_receipt" "$build_log" "$build_status" "${{ matrix.target }}" <<'PY'
