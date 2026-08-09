@@ -18,6 +18,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--root", required=True, type=pathlib.Path)
     parser.add_argument("--target", required=True)
     parser.add_argument("--receipt", required=True, type=pathlib.Path)
+    parser.add_argument("--cangjie-llvm-bin", type=pathlib.Path)
+    parser.add_argument("--ohos-llvm-bin", type=pathlib.Path)
+    parser.add_argument("--ohos-sysroot", type=pathlib.Path)
+    parser.add_argument("--ohos-target-lib", type=pathlib.Path)
+    parser.add_argument("--ohos-llvm-target-lib", type=pathlib.Path)
     return parser.parse_args()
 
 
@@ -27,11 +32,37 @@ def section_target(section: str) -> str | None:
     return section[len("target.") :].split(".", 1)[0]
 
 
-def project_manifest(path: pathlib.Path, target: str) -> list[str]:
+def ohos_compile_option(args: argparse.Namespace) -> str | None:
+    if not args.ohos_sysroot:
+        return None
+    if "linux-ohos" not in args.target:
+        raise SystemExit("OHOS compile paths were supplied for a non-OHOS target")
+    if not args.cangjie_llvm_bin or not args.ohos_llvm_bin:
+        raise SystemExit("Cangjie and OpenHarmony LLVM paths are required for OHOS projection")
+    arch = "aarch64" if "aarch64" in args.target else "x86_64"
+    sysroot_target_lib = args.ohos_sysroot / "usr" / "lib" / f"{arch}-linux-ohos"
+    parts = [
+        f'-B "{args.cangjie_llvm_bin}"',
+        f'-B "{args.ohos_llvm_bin}"',
+        f'-L "{sysroot_target_lib}"',
+    ]
+    if args.ohos_target_lib and args.ohos_target_lib != sysroot_target_lib:
+        parts.append(f'-L "{args.ohos_target_lib}"')
+    if args.ohos_llvm_target_lib:
+        parts.append(f'-L "{args.ohos_llvm_target_lib}"')
+    parts.append(f'--sysroot "{args.ohos_sysroot}"')
+    return "  compile-option = \"" + " ".join(parts).replace('"', '\\"') + "\"\n"
+
+
+def project_manifest(path: pathlib.Path, args: argparse.Namespace) -> list[str]:
+    target = args.target
     original = path.read_text(encoding="utf-8")
     output: list[str] = []
     removed: list[str] = []
     keep_section = True
+    active_section = ""
+    rewritten_compile_option = False
+    replacement = ohos_compile_option(args)
 
     for line in original.splitlines(keepends=True):
         match = HEADER_PATTERN.match(line.rstrip("\r\n"))
@@ -44,8 +75,38 @@ def project_manifest(path: pathlib.Path, target: str) -> list[str]:
                 keep_section = selected_target == target
                 if not keep_section:
                     removed.append(section)
+            if keep_section:
+                active_section = section
+            else:
+                active_section = ""
+        if (
+            keep_section
+            and replacement
+            and active_section == f"target.{target}"
+            and re.match(r"^\s*compile-option\s*=", line)
+        ):
+            output.append(replacement)
+            rewritten_compile_option = True
+            continue
         if keep_section:
             output.append(line)
+
+    if replacement and not rewritten_compile_option:
+        rebuilt: list[str] = []
+        active_section = ""
+        inserted = False
+        for line in output:
+            match = HEADER_PATTERN.match(line.rstrip("\r\n"))
+            if match:
+                active_section = match.group(1).strip()
+            rebuilt.append(line)
+            if active_section == f"target.{target}" and line.rstrip("\r\n").startswith(
+                f"[target.{target}]"
+            ):
+                rebuilt.append(replacement)
+                inserted = True
+        if inserted:
+            output = rebuilt
 
     projected = "".join(output)
     if projected != original:
@@ -73,7 +134,7 @@ def main() -> int:
         relative = manifest.relative_to(root)
         if any(part in {".git", "target", "build", "dist"} for part in relative.parts):
             continue
-        removed = project_manifest(manifest, args.target)
+        removed = project_manifest(manifest, args)
         manifests.append(
             {
                 "manifest": str(relative),
@@ -90,6 +151,9 @@ def main() -> int:
                 "target": args.target,
                 "projectionRoot": str(root),
                 "manifests": manifests,
+                "ohosCompileOptionRewritten": bool(
+                    args.ohos_sysroot and "linux-ohos" in args.target
+                ),
                 "projectionManifestsMutated": any(
                     item["removedTargetSections"] for item in manifests
                 ),

@@ -403,10 +403,42 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 "$GITHUB_WORKSPACE/scripts/ci/project_exact_target_manifest.py" \
-            --root "$(dirname "$SOONLINK_PROJECT_DIR")" \
-            --target "${{ matrix.target }}" \
+          projection_args=(
+            --root "$(dirname "$SOONLINK_PROJECT_DIR")"
+            --target "${{ matrix.target }}"
             --receipt "${RUNNER_TEMP}/receipts/exact-target-projection.json"
+          )
+          if [[ "${{ matrix.runtime_smoke }}" == link-only ]]; then
+            arch="x86_64"
+            if [[ "${{ matrix.target }}" == aarch64-* ]]; then
+              arch="aarch64"
+            fi
+            cangjie_llvm_bin="${CANGJIE_HOME}/third_party/llvm/bin"
+            ohos_llvm_bin="${OHOS_NATIVE_SYSROOT}/llvm/bin"
+            ohos_sysroot="${OHOS_NATIVE_SYSROOT}/sysroot"
+            [[ -d "$cangjie_llvm_bin" ]] || { echo "Cangjie LLVM bin not found: $cangjie_llvm_bin" >&2; exit 1; }
+            [[ -d "$ohos_llvm_bin" ]] || { echo "OpenHarmony LLVM bin not found: $ohos_llvm_bin" >&2; exit 1; }
+            [[ -d "$ohos_sysroot" ]] || { echo "OpenHarmony sysroot not found: $ohos_sysroot" >&2; exit 1; }
+            ohos_target_lib="${ohos_sysroot}/usr/lib/${arch}-linux-ohos"
+            [[ -d "$ohos_target_lib" ]] || { echo "OpenHarmony target library not found: $ohos_target_lib" >&2; exit 1; }
+            ohos_llvm_target_lib="$(python3 - "${OHOS_NATIVE_SYSROOT}/llvm/lib/clang" "${arch}-linux-ohos" <<'PY'
+          import pathlib, sys
+          root, target = pathlib.Path(sys.argv[1]), sys.argv[2]
+          candidates = sorted(root.glob(f"*/lib/{target}"))
+          if candidates:
+              print(candidates[0])
+          PY
+            )"
+            [[ -n "$ohos_llvm_target_lib" ]] || { echo "OpenHarmony LLVM target library not found" >&2; exit 1; }
+            projection_args+=(
+              --cangjie-llvm-bin "$cangjie_llvm_bin"
+              --ohos-llvm-bin "$ohos_llvm_bin"
+              --ohos-sysroot "$ohos_sysroot"
+              --ohos-target-lib "$ohos_target_lib"
+              --ohos-llvm-target-lib "$ohos_llvm_target_lib"
+            )
+          fi
+          python3 "$GITHUB_WORKSPACE/scripts/ci/project_exact_target_manifest.py" "${projection_args[@]}"
 
       - name: Run Hap stdx/runtime probes
         shell: bash
@@ -590,13 +622,26 @@ jobs:
           [[ -f "$binary" ]] || { echo "target binary not found: $binary" >&2; exit 1; }
           echo "Packaging binary: $binary"
           chmod +x "$SOONLINK_PROJECT_DIR/scripts/ci/package_release_bundle.sh"
+          package_log="${RUNNER_TEMP}/receipts/package.log"
+          set +e
           "$SOONLINK_PROJECT_DIR/scripts/ci/package_release_bundle.sh" \
             --root "$SOONLINK_PROJECT_DIR" \
             --binary "$binary" \
             --target "${{ matrix.target }}" \
             --version "${{ needs.metadata.outputs.package_version }}" \
             --output-dir "${RUNNER_TEMP}/release-bundles" \
-            --runtime-root "${CANGJIE_HOME}"
+            --runtime-root "${CANGJIE_HOME}" 2>&1 | tee "$package_log"
+          package_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$package_status" -ne 0 ]]; then
+            python3 - "$package_log" "$package_status" <<'PY'
+          import pathlib, sys
+          log = pathlib.Path(sys.argv[1]).read_text(errors="replace")[-6000:]
+          message = log.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=SoonLink release packaging failed::exit={sys.argv[2]}; {message}")
+          PY
+            exit "$package_status"
+          fi
           mkdir -p "${RUNNER_TEMP}/receipts"
           python3 - "${RUNNER_TEMP}/receipts/package-receipt.json" "${RUNNER_TEMP}/release-bundles" <<'PY'
           import hashlib, json, pathlib, sys
