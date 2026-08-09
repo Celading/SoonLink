@@ -318,8 +318,6 @@ jobs:
 
       - name: Install exact stdx asset and prepare OpenHarmony sysroot
         shell: bash
-        env:
-          DEVECO_CANGJIE_HOME: ${{ steps.ohos.outputs.ohos_sdk_native }}
         run: |
           set -euo pipefail
           stdx_root="${RUNNER_TEMP}/cangjie_stdx"
@@ -371,8 +369,26 @@ jobs:
           PY
           echo "CANGJIE_STDX_PATH=$stdx_root" >> "$GITHUB_ENV"
           if [[ "${{ matrix.runtime_smoke }}" == link-only ]]; then
-            [[ -d "${DEVECO_CANGJIE_HOME:-}" ]] || { echo 'OpenHarmony native sysroot is required' >&2; exit 1; }
-            echo "DEVECO_CANGJIE_HOME=$DEVECO_CANGJIE_HOME" >> "$GITHUB_ENV"
+            ohos_native_sysroot="${{ steps.ohos.outputs.ohos_sdk_native }}"
+            [[ -d "$ohos_native_sysroot" ]] || { echo "OpenHarmony native sysroot is required: $ohos_native_sysroot" >&2; exit 1; }
+            # The mirror Cangjie SDK remains the compiler/toolchain root. The
+            # OpenHarmony native sysroot is a separate link-only input.
+            [[ -d "${CANGJIE_HOME:-}" ]] || { echo 'Cangjie SDK root is required for OpenHarmony targets' >&2; exit 1; }
+            echo "OHOS_NATIVE_SYSROOT=$ohos_native_sysroot" >> "$GITHUB_ENV"
+            echo "DEVECO_OH_NATIVE_HOME=$ohos_native_sysroot" >> "$GITHUB_ENV"
+            echo "DEVECO_CANGJIE_HOME=$CANGJIE_HOME" >> "$GITHUB_ENV"
+            python3 - "${RUNNER_TEMP}/receipts/ohos-sysroot.json" "$ohos_native_sysroot" "$CANGJIE_HOME" <<'PY'
+          import json, pathlib, sys
+          receipt, native_sysroot, cangjie_home = sys.argv[1:]
+          pathlib.Path(receipt).write_text(json.dumps({
+              "schema": "soonlink-ohos-sysroot-boundary-receipt-v1",
+              "ok": True,
+              "nativeSysroot": native_sysroot,
+              "cangjieSdkRoot": cangjie_home,
+              "separateInputs": True,
+              "runtimeClaim": "link-only"
+          }, indent=2) + "\n")
+          PY
           fi
 
       - name: Install native packaging tools
@@ -490,10 +506,36 @@ jobs:
           set +u
           source "${RUNNER_TEMP}/cangjie-env.sh"
           set -u
-          binary="$SOONLINK_PROJECT_DIR/target/release/bin/main"
-          if [[ "${{ matrix.target }}" == *-w64-mingw32 ]]; then binary="$SOONLINK_PROJECT_DIR/target/release/bin/main.exe"; fi
-          if [[ "${{ matrix.runtime_smoke }}" == link-only ]]; then binary="$SOONLINK_PROJECT_DIR/target/${{ matrix.target }}/release/bin/main"; fi
+          binary="$(python3 - "$SOONLINK_PROJECT_DIR/target" "${{ matrix.target }}" <<'PY'
+          import pathlib, sys
+
+          root, target = map(pathlib.Path, sys.argv[1:])
+          names = {"main", "main.exe"}
+          candidates = [
+              path for path in root.rglob("*")
+              if path.is_file() and path.name in names
+          ]
+          if not candidates:
+              raise SystemExit(f"target binary not found below {root}")
+
+          def rank(path):
+              parts = path.parts
+              score = 100
+              if path.parent == root / "release" / "bin":
+                  score = 0
+              elif path.parent == root / str(target) / "release" / "bin":
+                  score = 1
+              elif path.parent.name == "bin" and path.parent.parent.name == "release":
+                  score = 2
+              if path.name == "main.exe":
+                  score += 1
+              return score, len(parts), str(path)
+
+          print(min(candidates, key=rank))
+          PY
+          )"
           [[ -f "$binary" ]] || { echo "target binary not found: $binary" >&2; exit 1; }
+          echo "Packaging binary: $binary"
           chmod +x "$SOONLINK_PROJECT_DIR/scripts/ci/package_release_bundle.sh"
           "$SOONLINK_PROJECT_DIR/scripts/ci/package_release_bundle.sh" \
             --root "$SOONLINK_PROJECT_DIR" \
